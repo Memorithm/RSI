@@ -1223,7 +1223,11 @@ fn parse_proposal(raw: &str) -> Option<Proposal> {
     let target = line_value(raw, "TARGET:")?;
     // FIND est borné par `REPLACE:` ; REPLACE par `RATIONALE:` (ou la fin).
     let find = extract_block(raw, "FIND:", &["REPLACE:"])?;
-    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:"])?;
+    // REPLACE aussi borné par `FIND:` : quand le modèle concatène DEUX
+    // propositions, le bloc REPLACE de la première ne doit pas avaler
+    // l'enveloppe de la seconde (vécu : littéral « REPLACE: » injecté dans le
+    // fichier, attrapé par le gate mais évitable ici).
+    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:"])?;
     let rationale = line_value(raw, "RATIONALE:").unwrap_or_else(|| "llm proposal".to_string());
     if find.is_empty() || find == replace {
         return None;
@@ -1243,7 +1247,7 @@ fn explain_parse_failure(raw: &str) -> &'static str {
     if find.is_none() {
         return "bloc FIND absent ou vide";
     }
-    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:"]);
+    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:"]);
     if replace.is_none() {
         return "bloc REPLACE absent ou vide (réponse tronquée ?)";
     }
@@ -1871,6 +1875,19 @@ RATIONALE: bump the constant
     #[test]
     fn off_format_yields_none() {
         assert!(parse_proposal("I think you should change something.").is_none());
+    }
+
+    #[test]
+    fn two_concatenated_proposals_keep_first_replace_clean() {
+        // Cas réel Jetson/sha256 : le modèle émet DEUX propositions à la
+        // suite. Le REPLACE de la première s'arrête au `FIND:` suivant — sans
+        // quoi l'enveloppe de la seconde (« REPLACE: » littéral…) était
+        // injectée dans le fichier (E-compile au gate, mais évitable ici).
+        let raw = "TARGET: a.rs\nFIND:\n<<<\nlet x = 0;\n>>>\nREPLACE:\n<<<\nlet x = 1;\n>>>\n\
+                   FIND:\n<<<\nlet y = 0;\n>>>\nREPLACE:\n<<<\nlet y = 1;\n>>>\nRATIONALE: deux\n";
+        let p = parse_proposal(raw).unwrap();
+        assert_eq!(p.patch.replace, "let x = 1;");
+        assert!(!p.patch.replace.contains("REPLACE:"));
     }
 
     #[test]

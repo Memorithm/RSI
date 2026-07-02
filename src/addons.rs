@@ -193,10 +193,13 @@ fn is_placeholder_algorithm(a: &PaperAlgorithm) -> bool {
     if name.contains("heuristique") || name.contains("heuristic") {
         return true;
     }
-    if a.complexity.as_deref().is_some_and(|c| c.to_uppercase().contains("NON DISPONIBLE")) {
+    if a.pseudocode.as_deref().is_some_and(|p| p.contains("ProcessPaper")) {
         return true;
     }
-    a.pseudocode.as_deref().is_some_and(|p| p.contains("ProcessPaper"))
+    // « complexité non disponible » seule ne disqualifie que s'il n'y a pas de
+    // substance (pseudocode) à côté.
+    a.complexity.as_deref().is_some_and(|c| c.to_uppercase().contains("NON DISPONIBLE"))
+        && a.pseudocode.as_deref().is_none_or(|p| p.trim().is_empty())
 }
 
 /// Parse le sous-ensemble utile d'`analysis.json` (fonction pure, testée).
@@ -210,7 +213,8 @@ pub(crate) fn parse_analysis_json(raw: &str) -> Result<PaperAnalysis, String> {
             _ => Vec::new(),
         }
     };
-    let algorithms = match j.get("algorithms") {
+    let contributions = strings("contributions");
+    let mut algorithms: Vec<PaperAlgorithm> = match j.get("algorithms") {
         Some(crate::json::Json::Arr(a)) => a
             .iter()
             .filter_map(|v| {
@@ -224,13 +228,39 @@ pub(crate) fn parse_analysis_json(raw: &str) -> Result<PaperAnalysis, String> {
             .collect(),
         _ => Vec::new(),
     };
+    // En mode LLM, PAPERS met la VRAIE technique dans `pseudo_code`
+    // ({pseudocode, overall_complexity, memory_cost}) — le tableau `algorithms`
+    // reste son placeholder heuristique même avec LLM (biais amont constaté
+    // sur Thor). On synthétise donc un algorithme depuis ce champ.
+    if let Some(pc) = j.get("pseudo_code") {
+        let pseudo = pc.get("pseudocode").and_then(|v| v.as_str()).unwrap_or("");
+        if !pseudo.trim().is_empty() && !pseudo.contains("ProcessPaper") {
+            let complexity = pc
+                .get("overall_complexity")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.to_uppercase().contains("NON DISPONIBLE"))
+                .map(str::to_string);
+            let name = contributions
+                .first()
+                .map(|c| {
+                    let flat: String = c.split_whitespace().collect::<Vec<_>>().join(" ");
+                    flat.chars().take(80).collect::<String>()
+                })
+                .unwrap_or_else(|| "technique principale du papier".to_string());
+            algorithms.push(PaperAlgorithm {
+                name,
+                complexity,
+                pseudocode: Some(pseudo.to_string()),
+            });
+        }
+    }
     Ok(PaperAnalysis {
         summary: j
             .get("executive_summary")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
-        contributions: strings("contributions"),
+        contributions,
         algorithms,
         impacted_modules: strings("impacted_modules"),
     })
@@ -312,6 +342,32 @@ mod tests {
         // champs absents ⇒ défauts, pas d'erreur (schéma amont libre d'évoluer)
         let min = parse_analysis_json("{}").unwrap();
         assert!(min.algorithms.is_empty() && min.summary.is_empty());
+    }
+
+    #[test]
+    fn llm_pseudo_code_field_becomes_a_goal() {
+        // Mode LLM réel (Thor/Ansor) : `algorithms` = placeholder, la technique
+        // vit dans `pseudo_code`. Elle doit produire UN objectif substantiel.
+        let raw = r#"{
+            "contributions": ["Présentation de Ansor, un cadre de génération de programmes tensoriels"],
+            "algorithms": [{"name":"Pipeline heuristique",
+                            "complexity":"INFORMATION NON DISPONIBLE DANS LE PAPIER",
+                            "pseudocode":"FONCTION ProcessPaper(document)"}],
+            "pseudo_code": {"pseudocode":"POUR chaque tuile: derouler et vectoriser la boucle interne",
+                            "overall_complexity":"O(n^3)","memory_cost":"O(n^2)"}
+        }"#;
+        let a = parse_analysis_json(raw).unwrap();
+        let goals = PapersAddon::directive_goals(&a, "src/kernels.rs", 3);
+        assert_eq!(goals.len(), 1, "placeholder filtré, pseudo_code retenu : {goals:?}");
+        assert!(goals[0].contains("Ansor"));
+        assert!(goals[0].contains("derouler et vectoriser"));
+        assert!(goals[0].contains("O(n^3)"));
+        // complexité « NON DISPONIBLE » du champ pseudo_code ⇒ omise, pas gardée
+        let raw2 = raw.replace("O(n^3)", "INFORMATION NON DISPONIBLE DANS LE PAPIER");
+        let a2 = parse_analysis_json(&raw2).unwrap();
+        let goals2 = PapersAddon::directive_goals(&a2, "src/kernels.rs", 3);
+        assert_eq!(goals2.len(), 1);
+        assert!(!goals2[0].contains("NON DISPONIBLE"));
     }
 
     #[test]

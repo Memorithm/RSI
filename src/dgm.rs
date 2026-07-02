@@ -1166,6 +1166,9 @@ impl<M: CodeModel> LlmProposer<M> {
              EXACT substring of the file above, and it must be SHORT: the smallest \
              unique fragment enclosing your edit (at most ~25 lines). NEVER quote a \
              whole function — long FIND blocks get truncated and are rejected. \
+             The REPLACE block MUST DIFFER from FIND: replaying the same code \
+             unchanged is a no-op and is rejected. If you see no real improvement, \
+             answer exactly: NO PROPOSAL. \
              Respond EXACTLY in this format and nothing else (close every code fence):\n\
              TARGET: <relative/path.rs>\n\
              FIND:\n<<<\n<exact existing text, occurring once>\n>>>\n\
@@ -1187,13 +1190,16 @@ impl<M: CodeModel> Proposer for LlmProposer<M> {
         let proposal = match parse_proposal(&raw) {
             Some(p) => p,
             None => {
-                // Diagnostic : `RSI_DGM_DEBUG=1` affiche la réponse brute non
-                // parsée (utile pour ajuster prompt/parseur à un modèle donné).
+                // Diagnostic : `RSI_DGM_DEBUG=1` affiche la RAISON de l'échec
+                // et la réponse brute EN ENTIER. L'ancien aperçu de 2000 chars
+                // masquait la fin — des réponses complètes mais no-op (FIND ==
+                // REPLACE) ont été prises pour des troncatures serveur.
                 if std::env::var("RSI_DGM_DEBUG").is_ok() {
-                    let preview: String = raw.chars().take(2000).collect();
+                    let full: String = raw.chars().take(20_000).collect();
                     eprintln!(
-                        "[dgm] réponse LLM non parsée ({} chars) :\n{preview}\n--- fin ---",
-                        raw.len()
+                        "[dgm] réponse LLM non parsée ({} chars) — {} :\n{full}\n--- fin ---",
+                        raw.len(),
+                        explain_parse_failure(&raw)
                     );
                 }
                 return Ok(None);
@@ -1223,6 +1229,28 @@ fn parse_proposal(raw: &str) -> Option<Proposal> {
         return None;
     }
     Some(Proposal { patch: Patch::new(target, find, replace), rationale })
+}
+
+/// Explique pourquoi [`parse_proposal`] a rendu `None` (diagnostic debug) :
+/// distingue enveloppe absente, bloc tronqué et **no-op** (FIND == REPLACE) —
+/// trois échecs aux remèdes opposés (prompt, num_predict, ou modèle à court
+/// d'idées qui recopie le bloc à l'identique).
+fn explain_parse_failure(raw: &str) -> &'static str {
+    if line_value(raw, "TARGET:").is_none() {
+        return "TARGET absent";
+    }
+    let find = extract_block(raw, "FIND:", &["REPLACE:"]);
+    if find.is_none() {
+        return "bloc FIND absent ou vide";
+    }
+    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:"]);
+    if replace.is_none() {
+        return "bloc REPLACE absent ou vide (réponse tronquée ?)";
+    }
+    if find == replace {
+        return "FIND == REPLACE (no-op : le modèle recopie le bloc sans le changer)";
+    }
+    "raison inconnue"
 }
 
 fn line_value(raw: &str, key: &str) -> Option<String> {
@@ -1843,6 +1871,20 @@ RATIONALE: bump the constant
     #[test]
     fn off_format_yields_none() {
         assert!(parse_proposal("I think you should change something.").is_none());
+    }
+
+    #[test]
+    fn explains_each_parse_failure() {
+        // Cas réel Jetson/sha256 : réponse COMPLÈTE mais FIND == REPLACE — le
+        // diagnostic doit nommer le no-op, pas laisser croire à une troncature.
+        let noop = "TARGET: a.rs\nFIND:\n<<<\nlet x = 0;\n>>>\nREPLACE:\n<<<\nlet x = 0;\n>>>\nRATIONALE: r\n";
+        assert!(parse_proposal(noop).is_none());
+        assert!(explain_parse_failure(noop).contains("no-op"));
+
+        assert_eq!(explain_parse_failure("blabla"), "TARGET absent");
+        // Réponse coupée net juste après l'entête REPLACE: (rien derrière).
+        let cut = "TARGET: a.rs\nFIND:\n<<<\nlet x = 0;\n>>>\nREPLACE:\n";
+        assert!(explain_parse_failure(cut).contains("REPLACE"));
     }
 
     #[test]

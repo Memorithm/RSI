@@ -33,6 +33,7 @@ fn main() {
     let mut out = stdout.lock();
     let mut reader = stdin.lock();
     let mut api = RsiApi::new();
+    let dgm = dgm_job::shared();
 
     let mut buf = Vec::with_capacity(4096);
     loop {
@@ -60,7 +61,7 @@ fn main() {
         }
 
         let response = match Json::parse(line) {
-            Ok(req) => handle_request(&mut api, &req),
+            Ok(req) => handle_request(&mut api, &dgm, &req),
             Err(e) => Some(error_response(&Json::Null, -32700, &format!("parse error: {e}"))),
         };
 
@@ -72,7 +73,7 @@ fn main() {
 }
 
 /// Dispatche une requête JSON-RPC. Renvoie `None` pour les notifications.
-fn handle_request(api: &mut RsiApi, req: &Json) -> Option<Json> {
+fn handle_request(api: &mut RsiApi, dgm: &dgm_job::Shared, req: &Json) -> Option<Json> {
     let id = req.get("id").cloned().unwrap_or(Json::Null);
     let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let is_notification = req.get("id").is_none();
@@ -82,7 +83,7 @@ fn handle_request(api: &mut RsiApi, req: &Json) -> Option<Json> {
         "notifications/initialized" | "initialized" => return None,
         "ping" => Ok(Json::obj()),
         "tools/list" => Ok(tools_list()),
-        "tools/call" => tools_call(api, req.get("params")),
+        "tools/call" => tools_call(api, dgm, req.get("params")),
         other => Err((-32601, format!("méthode inconnue : '{other}'"))),
     };
 
@@ -294,6 +295,35 @@ fn tools_list() -> Json {
             ]),
             &["state"],
         ),
+        tool(
+            "rsi_dgm_start",
+            "Lance en ARRIÈRE-PLAN une boucle d'auto-amélioration DGM/STOP sur un dépôt réel : \
+             le LLM (connexion automatique : modèle Ollama découvert, ou 'model') propose des \
+             patchs, chacun évalué en copie isolée (cargo build+test, bench optionnel), archivé \
+             seulement s'il est strictement meilleur. DRY-RUN STRICT : rien n'est jamais écrit \
+             dans l'arbre vivant depuis MCP — la promotion reste un acte humain en CLI \
+             (rsi-dgm --promote) après revue du diff. Suivre via rsi_dgm_status. \
+             Un seul job à la fois. Requiert la feature llm-ollama.",
+            props(&[
+                ("workspace", prop("string", "Racine du dépôt (répertoire).")),
+                ("goal", prop("string", "Objectif d'amélioration remis au proposeur (directif = plus efficace).")),
+                ("allow", prop("string", "Fichiers éditables, séparés par des virgules.")),
+                ("steps", prop("integer", "Étapes (défaut 8, max 64) — ~1-3 min/étape.")),
+                ("bench", prop("string", "Args cargo d'un bench imprimant RSI_BENCH_SCORE=<f64> (score = perf réelle).")),
+                ("min_gain", prop("number", "Gain relatif minimal anti-bruit (défaut 0.05).")),
+                ("model", prop("string", "Préférence de modèle (sinon découverte automatique /api/tags).")),
+                ("seed", prop("integer", "Graine déterministe (défaut 42).")),
+                ("timeout_secs", prop("integer", "Borne par invocation cargo (défaut 300, max 1800).")),
+            ]),
+            &["workspace", "goal", "allow"],
+        ),
+        tool(
+            "rsi_dgm_status",
+            "État du job DGM d'arrière-plan : phase courante, résultats par étape (accepté/rejeté, \
+             fitness, raison), meilleur variant promouvable (dry-run), erreur éventuelle.",
+            Json::obj(),
+            &[],
+        ),
     ];
 
     let mut out = Json::obj();
@@ -301,8 +331,12 @@ fn tools_list() -> Json {
     out
 }
 
-/// Mappe `tools/call` vers une commande de l'API.
-fn tools_call(api: &mut RsiApi, params: Option<&Json>) -> Result<Json, (i64, String)> {
+/// Mappe `tools/call` vers une commande de l'API (ou le job DGM).
+fn tools_call(
+    api: &mut RsiApi,
+    dgm: &dgm_job::Shared,
+    params: Option<&Json>,
+) -> Result<Json, (i64, String)> {
     let params = params.ok_or((-32602, "params manquants".into()))?;
     let name = params
         .get("name")
@@ -310,6 +344,18 @@ fn tools_call(api: &mut RsiApi, params: Option<&Json>) -> Result<Json, (i64, Str
         .ok_or((-32602, "nom d'outil manquant".into()))?;
     let empty = Json::obj();
     let args = params.get("arguments").unwrap_or(&empty);
+
+    // Outils du job DGM (gérés hors RsiApi : thread d'arrière-plan).
+    match name {
+        "rsi_dgm_start" => {
+            return Ok(match dgm_job::start(dgm, args) {
+                Ok(v) => tool_text_result(&v, false),
+                Err(e) => tool_text_result(&Json::Str(e), true),
+            })
+        }
+        "rsi_dgm_status" => return Ok(tool_text_result(&dgm_job::status(dgm), false)),
+        _ => {}
+    }
 
     // outils préfixés 'rsi_' → commandes de l'API
     let command = name.strip_prefix("rsi_").unwrap_or(name);
@@ -331,6 +377,238 @@ fn tool_text_result(value: &Json, is_error: bool) -> Json {
         out.set("isError", Json::Bool(true));
     }
     out
+}
+
+// ═══════════════ Job DGM d'arrière-plan (auto-amélioration) ═══════════════ //
+//
+// La boucle DGM (build+test+bench par étape) dure des minutes : un appel
+// d'outil MCP bloquant serait inutilisable. `rsi_dgm_start` lance donc UN
+// job en arrière-plan (thread), `rsi_dgm_status` s'interroge à volonté.
+//
+// **Sûreté : DRY-RUN UNIQUEMENT.** Aucun outil MCP ne promeut de patch vers
+// l'arbre vivant — la promotion (`rsi-dgm --promote`) reste un acte humain
+// délibéré en CLI, après revue du diff. Un agent-framework peut chercher des
+// améliorations, jamais les appliquer.
+mod dgm_job {
+    use rsi::json::Json;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    pub struct JobState {
+        pub running: bool,
+        pub goal: String,
+        pub model: String,
+        pub phase: String,
+        pub outcomes: Vec<Json>,
+        pub best: Option<Json>,
+        pub error: Option<String>,
+    }
+
+    pub type Shared = Arc<Mutex<JobState>>;
+
+    pub fn shared() -> Shared {
+        Arc::new(Mutex::new(JobState::default()))
+    }
+
+    pub fn status(shared: &Shared) -> Json {
+        let st = shared.lock().unwrap();
+        let mut out = Json::obj();
+        out.set("running", Json::Bool(st.running))
+            .set("goal", Json::Str(st.goal.clone()))
+            .set("model", Json::Str(st.model.clone()))
+            .set("phase", Json::Str(st.phase.clone()))
+            .set("steps_done", Json::Num(st.outcomes.len() as f64))
+            .set("outcomes", Json::Arr(st.outcomes.clone()));
+        if let Some(b) = &st.best {
+            out.set("best", b.clone());
+        }
+        if let Some(e) = &st.error {
+            out.set("error", Json::Str(e.clone()));
+        }
+        out
+    }
+
+    #[cfg(not(feature = "llm-ollama"))]
+    pub fn start(_shared: &Shared, _args: &Json) -> Result<Json, String> {
+        Err("outil indisponible : recompiler rsi-mcp avec --features llm-ollama".to_string())
+    }
+
+    #[cfg(feature = "llm-ollama")]
+    pub fn start(shared: &Shared, args: &Json) -> Result<Json, String> {
+        use rsi::dgm::{
+            Archive, CargoEvaluator, DgmConfig, DgmEngine, Evaluator, LlmCodeModel, LlmProposer,
+            StepOutcome, WorkspaceSnapshot,
+        };
+        use std::time::Duration;
+
+        {
+            let st = shared.lock().unwrap();
+            if st.running {
+                return Err("un job DGM tourne déjà — interroger rsi_dgm_status".to_string());
+            }
+        }
+
+        // --- Paramètres (bornés : entrée non fiable). ----------------------- //
+        let workspace = args
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .ok_or("paramètre 'workspace' requis (racine du dépôt)")?
+            .to_string();
+        let goal = args
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .ok_or("paramètre 'goal' requis")?
+            .to_string();
+        let allowed: Vec<String> = args
+            .get("allow")
+            .and_then(|v| v.as_str())
+            .ok_or("paramètre 'allow' requis (fichiers éditables, séparés par ',')")?
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if allowed.is_empty() {
+            return Err("'allow' doit lister au moins un fichier".to_string());
+        }
+        let steps = args.get("steps").and_then(|v| v.as_usize()).unwrap_or(8).clamp(1, 64);
+        let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+        let min_gain = args.get("min_gain").and_then(|v| v.as_f64()).unwrap_or(0.05);
+        let timeout_secs =
+            args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300).clamp(30, 1800);
+        let bench: Vec<String> = args
+            .get("bench")
+            .and_then(|v| v.as_str())
+            .map(|s| s.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default();
+        let ws = std::path::PathBuf::from(&workspace);
+        if !ws.is_dir() {
+            return Err(format!("'{workspace}' n'est pas un répertoire"));
+        }
+
+        // --- Connexion LLM automatique (échoue TÔT, avant le thread). ------- //
+        let host = std::env::var("RSI_OLLAMA_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let port: u16 = std::env::var("RSI_OLLAMA_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(11434);
+        let pref = args
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| std::env::var("RSI_LLM_MODEL").ok());
+        let installed = rsi::llm::ollama_installed_models(&host, port, Duration::from_secs(10))
+            .map_err(|e| format!("Ollama injoignable sur {host}:{port} ({e:?})"))?;
+        let model = rsi::llm::pick_model(&installed, pref.as_deref())
+            .ok_or_else(|| format!("aucun modèle utilisable sur {host}:{port}"))?;
+
+        {
+            let mut st = shared.lock().unwrap();
+            *st = JobState {
+                running: true,
+                goal: goal.clone(),
+                model: model.clone(),
+                phase: "référence (build+test de l'arbre vivant)".to_string(),
+                ..JobState::default()
+            };
+        }
+
+        let state = Arc::clone(shared);
+        let model_name = model.clone();
+        std::thread::spawn(move || {
+            let fail = |state: &Shared, msg: String| {
+                let mut st = state.lock().unwrap();
+                st.error = Some(msg);
+                st.running = false;
+                st.phase = "échec".to_string();
+            };
+
+            let client = rsi::llm::OllamaClient::new(model_name)
+                .with_endpoint(host, port)
+                .with_timeout(Duration::from_secs(timeout_secs));
+            let proposer = LlmProposer::new(LlmCodeModel::new(client), allowed);
+            let evaluator = CargoEvaluator {
+                bench_command: bench,
+                timeout: Duration::from_secs(timeout_secs),
+                score_from_passrate: true,
+                ..Default::default()
+            };
+
+            let baseline =
+                match WorkspaceSnapshot::create(&ws).and_then(|s| evaluator.evaluate(s.root())) {
+                    Ok(f) => f,
+                    Err(e) => return fail(&state, format!("évaluation de référence : {e}")),
+                };
+            let mut config = DgmConfig::new(&ws, &goal);
+            config.min_score_gain = min_gain;
+            let mut engine =
+                DgmEngine::new(Archive::with_root(baseline), proposer, evaluator, config, seed);
+
+            for i in 0..steps {
+                {
+                    let mut st = state.lock().unwrap();
+                    st.phase = format!("étape {}/{steps}", i + 1);
+                }
+                let outcome = match engine.step() {
+                    Ok(o) => o,
+                    Err(e) => return fail(&state, format!("étape {i} : {e}")),
+                };
+                let mut j = Json::obj();
+                j.set("step", Json::Num(i as f64));
+                match &outcome {
+                    StepOutcome::NoProposal => {
+                        j.set("kind", Json::Str("no_proposal".into()));
+                    }
+                    StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => {
+                        j.set("kind", Json::Str("evaluated".into()))
+                            .set("accepted", Json::Bool(*accepted))
+                            .set("compiles", Json::Bool(fitness.compiles))
+                            .set("tests_passed", Json::Num(fitness.tests_passed as f64))
+                            .set("tests_failed", Json::Num(fitness.tests_failed as f64))
+                            .set("score", Json::Num(fitness.score))
+                            .set("variant", Json::Str(variant_id.clone()))
+                            .set(
+                                "reason",
+                                Json::Str(
+                                    fitness.notes.lines().next().unwrap_or("").trim().to_string(),
+                                ),
+                            );
+                    }
+                }
+                state.lock().unwrap().outcomes.push(j);
+            }
+
+            let best = engine.best().map(|v| {
+                let mut b = Json::obj();
+                b.set("variant", Json::Str(v.id.clone()))
+                    .set("target", Json::Str(v.patch.target.clone()))
+                    .set("rationale", Json::Str(v.rationale.clone()));
+                if let Some(f) = &v.fitness {
+                    b.set("score", Json::Num(f.score))
+                        .set("tests_passed", Json::Num(f.tests_passed as f64));
+                }
+                b.set(
+                    "note",
+                    Json::Str(
+                        "DRY-RUN : rien n'a été appliqué. Promotion = acte humain : \
+                         rsi-dgm <ws> … --promote, après revue du diff."
+                            .into(),
+                    ),
+                );
+                b
+            });
+            let mut st = state.lock().unwrap();
+            st.best = best;
+            st.running = false;
+            st.phase = "terminé".to_string();
+        });
+
+        let mut out = Json::obj();
+        out.set("started", Json::Bool(true))
+            .set("model", Json::Str(model))
+            .set("steps", Json::Num(steps as f64))
+            .set("dry_run", Json::Bool(true));
+        Ok(out)
+    }
 }
 
 fn success_response(id: &Json, result: Json) -> Json {

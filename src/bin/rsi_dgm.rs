@@ -7,9 +7,12 @@
 //! applique le **seul meilleur** variant *tout-au-vert* au dépôt (avec
 //! sauvegarde réversible).
 //!
-//! Backend LLM : **Ollama local par défaut** (`--backend ollama`) ; Claude
-//! disponible avec la feature `llm-claude-ureq` (`--backend claude`,
-//! `ANTHROPIC_API_KEY` dans l'environnement).
+//! Backend LLM : **connexion automatique par défaut** (`--backend auto`) —
+//! sonde Ollama local, découvre les modèles installés (`/api/tags`) et choisit
+//! le meilleur modèle de code ([`rsi::llm::pick_model`]) ; retombe sur Claude
+//! si `ANTHROPIC_API_KEY` est présent (feature `llm-claude-ureq`). Contrôlable
+//! sans flags via `RSI_LLM` (« ollama:MODELE », « claude », « auto ») et
+//! `RSI_LLM_MODEL` (préférence de modèle, exacte ou par préfixe).
 //!
 //! ```text
 //! rsi-dgm <workspace> --goal "..." --allow src/a.rs,src/b.rs [options]
@@ -21,8 +24,8 @@
 //!   --seed N              graine déterministe                     (défaut 42)
 //!   --package-subdir DIR  sous-répertoire de manifeste à builder  (défaut: racine)
 //!   --test-args "ARGS"    args additionnels pour `cargo test`     (défaut: aucun)
-//!   --backend ollama|claude                                       (défaut ollama)
-//!   --model NAME          modèle LLM                              (défaut selon backend)
+//!   --backend auto|ollama|claude                                  (défaut auto)
+//!   --model NAME          modèle LLM                    (défaut : auto-découvert)
 //!   --ollama-host HOST                                            (défaut 127.0.0.1)
 //!   --ollama-port PORT                                            (défaut 11434)
 //!   --timeout SECS        délai max par invocation cargo          (défaut 300)
@@ -79,23 +82,89 @@ fn main() {
     let steps: usize = flag_value(&args, "--steps").and_then(|v| v.parse().ok()).unwrap_or(10);
     let seed: u64 = flag_value(&args, "--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
     let timeout_secs: u64 = flag_value(&args, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(300);
-    let backend = flag_value(&args, "--backend").unwrap_or_else(|| "ollama".to_string());
     let promote = args.iter().any(|a| a == "--promote");
 
-    // --- Backend LLM (Ollama par défaut ; Claude si feature présente). ------ //
-    let model: Box<dyn CodeModel> = match backend.as_str() {
-        "ollama" => {
-            let name = flag_value(&args, "--model").unwrap_or_else(|| "qwen2.5-coder".to_string());
-            let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
-            let port: u16 = flag_value(&args, "--ollama-port").and_then(|v| v.parse().ok()).unwrap_or(11434);
-            let client = rsi::llm::OllamaClient::new(name)
-                .with_endpoint(host, port)
-                .with_timeout(Duration::from_secs(timeout_secs));
-            Box::new(LlmCodeModel::new(client))
+    // --- Backend LLM : CONNEXION AUTOMATIQUE. -------------------------------- //
+    // Résolution, du plus explicite au plus automatique :
+    //   1. `--backend` / `--model` (CLI) ;
+    //   2. env `RSI_LLM` (« ollama », « ollama:MODELE », « claude[:MODELE] »,
+    //      « auto ») et `RSI_LLM_MODEL` (préférence de modèle) ;
+    //   3. `auto` (défaut) : sonde Ollama local, découvre les modèles installés
+    //      (`/api/tags`) et choisit le meilleur modèle de code ; sinon Claude si
+    //      `ANTHROPIC_API_KEY` est présent (feature `llm-claude-ureq`) ; sinon
+    //      erreur explicite. Zéro flag requis quand Ollama tourne.
+    let env_llm = std::env::var("RSI_LLM").ok();
+    let (env_backend, env_model) = match env_llm.as_deref() {
+        Some(s) => match s.split_once(':') {
+            Some((b, m)) => (Some(b.to_string()), Some(m.to_string())),
+            None => (Some(s.to_string()), None),
+        },
+        None => (None, None),
+    };
+    let backend = flag_value(&args, "--backend")
+        .or(env_backend)
+        .unwrap_or_else(|| "auto".to_string());
+    let model_pref = flag_value(&args, "--model")
+        .or(env_model)
+        .or_else(|| std::env::var("RSI_LLM_MODEL").ok());
+    let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
+    let port: u16 = flag_value(&args, "--ollama-port").and_then(|v| v.parse().ok()).unwrap_or(11434);
+
+    let make_ollama = |name: String| -> Box<dyn CodeModel> {
+        let client = rsi::llm::OllamaClient::new(name)
+            .with_endpoint(host.clone(), port)
+            .with_timeout(Duration::from_secs(timeout_secs));
+        Box::new(LlmCodeModel::new(client))
+    };
+    // Découvre les modèles installés et applique la préférence éventuelle.
+    let discover = |pref: Option<&str>| -> Result<String, String> {
+        let installed =
+            rsi::llm::ollama_installed_models(&host, port, Duration::from_secs(10))
+                .map_err(|e| format!("Ollama injoignable sur {host}:{port} ({e:?})"))?;
+        match rsi::llm::pick_model(&installed, pref) {
+            Some(m) => {
+                println!(
+                    "• backend ollama : modèle « {m} » ({} installé(s){})",
+                    installed.len(),
+                    pref.map(|p| format!(", préférence « {p} »")).unwrap_or_default()
+                );
+                Ok(m)
+            }
+            None => Err(format!("aucun modèle utilisable sur {host}:{port} (ollama pull …)")),
         }
-        "claude" => make_claude(&args),
+    };
+
+    let (backend, model): (String, Box<dyn CodeModel>) = match backend.as_str() {
+        "ollama" => match model_pref.clone() {
+            // Modèle donné explicitement : utilisé tel quel (pas de sonde).
+            Some(name) if flag_value(&args, "--model").is_some() => ("ollama".into(), make_ollama(name)),
+            pref => match discover(pref.as_deref()) {
+                Ok(m) => ("ollama".into(), make_ollama(m)),
+                Err(e) => {
+                    eprintln!("erreur : {e}");
+                    exit(2);
+                }
+            },
+        },
+        "claude" => ("claude".into(), make_claude(&args)),
+        "auto" => match discover(model_pref.as_deref()) {
+            Ok(m) => ("ollama (auto)".into(), make_ollama(m)),
+            Err(ollama_err) => {
+                if std::env::var("ANTHROPIC_API_KEY").is_ok() && cfg!(feature = "llm-claude-ureq") {
+                    println!("• backend auto : Ollama indisponible → Claude (ANTHROPIC_API_KEY)");
+                    ("claude (auto)".into(), make_claude(&args))
+                } else {
+                    eprintln!(
+                        "erreur : connexion automatique impossible.\n  - {ollama_err}\n  - pas \
+                         d'ANTHROPIC_API_KEY (ou feature llm-claude-ureq absente).\n  Lancez \
+                         Ollama, ou exportez RSI_LLM / ANTHROPIC_API_KEY, ou passez --backend."
+                    );
+                    exit(2);
+                }
+            }
+        },
         other => {
-            eprintln!("erreur : backend inconnu '{other}' (ollama|claude).");
+            eprintln!("erreur : backend inconnu '{other}' (auto|ollama|claude).");
             exit(2);
         }
     };
@@ -302,14 +371,16 @@ fn usage() {
            --goal TEXT           objectif (requis)\n  \
            --allow LIST          fichiers éditables, séparés par ',' (requis)\n  \
            --steps N             étapes (défaut 10)   --seed N (défaut 42)\n  \
-           --backend ollama|claude (défaut ollama)    --model NAME\n  \
+           --backend auto|ollama|claude (défaut auto) --model NAME (sinon découvert)\n  \
            --package-subdir DIR  sous-crate à builder  --test-args \"ARGS\"\n  \
            --timeout SECS        borne par cargo (défaut 300)\n  \
            --bench \"ARGS\"        score = perf mesurée (RSI_BENCH_SCORE) au lieu\n                          du pass-rate — ex. \"run --release --example bench_dot\"\n  \
            --min-gain FRAC       gain relatif de score minimal (anti-bruit),\n                          ex. 0.02 = ≥ 2 %% (défaut 0 ; gains structurels exemptés)\n  \
            --promote             applique le meilleur variant tout-au-vert\n  \
            --backups DIR         sauvegardes (défaut <ws>/.rsi_backups)\n\n\
-         Backend Ollama local par défaut (http://127.0.0.1:11434). Claude :\n\
-         recompiler avec --features llm-claude-ureq et exporter ANTHROPIC_API_KEY."
+         CONNEXION AUTOMATIQUE (défaut) : sonde Ollama local, découvre les modèles\n\
+         installés (/api/tags) et choisit le meilleur modèle de code ; sinon Claude\n\
+         si ANTHROPIC_API_KEY est présent (feature llm-claude-ureq). Overrides :\n\
+         env RSI_LLM (« ollama:MODELE », « claude », « auto ») et RSI_LLM_MODEL."
     );
 }

@@ -425,6 +425,127 @@ fn build_request(
     )
 }
 
+// ════════════════ Connexion automatique (découverte de modèles) ══════════ //
+
+/// Liste les modèles installés sur un serveur Ollama (`GET /api/tags`).
+///
+/// Brique de la **connexion automatique** : au lieu d'exiger `--model`,
+/// l'appelant découvre ce qui est réellement installé et choisit via
+/// [`pick_model`]. std-only (TcpStream), mêmes bornes que le client.
+#[cfg(feature = "llm-ollama")]
+pub fn ollama_installed_models(
+    host: &str,
+    port: u16,
+    timeout: std::time::Duration,
+) -> Result<Vec<String>, LlmError> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let addr = format!("{host}:{port}");
+    let sockaddr = addr
+        .to_socket_addrs()
+        .map_err(|e| LlmError::Backend(format!("résolution {addr}: {e}")))?
+        .next()
+        .ok_or_else(|| LlmError::Backend(format!("adresse {addr} irrésolue")))?;
+    let mut stream = TcpStream::connect_timeout(&sockaddr, timeout)
+        .map_err(|e| LlmError::Backend(format!("connexion Ollama {addr}: {e}")))?;
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+    let req = format!(
+        "GET /api/tags HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
+    let mut raw = String::new();
+    stream
+        .read_to_string(&mut raw)
+        .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
+    parse_tags_response(&raw)
+}
+
+/// Parse la réponse HTTP de `/api/tags` (fonction pure, testable hors-ligne).
+#[cfg(feature = "llm-ollama")]
+fn parse_tags_response(raw: &str) -> Result<Vec<String>, LlmError> {
+    let (headers, body) = raw
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| LlmError::Backend("réponse HTTP sans corps".to_string()))?;
+    let body = if header_is_chunked(headers) { dechunk(body) } else { body.to_string() };
+    let json = crate::json::Json::parse(body.trim())
+        .map_err(|e| LlmError::Backend(format!("JSON /api/tags invalide: {e}")))?;
+    let models = json
+        .get("models")
+        .and_then(|v| match v {
+            crate::json::Json::Arr(a) => Some(a.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| LlmError::Backend("champ 'models' absent".to_string()))?;
+    Ok(models
+        .iter()
+        .filter_map(|m| m.get("name").and_then(|v| v.as_str()).map(str::to_string))
+        .collect())
+}
+
+/// Choisit un modèle parmi les installés — le cœur **déterministe** de la
+/// connexion automatique.
+///
+/// 1. `preference` (env `RSI_LLM_MODEL`, config…) : correspondance exacte,
+///    sinon par préfixe (permet `qwen3-coder` → `qwen3-coder:30b`) ;
+/// 2. sinon heuristique : parmi les modèles de **code** (`coder`/`code` dans
+///    le nom), le plus gros (suffixe `Nb` le plus élevé) ; à défaut le plus
+///    gros modèle généraliste. Les modèles d'embedding sont exclus.
+#[cfg(feature = "llm-ollama")]
+pub fn pick_model(installed: &[String], preference: Option<&str>) -> Option<String> {
+    if let Some(pref) = preference {
+        if let Some(m) = installed.iter().find(|m| m.as_str() == pref) {
+            return Some(m.clone());
+        }
+        if let Some(m) = installed.iter().find(|m| m.starts_with(pref)) {
+            return Some(m.clone());
+        }
+    }
+    let usable: Vec<&String> = installed
+        .iter()
+        .filter(|m| !m.to_ascii_lowercase().contains("embed"))
+        .collect();
+    let size_of = |name: &str| -> u64 {
+        // extrait le plus grand « <N>b » du nom (qwen3-coder:30b → 30)
+        let lower = name.to_ascii_lowercase();
+        let bytes = lower.as_bytes();
+        let mut best = 0u64;
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_digit() {
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i < bytes.len() && bytes[i] == b'b' {
+                    if let Ok(n) = lower[start..i].parse::<u64>() {
+                        best = best.max(n);
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+        best
+    };
+    let coders: Vec<&&String> = usable
+        .iter()
+        .filter(|m| {
+            let l = m.to_ascii_lowercase();
+            l.contains("coder") || l.contains("code")
+        })
+        .collect();
+    let pool: Vec<&String> = if coders.is_empty() {
+        usable.clone()
+    } else {
+        coders.into_iter().copied().collect()
+    };
+    pool.into_iter().max_by_key(|m| size_of(m)).cloned()
+}
+
 /// Extrait les propositions (une par ligne non vide) d'une réponse HTTP Ollama
 /// non-streamée (fonction pure, testable hors-ligne).
 ///
@@ -1026,6 +1147,29 @@ mod ollama_tests {
             Err(LlmError::Backend(m)) => assert!(m.contains("not found")),
             other => panic!("attendu Backend error, obtenu {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_tags_and_picks_model_deterministically() {
+        let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
+                    {\"models\":[{\"name\":\"nomic-embed-text:latest\"},\
+                    {\"name\":\"qwen2.5-coder:7b\"},{\"name\":\"qwen3-coder:30b\"},\
+                    {\"name\":\"qwen3.6:35b\"},{\"name\":\"gemma4:e2b\"}]}";
+        let models = parse_tags_response(resp).unwrap();
+        assert_eq!(models.len(), 5);
+
+        // préférence exacte puis par préfixe
+        assert_eq!(pick_model(&models, Some("qwen2.5-coder:7b")).as_deref(), Some("qwen2.5-coder:7b"));
+        assert_eq!(pick_model(&models, Some("qwen3-coder")).as_deref(), Some("qwen3-coder:30b"));
+        // heuristique : le plus gros modèle de CODE (pas le 35b généraliste),
+        // jamais un modèle d'embedding
+        assert_eq!(pick_model(&models, None).as_deref(), Some("qwen3-coder:30b"));
+        // préférence introuvable → retombe sur l'heuristique via l'appelant
+        assert_eq!(pick_model(&models, Some("inexistant")).as_deref(), Some("qwen3-coder:30b"));
+        // aucun modèle de code → le plus gros généraliste
+        let generic = vec!["llama3:8b".to_string(), "qwen3.6:35b".to_string()];
+        assert_eq!(pick_model(&generic, None).as_deref(), Some("qwen3.6:35b"));
+        assert_eq!(pick_model(&[], None), None);
     }
 
     #[test]

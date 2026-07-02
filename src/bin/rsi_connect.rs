@@ -18,7 +18,10 @@
 //! |---------------|----------------------------|------------------------------------------|
 //! | openclaw      | `OPENCLAW_CONFIG`          | `~/.openclaw/mcp.json`                   |
 //! | hermes-agent  | `HERMES_AGENT_CONFIG`      | `~/.config/hermes-agent/mcp.json`        |
+//! | soullink      | `SOULLINK_CONFIG`          | `~/.soullink/mcp.json`                   |
+//! | SoulSystem    | `SOULSYSTEM_CONFIG`        | `~/.soulsystem/mcp.json`                 |
 //! | générique MCP | `MCP_CONFIG`               | `~/.config/mcp/servers.json`             |
+//! | *n'importe quel autre* | `RSI_CONNECT_TARGETS="nom=chemin,…"` | (aucun)              |
 //!
 //! Usage :
 //! ```text
@@ -267,14 +270,28 @@ fn main() {
         );
     }
 
-    let targets = [
-        ("openclaw", target_path("OPENCLAW_CONFIG", &[".openclaw", "mcp.json"])),
+    let mut targets: Vec<(String, PathBuf)> = vec![
+        ("openclaw".into(), target_path("OPENCLAW_CONFIG", &[".openclaw", "mcp.json"])),
         (
-            "hermes-agent",
+            "hermes-agent".into(),
             target_path("HERMES_AGENT_CONFIG", &[".config", "hermes-agent", "mcp.json"]),
         ),
-        ("mcp (générique)", target_path("MCP_CONFIG", &[".config", "mcp", "servers.json"])),
+        ("soullink".into(), target_path("SOULLINK_CONFIG", &[".soullink", "mcp.json"])),
+        ("SoulSystem".into(), target_path("SOULSYSTEM_CONFIG", &[".soulsystem", "mcp.json"])),
+        ("mcp (générique)".into(), target_path("MCP_CONFIG", &[".config", "mcp", "servers.json"])),
     ];
+    // Cibles arbitraires : RSI_CONNECT_TARGETS="nom=chemin,nom2=chemin2" —
+    // n'importe quel runtime à config `mcpServers` s'ajoute sans recompiler.
+    if let Ok(extra) = std::env::var("RSI_CONNECT_TARGETS") {
+        for pair in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match pair.split_once('=') {
+                Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+                    targets.push((name.trim().to_string(), PathBuf::from(path.trim())));
+                }
+                _ => eprintln!("  ⚠ RSI_CONNECT_TARGETS : entrée ignorée « {pair} » (attendu nom=chemin)"),
+            }
+        }
+    }
 
     let mut ok = 0usize;
     for (runtime, path) in &targets {

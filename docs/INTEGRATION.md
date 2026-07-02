@@ -2,7 +2,8 @@
 
 Ce document décrit comment piloter le système RSI depuis un **agent IA / LLM**,
 de la façade programmatique jusqu'à la connexion automatique aux runtimes
-d'agents (openclaw, hermes-agent, …).
+d'agents (openclaw, hermes-agent, soullink, ou tout autre via
+`RSI_CONNECT_TARGETS`).
 
 Trois niveaux d'intégration, du plus bas au plus automatique :
 
@@ -77,8 +78,30 @@ cargo build --release --bin rsi-mcp
 
 ### Outils exposés
 
-`rsi_describe`, `rsi_create`, `rsi_step`, `rsi_run`, `rsi_state`,
-`rsi_export`, `rsi_reset`, `rsi_list_sessions`.
+Sessions & pilotage : `rsi_describe`, `rsi_create`, `rsi_step`, `rsi_run`,
+`rsi_run_until`, `rsi_state`, `rsi_export`, `rsi_reset`, `rsi_list_sessions`,
+`rsi_health`, `rsi_metrics`. Raffinement LLM sous garde-fous :
+`rsi_refine_new`, `rsi_incumbent`, `rsi_evaluate`, `rsi_propose`,
+`rsi_refine_save`, `rsi_refine_load`.
+
+**Auto-amélioration de code (boucle DGM/STOP)** — la capacité phare, exposée
+en **arrière-plan** (une étape = build+test+bench ≈ 1-3 min, un appel bloquant
+serait inutilisable) :
+
+- `rsi_dgm_start {workspace, goal, allow, [steps, bench, min_gain, model,
+  seed, timeout_secs]}` — lance UN job (thread) qui propose des patchs via le
+  LLM (**connexion automatique** : modèle Ollama découvert via `/api/tags`,
+  ou préférence `model`/`RSI_LLM_MODEL`), les évalue en copies isolées et
+  archive les strictement meilleurs. Nécessite `--features llm-ollama`.
+- `rsi_dgm_status {}` — phase courante, résultat de chaque étape
+  (accepté/rejeté, fitness, raison), meilleur variant, erreur éventuelle.
+
+> **Sûreté : DRY-RUN STRICT côté MCP.** Aucun outil ne peut écrire l'arbre
+> vivant : un agent-framework peut *chercher* des améliorations, jamais les
+> *appliquer*. La promotion (`rsi-dgm <ws> … --promote`) reste un acte humain
+> délibéré en CLI, après revue du diff — doctrine issue de la campagne Jetson
+> (cf. `P1_DESIGN_SPIKE.md` : deux patchs plus rapides mais subtilement faux
+> n'ont été attrapés qu'en revue humaine).
 
 ### Exemple d'échange
 
@@ -128,7 +151,20 @@ cargo build --release --bins
 |----------------|-------------------------|--------------------------------------------|
 | openclaw       | `OPENCLAW_CONFIG`       | `~/.openclaw/mcp.json`                     |
 | hermes-agent   | `HERMES_AGENT_CONFIG`   | `~/.config/hermes-agent/mcp.json`          |
+| soullink       | `SOULLINK_CONFIG`       | `~/.soullink/mcp.json`                     |
+| SoulSystem     | `SOULSYSTEM_CONFIG`     | `~/.soulsystem/mcp.json`                   |
 | générique MCP  | `MCP_CONFIG`            | `~/.config/mcp/servers.json`               |
+
+**N'importe quel autre framework** s'ajoute sans recompiler, via
+`RSI_CONNECT_TARGETS` (paires `nom=chemin` séparées par des virgules) :
+
+```bash
+RSI_CONNECT_TARGETS="monagent=~/.monagent/mcp.json,autre=/etc/autre/servers.json" \
+  rsi-connect
+```
+
+Tout runtime qui lit un fichier `{"mcpServers": {…}}` (le format standard MCP)
+est donc connectable ; la fusion préserve les serveurs déjà déclarés.
 
 Le chemin du binaire MCP est résolu dans l'ordre : `--bin`, puis
 `RSI_MCP_BIN`, puis `target/release|debug/rsi-mcp`, puis à côté de

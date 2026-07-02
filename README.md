@@ -23,8 +23,8 @@ goulot : cognitif (0 %) ──────────────► substrat (
 
 ## 🚀 Installation en une commande
 
-Connecte RSI à ton agent IA (openclaw, hermes-agent, ou tout client MCP) —
-aucune configuration manuelle :
+Connecte RSI à ton agent IA (openclaw, hermes-agent, soullink, ou tout client
+MCP via `RSI_CONNECT_TARGETS`) — aucune configuration manuelle :
 
 ```bash
 git clone https://github.com/CHECKUPAUTO/RSI && cd RSI && ./install.sh
@@ -176,7 +176,13 @@ Chaque [`StepReport`](src/agent.rs) expose :
   (`rsi-refine`). Voir [`docs/LLM_INTEGRATION.md`](docs/LLM_INTEGRATION.md) et
   [`docs/SAFETY.md`](docs/SAFETY.md).
 - **Auto-connexion** (`rsi-connect` + `scripts/auto-connect.sh`) aux runtimes
-  d'agents (openclaw, hermes-agent, …) sans intervention humaine.
+  d'agents (openclaw, hermes-agent, soullink, ou n'importe quel autre via
+  `RSI_CONNECT_TARGETS="nom=chemin,…"`) sans intervention humaine. Côté LLM,
+  **connexion automatique** : `rsi-dgm` (défaut `--backend auto`) découvre les
+  modèles Ollama installés (`/api/tags`) et choisit le meilleur modèle de code
+  (`RSI_LLM`/`RSI_LLM_MODEL` pour préférer) ; la boucle DGM est aussi pilotable
+  depuis un agent via MCP (`rsi_dgm_start`/`rsi_dgm_status`, dry-run strict —
+  la promotion reste un acte humain en CLI).
 - **Backends réels** (features optionnelles, cœur sans dépendance par défaut) —
   voir l'étude : [`docs/INTEGRATION_STUDY.md`](docs/INTEGRATION_STUDY.md) :
   - `forge` — `ℳ` réel (recherche évolutionnaire exécutée, fitness `SI_global`)

@@ -80,8 +80,40 @@ println!("{} (train={:.3}, held-out={:.3})", /* best */ task.score(&best),
 use rsi::llm::OllamaClient;
 let client = OllamaClient::new("llama3.2");           // 127.0.0.1:11434 par défaut
 // .with_endpoint("127.0.0.1", 11434).with_timeout(...)
+// .with_num_predict(4096)   // plafond de génération (défaut 4096)
+// .with_num_ctx(16384)      // fenêtre de contexte (défaut 16384 — le défaut
+//                           // serveur de 4096 tronque les prompts réels)
 # }
 ```
+
+### Connexion automatique (le LLM au choix de l'utilisateur, sans flags)
+
+Plus besoin de connaître le nom exact d'un modèle : RSI **découvre** ce qui
+est installé et choisit tout seul.
+
+```rust
+# #[cfg(feature = "llm-ollama")] {
+use rsi::llm::{ollama_installed_models, pick_model};
+let installed = ollama_installed_models("127.0.0.1", 11434,
+                                        std::time::Duration::from_secs(10))?;
+// préférence exacte ou par préfixe ("qwen3-coder" → "qwen3-coder:30b"),
+// sinon heuristique : meilleur modèle de CODE installé (embeddings exclus)
+let model = pick_model(&installed, std::env::var("RSI_LLM_MODEL").ok().as_deref());
+# }
+```
+
+Côté CLI (`rsi-dgm`), c'est le **défaut** (`--backend auto`) :
+
+| Priorité | Source                          | Exemple                                |
+|----------|---------------------------------|----------------------------------------|
+| 1        | flags CLI                       | `--backend ollama --model qwen3-coder:30b` |
+| 2        | env `RSI_LLM`                   | `RSI_LLM=ollama:qwen3-coder:30b`, `RSI_LLM=claude`, `RSI_LLM=auto` |
+| 3        | env `RSI_LLM_MODEL` (préférence)| `RSI_LLM_MODEL=qwen3-coder`            |
+| 4        | auto : sonde Ollama (`/api/tags`), meilleur modèle de code ; sinon Claude si `ANTHROPIC_API_KEY` (feature `llm-claude-ureq`) ; sinon erreur explicite | — |
+
+Le serveur MCP (`rsi_dgm_start`) applique la même résolution (`model` de
+l'appel, sinon `RSI_LLM_MODEL`, sinon découverte ; hôte via
+`RSI_OLLAMA_HOST`/`RSI_OLLAMA_PORT`).
 
 ### Backend Claude (transport injecté)
 

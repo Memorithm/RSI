@@ -888,21 +888,34 @@ impl Evaluator for CargoEvaluator {
         };
         let all_green = failed == 0;
         let score = if !self.bench_command.is_empty() && all_green {
-            let mut bench = Command::new("cargo");
-            bench.current_dir(&dir);
-            for a in &self.bench_command {
-                bench.arg(a);
+            // Le bench tourne PLUSIEURS fois, on garde le MAX : le bruit
+            // machine est unilatéral (il ne fait que ralentir), donc le max
+            // approche la vraie capacité. Surtout, la RÉFÉRENCE reçoit le même
+            // traitement — une référence mesurée pendant une interférence
+            // soutenue fabriquait de faux ACCEPTÉ (+6.5 % « gagnés » sur json
+            // en campagne parce que la référence seule était sortie lente).
+            const BENCH_TRIES: usize = 3;
+            let mut best: Option<f64> = None;
+            for _ in 0..BENCH_TRIES {
+                let mut bench = Command::new("cargo");
+                bench.current_dir(&dir);
+                for a in &self.bench_command {
+                    bench.arg(a);
+                }
+                let (bench_ok, bench_out) = run_bounded(bench, self.timeout, self.max_output)
+                    .map_err(|e| DgmError::Evaluation(format!("cargo bench cmd: {e}")))?;
+                if let Some(s) = parse_bench_score(&bench_out).filter(|_| bench_ok) {
+                    best = Some(best.map_or(s, |b: f64| b.max(s)));
+                }
             }
-            let (bench_ok, bench_out) = run_bounded(bench, self.timeout, self.max_output)
-                .map_err(|e| DgmError::Evaluation(format!("cargo bench cmd: {e}")))?;
-            match parse_bench_score(&bench_out) {
-                Some(s) if bench_ok => {
-                    notes = format!("all green; RSI_BENCH_SCORE={s}");
+            match best {
+                Some(s) => {
+                    notes = format!("all green; RSI_BENCH_SCORE={s} (max de {BENCH_TRIES} runs)");
                     s
                 }
                 // bench échoué / score absent ⇒ neutre (pass-rate), pas d'accept
                 // sur une mesure manquante.
-                _ => {
+                None => {
                     notes = "all green; bench sans score → pass-rate".to_string();
                     passrate
                 }

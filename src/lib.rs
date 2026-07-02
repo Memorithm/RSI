@@ -85,6 +85,7 @@ pub mod schedule;
 #[cfg(feature = "scirust")]
 pub mod scirust_bridge;
 pub mod sha256;
+pub mod simulation;
 pub mod state;
 pub mod substrate;
 pub mod surface;

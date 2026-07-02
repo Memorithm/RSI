@@ -112,6 +112,13 @@ name = "rsi-scholar"
 path = "src/bin/rsi_scholar.rs"
 required-features = ["llm-ollama"]
 
+# Calibration du pré-crible simulé (world model Qwen-AgentWorld × gate DGM).
+# Cf. docs/AGENTWORLD_STUDY.md.
+[[bin]]
+name = "rsi-simcal"
+path = "src/bin/rsi_simcal.rs"
+required-features = ["llm-ollama"]
+
 [profile.release]
 opt-level = 3
 lto = true

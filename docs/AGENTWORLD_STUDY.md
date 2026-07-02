@@ -126,11 +126,38 @@ c'est un **modèle**, il se branche par les backends LLM existants :
 
 ## Plan proposé
 
-| # | Étape | Coût | Décide |
-|---|-------|------|--------|
-| 1 | `ollama pull` d'un GGUF AgentWorld sur le Thor + sonde manuelle (prompt « voici un diff, prédis le verdict cargo ») | 1 h | faisabilité brute |
-| 2 | **Calibration** : rejouer ~30 patchs archivés (vérité terrain des campagnes) → précision/rappel | ½ jour | tout le reste |
-| 3 | `SimulatedEvaluator` + pré-crible optionnel dans `dgm.rs` | 1-2 j | axe 1 |
-| 4 | Feedback anticipé dans le prompt (axe 3) | ½ j | — |
-| 5 | Exportateur de trajectoires (axe 4) | 1 j | flywheel |
-| 6 | Chaos simulé / AgentWorldBench (axes 5-6) | recherche continue | — |
+| # | Étape | Coût | Décide | État |
+|---|-------|------|--------|------|
+| 1 | GGUF AgentWorld sur le Thor + sonde manuelle | 1 h | faisabilité brute | ✅ **fait** |
+| 2 | **Calibration** : proposeur réel → gate réel (vérité terrain) vs verdict simulé → matrice de confusion (`rsi-simcal`) | ½ j | tout le reste | ✅ **outillé** — à faire tourner |
+| 3 | `SimulatedEvaluator` + pré-crible optionnel dans `dgm.rs` | 1-2 j | axe 1 | ⏳ après chiffres de l'étape 2 |
+| 4 | Feedback anticipé dans le prompt (axe 3) | ½ j | — | ⏳ |
+| 5 | Exportateur de trajectoires (axe 4) | 1 j | flywheel | ⏳ |
+| 6 | Chaos simulé / AgentWorldBench (axes 5-6) | recherche continue | — | ⏳ |
+
+### État — sonde réussie, harnais livré (Jetson Thor)
+
+**Étape 1 ✅** : `Qwen-AgentWorld-35B-A3B` (GGUF Q4_K_M, ~21 Go) importé dans
+Ollama (via `ollama create` depuis le blob en cache — le `pull` timeoutait à
+la finalisation hf.co). Sonde (diff `acc += x` → `acc += x*2.0`) : le modèle a
+prédit **exactement** `sum(&[1.0;100]) → 200.0`, test **FAILED**, avec un
+`cargo test` réaliste (`left: 200.0, right: 100.0`) et l'explication juste. La
+matière est bonne.
+
+**Étape 2 ✅ outillée** : binaire **`rsi-simcal`** + module std-only
+`src/simulation.rs` (constructeur de prompt, parseur de verdict — testé sur la
+*vraie* sortie de la sonde —, matrice de confusion). Le harnais fait proposer
+de vrais patchs (modèle de code), les juge par le **gate réel** (vérité
+terrain) ET par le **world model**, et rend une matrice de confusion. Lancer
+sur le Thor :
+
+```bash
+cargo build --release --features llm-ollama --bin rsi-simcal
+rsi-simcal . --goal "optimise kernels" --allow src/kernels.rs \
+  --bench "run --release --example bench_kernel" \
+  --sim-model agentworld --model qwen3-coder:30b --steps 15
+```
+
+Décision go/no-go de l'axe 1 : viser une **exactitude « tests » élevée** avec
+**peu de faux négatifs** (fn = amélioration réelle écartée à tort — le seul
+coût dangereux d'un pré-crible ; un faux positif ne coûte qu'un build).

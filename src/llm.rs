@@ -469,17 +469,27 @@ fn extract_response_field(raw: &str) -> Result<String, LlmError> {
     // compteurs disent quelle limite a mordu — sans eux, une réponse coupée
     // en plein bloc FIND ressemble à un caprice du modèle (vécu sur Jetson :
     // 8/8 « pas de proposition » sur sha256, cause invisible).
-    if let Some(reason) = json.get("done_reason").and_then(|v| v.as_str()) {
-        if reason != "stop" {
-            let p = json.get("prompt_eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-            let g = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
-            eprintln!(
-                "[llm] ATTENTION : génération tronquée par Ollama (done_reason={reason}, \
-                 prompt={p} tokens, généré={g} tokens). Si prompt+généré ≈ num_ctx, la \
-                 fenêtre de contexte du serveur a mordu (vérifier `ollama show <modèle>` \
-                 et OLLAMA_CONTEXT_LENGTH) ; sinon augmenter num_predict."
-            );
-        }
+    let reason = json.get("done_reason").and_then(|v| v.as_str());
+    let p = json.get("prompt_eval_count").and_then(|v| v.as_u64());
+    let g = json.get("eval_count").and_then(|v| v.as_u64());
+    if reason.is_some_and(|r| r != "stop") {
+        eprintln!(
+            "[llm] ATTENTION : génération tronquée par Ollama (done_reason={}, \
+             prompt={:?} tokens, généré={:?} tokens). Si prompt+généré ≈ num_ctx, la \
+             fenêtre de contexte du serveur a mordu (vérifier `ollama show <modèle>` \
+             et OLLAMA_CONTEXT_LENGTH) ; sinon augmenter num_predict.",
+            reason.unwrap_or("?"),
+            p,
+            g
+        );
+    } else if std::env::var("RSI_DGM_DEBUG").is_ok() {
+        // En debug, toujours montrer les compteurs : une réponse coupée SANS
+        // done_reason="length" (version Ollama ancienne, champ absent…) reste
+        // diagnosticable par prompt_eval_count/eval_count.
+        eprintln!(
+            "[llm] méta Ollama : done_reason={:?}, prompt={:?} tokens, généré={:?} tokens",
+            reason, p, g
+        );
     }
     match json.get("response").and_then(|v| v.as_str()) {
         Some(t) => Ok(t.to_string()),

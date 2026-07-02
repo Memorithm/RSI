@@ -42,7 +42,7 @@ use rsi::dgm::{
 
 const VALUE_FLAGS: &[&str] = &[
     "--paper", "--allow", "--target", "--bench", "--max-goals", "--steps", "--min-gain",
-    "--model", "--seed", "--timeout", "--out",
+    "--model", "--seed", "--timeout", "--out", "--paper-model",
 ];
 
 fn main() {
@@ -99,9 +99,18 @@ fn main() {
     println!("• addon papers-agent : détecté");
 
     // --- 2. Analyse du papier → objectifs directifs. ------------------------ //
-    println!("• analyse du papier « {paper} » (papers analyze --no-llm)…");
+    // `--paper-llm` : analyse LLM multi-passes de PAPERS (extraction de VRAIES
+    // techniques ; l'heuristique --no-llm ne rend qu'un placeholder — vécu).
+    // `--paper-model` : modèle passé à PAPERS (défaut PAPERS : gemma4:e2b).
+    let paper_llm = args.iter().any(|a| a == "--paper-llm");
+    let paper_model = flag_value(&args, "--paper-model");
+    let llm_model: Option<String> = if paper_llm { Some(paper_model.unwrap_or_default()) } else { None };
+    println!(
+        "• analyse du papier « {paper} » (papers analyze{})…",
+        if paper_llm { ", LLM — peut prendre plusieurs minutes" } else { " --no-llm" }
+    );
     let out_dir = ws.join(".rsi_scholar");
-    let analysis: PaperAnalysis = match papers.analyze(&paper, &out_dir, &[]) {
+    let analysis: PaperAnalysis = match papers.analyze(&paper, &out_dir, llm_model.as_deref()) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("erreur : analyse du papier : {e}");
@@ -117,8 +126,13 @@ fn main() {
     let goals = PapersAddon::directive_goals(&analysis, &target, max_goals);
     if goals.is_empty() {
         println!(
-            "\n  aucun algorithme exploitable extrait du papier — rien à tenter.\n  \
-             (essayez l'analyse LLM de PAPERS, ou un autre papier)"
+            "\n  aucune technique exploitable extraite du papier — rien à tenter.\n  {}",
+            if paper_llm {
+                "(essayez un papier plus algorithmique, ou --paper-model <modèle plus fort>)"
+            } else {
+                "L'analyse heuristique (--no-llm) n'extrait pas les techniques : relancez \
+                 avec --paper-llm (analyse LLM de PAPERS, modèle via --paper-model)."
+            }
         );
         return;
     }
@@ -335,6 +349,8 @@ fn usage() {
            --bench \"ARGS\"      score = RSI_BENCH_SCORE (perf réelle)\n  \
            --max-goals N       objectifs max (défaut 3)   --steps N  par objectif (défaut 6)\n  \
            --min-gain FRAC     anti-bruit (défaut 0.05)   --model NAME (sinon auto)\n  \
+           --paper-llm         analyse LLM de PAPERS (extrait les VRAIES techniques ;\n                      sans lui, l'heuristique ne rend que des métadonnées)\n  \
+           --paper-model NAME  modèle de l'analyse PAPERS (défaut : celui de PAPERS)\n  \
            --seed N  --timeout SECS  --out RAPPORT.md\n\n\
          Addon papers-agent requis : binaire `papers` sur le PATH ou RSI_PAPERS_BIN.\n\
          LLM : connexion automatique (Ollama local, modèle découvert)."

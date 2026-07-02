@@ -105,15 +105,18 @@ impl PapersAddon {
         self
     }
 
-    /// Analyse un papier (`papers analyze -s <source> --no-llm -o <out_dir>`)
-    /// et parse `analysis.json`. `--no-llm` : l'analyse heuristique suffit à
-    /// extraire les techniques et reste déterministe/rapide ; l'appelant peut
-    /// préférer l'analyse LLM via `extra_args`.
+    /// Analyse un papier (`papers analyze -s <source> -o <out_dir> …`) et
+    /// parse `analysis.json`.
+    ///
+    /// `llm_model` pilote l'analyse : `None` ⇒ `--no-llm` (heuristique,
+    /// rapide, déterministe — mais n'extrait PAS les techniques du papier,
+    /// seulement les métadonnées) ; `Some("")` ⇒ analyse **LLM** avec le
+    /// modèle par défaut de PAPERS ; `Some(m)` ⇒ `--model m`.
     pub fn analyze(
         &self,
         source: &str,
         out_dir: &Path,
-        extra_args: &[String],
+        llm_model: Option<&str>,
     ) -> Result<PaperAnalysis, String> {
         std::fs::create_dir_all(out_dir).map_err(|e| format!("création {}: {e}", out_dir.display()))?;
         let mut args: Vec<String> = vec![
@@ -123,10 +126,10 @@ impl PapersAddon {
             "-o".into(),
             out_dir.display().to_string(),
         ];
-        if extra_args.is_empty() {
-            args.push("--no-llm".into());
-        } else {
-            args.extend(extra_args.iter().cloned());
+        match llm_model {
+            None => args.push("--no-llm".into()),
+            Some("") => {}
+            Some(m) => args.extend(["--model".into(), m.to_string()]),
         }
         run_bounded(&self.bin, &args, self.timeout)?;
         let path = out_dir.join("analysis.json");
@@ -160,7 +163,7 @@ impl PapersAddon {
         analysis
             .algorithms
             .iter()
-            .filter(|a| !a.name.trim().is_empty())
+            .filter(|a| !a.name.trim().is_empty() && !is_placeholder_algorithm(a))
             .take(max_goals.max(1))
             .map(|a| {
                 let mut g = format!(
@@ -179,6 +182,21 @@ impl PapersAddon {
             })
             .collect()
     }
+}
+
+/// Vrai si l'« algorithme » est un placeholder de PAPERS (analyse heuristique
+/// sans LLM : il décrit alors son PROPRE pipeline, pas une technique du
+/// papier). Fabriquer un objectif DGM à partir de ça gaspille des steps —
+/// vécu sur Thor : « Pipeline heuristique / INFORMATION NON DISPONIBLE ».
+fn is_placeholder_algorithm(a: &PaperAlgorithm) -> bool {
+    let name = a.name.to_lowercase();
+    if name.contains("heuristique") || name.contains("heuristic") {
+        return true;
+    }
+    if a.complexity.as_deref().is_some_and(|c| c.to_uppercase().contains("NON DISPONIBLE")) {
+        return true;
+    }
+    a.pseudocode.as_deref().is_some_and(|p| p.contains("ProcessPaper"))
 }
 
 /// Parse le sous-ensemble utile d'`analysis.json` (fonction pure, testée).
@@ -294,6 +312,19 @@ mod tests {
         // champs absents ⇒ défauts, pas d'erreur (schéma amont libre d'évoluer)
         let min = parse_analysis_json("{}").unwrap();
         assert!(min.algorithms.is_empty() && min.summary.is_empty());
+    }
+
+    #[test]
+    fn placeholder_algorithms_never_become_goals() {
+        // Sans LLM, PAPERS rend un pseudo-algorithme décrivant son propre
+        // pipeline — aucun objectif ne doit en sortir (vécu Thor).
+        let raw = r#"{"algorithms":[
+            {"name":"Pipeline heuristique","complexity":"INFORMATION NON DISPONIBLE DANS LE PAPIER",
+             "pseudocode":"FONCTION ProcessPaper(document)"},
+            {"name":"Analyse heuristique","complexity":null,"pseudocode":null}
+        ]}"#;
+        let a = parse_analysis_json(raw).unwrap();
+        assert!(PapersAddon::directive_goals(&a, "cible", 3).is_empty());
     }
 
     #[test]

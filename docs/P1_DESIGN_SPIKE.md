@@ -517,5 +517,30 @@ Le LLM est une *source de propositions sous contrainte*, pas un pilote.
   `kk`. Doctrine issue des deux épisodes : chaque patch accepté est relu à la
   recherche du cas que les tests ne couvrent pas, et ce cas **devient un
   test** — le gate se durcit à chaque promotion.
+- ✅ **CAMPAGNE « ON FAIT TOUT » — cinq cibles, cinq verdicts, tous honnêtes**
+  (Jetson Thor, qwen3-coder:30b local) : (1) **sum ×2.6** (1149 → 2952 réd./s)
+  — somme par blocs de 8 vectorisée, deux promotions successives, le gate
+  Kahan a abattu 3 variantes fausses en direct ; (2) **sha256 +18 %** (213 →
+  253 Mo/s) — déroulage par 8 de la boucle de rondes, obtenu avec un objectif
+  *directif* après que l'objectif vague ne produisait que des no-ops ; gate =
+  vecteurs officiels FIPS ; **dépendant de l'architecture** (−4 % mesuré sur
+  x86 — le Thor est le matériel cible) ; (3) **json : pas de gain, et c'est
+  le bon verdict** — un « ACCEPTÉ +6.5 % » s'est révélé être un *bruit de la
+  RÉFÉRENCE* (le bench varie de ±5 % entre runs : le seuil anti-bruit protège
+  contre une variante chanceuse, pas contre une référence malchanceuse —
+  à stabiliser avant de retenter) ; (4) **matmul/transpose à min-gain 3 % :
+  plateau confirmé** (5 variantes cassées rejetées par les tests durcis) ;
+  (5) **conv2d écarté par sondage préalable** (×1.09 — l'auto-vectorisation
+  fait déjà le travail, pas de gradient à offrir). Corrections d'outillage
+  nées de la campagne : `options.num_ctx=16384` (le défaut serveur de 4096
+  tronquait le prompt sur les fichiers réels — json passait de 0/8 à 8/8
+  propositions applicables), MAX_FILE_CHARS 8k→24k, affichage live des steps
+  (8 étapes muettes ≈ blocage apparent), compteurs de tokens Ollama en debug,
+  **raison d'échec de parsing explicite** (l'aperçu tronqué à 2000 chars
+  avait fait prendre des no-ops complets pour des troncatures serveur !),
+  REPLACE borné par un FIND: suivant (double proposition concaténée), prompt
+  anti-FIND-géant et anti-no-op. Leçon de méthode : quand le modèle tourne
+  en rond, un **objectif directif** (« déroule par 8 ») débloque ce qu'un
+  objectif vague (« accélère ») n'obtient pas.
 - ⏭️ **Reste** : vérification formelle creusot/loom (P0.4) — outillage + temps
   expert ; non bloquant.

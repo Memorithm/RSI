@@ -119,3 +119,18 @@ volume d'idées dépasse le budget de steps DGM (~1-3 min/step).
 **Prérequis côté Jetson** : compiler papers_core (`cargo build --release`)
 — il faut ses crates scirust sous `/tmp/scirust` ou corriger les `path` du
 Cargo.toml ; le binaire `papers` doit être sur le PATH ou `RSI_PAPERS_BIN`.
+
+## État — premier run complet (Jetson Thor)
+
+Le pipeline **READ → PROPOSE → PROVE → KEEP** a tourné de bout en bout sur
+arXiv 2006.06762 (Ansor) : analyse LLM de PAPERS (qwen3-coder:30b) → résumé
+et contributions substantiels → 1 objectif directif portant le pseudocode du
+papier → 6 steps DGM (5 candidats tout-verts) → **∅ honnête** (cible
+`kernels::matmul` déjà à ×7,3, et Ansor est un papier *système* — cadre de
+recherche, pas de micro-technique patchable). Trois corrections amont nées
+des runs : filtrage des placeholders de PAPERS, `--paper-llm`/`--paper-model`
+(l'heuristique `--no-llm` n'extrait pas les techniques), lecture du champ
+`pseudo_code` (même en mode LLM, `algorithms` reste le placeholder — biais
+amont). Leçon : la qualité du résultat dépend du **couple papier↔cible** —
+viser un papier algorithmique dont la technique parle le langage de la cible
+(p. ex. simdjson → `Json::parse`), pas un papier de framework.

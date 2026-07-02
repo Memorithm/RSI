@@ -463,6 +463,24 @@ fn extract_response_field(raw: &str) -> Result<String, LlmError> {
     };
     let json = crate::json::Json::parse(body.trim())
         .map_err(|e| LlmError::Backend(format!("JSON Ollama invalide: {e}")))?;
+    // Diagnostic de troncature : `done_reason` vaut "stop" pour une fin
+    // naturelle ; "length" signifie que le serveur a COUPÉ la génération
+    // (plafond num_predict, ou num_ctx épuisé par prompt+réponse). Les
+    // compteurs disent quelle limite a mordu — sans eux, une réponse coupée
+    // en plein bloc FIND ressemble à un caprice du modèle (vécu sur Jetson :
+    // 8/8 « pas de proposition » sur sha256, cause invisible).
+    if let Some(reason) = json.get("done_reason").and_then(|v| v.as_str()) {
+        if reason != "stop" {
+            let p = json.get("prompt_eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let g = json.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            eprintln!(
+                "[llm] ATTENTION : génération tronquée par Ollama (done_reason={reason}, \
+                 prompt={p} tokens, généré={g} tokens). Si prompt+généré ≈ num_ctx, la \
+                 fenêtre de contexte du serveur a mordu (vérifier `ollama show <modèle>` \
+                 et OLLAMA_CONTEXT_LENGTH) ; sinon augmenter num_predict."
+            );
+        }
+    }
     match json.get("response").and_then(|v| v.as_str()) {
         Some(t) => Ok(t.to_string()),
         None => {
@@ -998,6 +1016,16 @@ mod ollama_tests {
             Err(LlmError::Backend(m)) => assert!(m.contains("not found")),
             other => panic!("attendu Backend error, obtenu {other:?}"),
         }
+    }
+
+    #[test]
+    fn truncated_response_still_extracted() {
+        // done_reason="length" (génération coupée par le serveur) : le texte
+        // partiel est rendu quand même (l'appelant décide) — l'avertissement
+        // part sur stderr, il ne doit pas transformer la réponse en erreur.
+        let resp = "HTTP/1.1 200 OK\r\n\r\n{\"response\":\"partiel\",\"done\":true,\
+                    \"done_reason\":\"length\",\"prompt_eval_count\":2500,\"eval_count\":1596}";
+        assert_eq!(extract_response_field(resp).unwrap(), "partiel");
     }
 }
 

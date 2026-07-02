@@ -1163,8 +1163,10 @@ impl<M: CodeModel> LlmProposer<M> {
              Here is their CURRENT content — your FIND text MUST be copied \
              verbatim from it (exact, occurring once):\n{sources}\n{lessons}\n\
              Propose ONE small, safe, compiling change. The FIND block must be an \
-             EXACT substring of the file above. Respond EXACTLY in this format and \
-             nothing else (close every code fence):\n\
+             EXACT substring of the file above, and it must be SHORT: the smallest \
+             unique fragment enclosing your edit (at most ~25 lines). NEVER quote a \
+             whole function — long FIND blocks get truncated and are rejected. \
+             Respond EXACTLY in this format and nothing else (close every code fence):\n\
              TARGET: <relative/path.rs>\n\
              FIND:\n<<<\n<exact existing text, occurring once>\n>>>\n\
              REPLACE:\n<<<\n<the replacement text>\n>>>\n\

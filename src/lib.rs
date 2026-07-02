@@ -41,6 +41,7 @@
 //! assert!(end >= start); // l'intelligence globale ne régresse pas
 //! ```
 
+pub mod addons;
 pub mod agent;
 pub mod api;
 pub mod ascent;

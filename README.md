@@ -183,6 +183,14 @@ Chaque [`StepReport`](src/agent.rs) expose :
   (`RSI_LLM`/`RSI_LLM_MODEL` pour préférer) ; la boucle DGM est aussi pilotable
   depuis un agent via MCP (`rsi_dgm_start`/`rsi_dgm_status`, dry-run strict —
   la promotion reste un acte humain en CLI).
+- **Addons** (`addons.rs`, [`docs/ADDONS.md`](docs/ADDONS.md)) — capacités
+  enfichables par binaire externe borné + adaptateur std-only (détection à
+  l'exécution, dégradation propre, le gate reste autoritaire). Premier addon :
+  **papers-agent** (PAPERS V2) — apprendre de la littérature pour s'améliorer :
+  connaissances → composante D, techniques des papiers → **objectifs DGM
+  directifs** (`rsi-scholar` : papier → objectifs → preuves empiriques →
+  rapport), recherche sémantique → contexte du proposeur. Étude :
+  [`docs/PAPERS_SYNERGY.md`](docs/PAPERS_SYNERGY.md).
 - **Backends réels** (features optionnelles, cœur sans dépendance par défaut) —
   voir l'étude : [`docs/INTEGRATION_STUDY.md`](docs/INTEGRATION_STUDY.md) :
   - `forge` — `ℳ` réel (recherche évolutionnaire exécutée, fitness `SI_global`)

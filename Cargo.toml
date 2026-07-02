@@ -105,6 +105,13 @@ name = "rsi-dgm"
 path = "src/bin/rsi_dgm.rs"
 required-features = ["llm-ollama"]
 
+# Addon papers-agent : papier scientifique → objectifs DGM directifs → preuves
+# empiriques (dry-run strict). Cf. docs/ADDONS.md et docs/PAPERS_SYNERGY.md.
+[[bin]]
+name = "rsi-scholar"
+path = "src/bin/rsi_scholar.rs"
+required-features = ["llm-ollama"]
+
 [profile.release]
 opt-level = 3
 lto = true

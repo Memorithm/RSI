@@ -577,6 +577,8 @@ pub struct ImprovementContext<'a> {
     /// Justifications des tentatives récemment rejetées, pour éviter de répéter
     /// les impasses (« renforcement verbal » bon marché, cf. Reflexion).
     pub recent_rejections: &'a [String],
+    /// Verdicts d'un simulateur sur les tentatives de CE step (axe 3).
+    pub simulated_feedback: &'a [String],
 }
 
 impl ImprovementContext<'_> {
@@ -615,10 +617,19 @@ pub trait Proposer {
 /// quand il est certain que ça casse*, jamais celui d'écarter une amélioration
 /// (calibration : zéro faux négatif sur les verdicts conclus). Std-only : le
 /// transport LLM vit chez l'appelant (binaire, feature réseau).
+/// Verdict prédit par un world model, avec raison optionnelle.
+#[derive(Debug, Clone, Default)]
+pub struct Prediction {
+    /// `None` = indécis ; `Some(true)` = prédit bon ; `Some(false)` = prédit cassé.
+    pub pass: Option<bool>,
+    /// Cause d'une casse prédite, réinjectée au proposeur (axe 3).
+    pub reason: Option<String>,
+}
+
 pub trait VerdictPredictor {
     /// Prédit si le patch (diff `find`→`replace` sur `target`, dont le contenu
     /// actuel est `file_content`) laissera le workspace tout-au-vert.
-    fn predict_pass(&self, target: &str, file_content: &str, find: &str, replace: &str) -> Option<bool>;
+    fn predict(&self, target: &str, file_content: &str, find: &str, replace: &str) -> Prediction;
 }
 
 /// Mesure empiriquement un workspace candidat. Le contrat : ne **jamais** faire
@@ -1164,6 +1175,15 @@ impl<M: CodeModel> LlmProposer<M> {
                 lessons.push_str(&format!("- {r}\n"));
             }
         }
+        if !ctx.simulated_feedback.is_empty() {
+            lessons.push_str(
+                "\nA fast simulator predicted your PREVIOUS attempt this step would FAIL. \
+                 Fix the specific problem — do NOT resubmit the same edit:\n",
+            );
+            for f in ctx.simulated_feedback {
+                lessons.push_str(&format!("- {f}\n"));
+            }
+        }
 
         // Contenu ACTUEL des fichiers éditables : sans lui, le modèle invente du
         // code inexistant et son `FIND` ne matche jamais. On borne chaque fichier
@@ -1343,6 +1363,11 @@ fn extract_block(raw: &str, key: &str, ends: &[&str]) -> Option<String> {
     }
 }
 
+/// Un verdict prédit est-il un cassé conclu (`pass == Some(false)`) ?
+fn pred_is_broken(pred: &Option<Prediction>) -> bool {
+    matches!(pred, Some(p) if p.pass == Some(false))
+}
+
 // ════════════════════════════════ Moteur ═════════════════════════════════ //
 
 /// Réglages de la boucle.
@@ -1365,6 +1390,9 @@ pub struct DgmConfig {
     /// Sans effet sur les gains *structurels* (compile / tests) qui restent
     /// toujours acceptés.
     pub min_score_gain: f64,
+    /// Révision simulée (axe 3) : nb max de renvois d'une proposition prédite
+    /// cassée au proposeur (avec raison) avant le gate réel. `0` = pré-crible pur.
+    pub simulated_revisions: u32,
 }
 
 impl DgmConfig {
@@ -1375,6 +1403,7 @@ impl DgmConfig {
             accept_requires_all_green: true,
             rejection_memory: 8,
             min_score_gain: 0.0,
+            simulated_revisions: 0,
         }
     }
 }
@@ -1418,6 +1447,8 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
     predictor: Option<Box<dyn VerdictPredictor>>,
     /// Nombre de builds économisés par le pré-crible (reporting).
     prescreen_skips: u64,
+    /// Nombre de révisions simulées effectuées (axe 3, reporting).
+    revisions: u64,
 }
 
 impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
@@ -1434,6 +1465,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             next_seq,
             predictor: None,
             prescreen_skips: 0,
+            revisions: 0,
         }
     }
 
@@ -1446,6 +1478,11 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
     /// Nombre de `cargo build` évités par le pré-crible depuis le début.
     pub fn prescreen_skips(&self) -> u64 {
         self.prescreen_skips
+    }
+
+    /// Nombre de révisions simulées (axe 3) effectuées depuis le début.
+    pub fn revisions(&self) -> u64 {
+        self.revisions
     }
 
     pub fn archive(&self) -> &Archive {
@@ -1468,35 +1505,41 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             None => return Ok(self.record(StepOutcome::NoProposal)),
         };
 
-        // 2. Demander un changement au proposeur.
+        // 2. Proposeur (premier essai : aucun feedback simulé).
         let rejections = self.recent_rejections.clone();
-        let proposal = {
-            let ctx = ImprovementContext {
-                workspace_root: &self.config.workspace_root,
-                goal: &self.config.goal,
-                parent_fitness: parent.fitness.as_ref(),
-                recent_rejections: &rejections,
-            };
-            self.proposer.propose(&ctx, &mut self.rng)?
-        };
-        let proposal = match proposal {
+        let mut sim_feedback: Vec<String> = Vec::new();
+        let mut proposal = match self.propose_with(&parent, &rejections, &sim_feedback)? {
             Some(p) if !p.patch.is_noop() => p,
             _ => return Ok(self.record(StepOutcome::NoProposal)),
         };
 
-        // 3. Évaluer — avec PRÉ-CRIBLE optionnel. Si un world model prédit avec
-        //    certitude que le patch casse, on produit une fitness cassée SANS
-        //    build réel (elle est rejetée par le chemin normal). On ne saute
-        //    jamais le build sur un indécis ni un « bon » prédit.
-        let fitness = match self.prescreen(&proposal.patch) {
-            Some(f) => {
-                self.prescreen_skips += 1;
-                f
+        // 2b. Pré-crible + RÉVISION SIMULÉE (axe 3) sur la proposition finale.
+        let mut final_pred = self.predict_patch(&proposal.patch);
+        let mut rev = 0;
+        while rev < self.config.simulated_revisions && pred_is_broken(&final_pred) {
+            let reason = final_pred
+                .as_ref()
+                .and_then(|p| p.reason.clone())
+                .unwrap_or_else(|| "un simulateur prédit que ce patch casserait".to_string());
+            sim_feedback.push(reason);
+            self.revisions += 1;
+            rev += 1;
+            match self.propose_with(&parent, &rejections, &sim_feedback)? {
+                Some(p) if !p.patch.is_noop() => proposal = p,
+                _ => break,
             }
-            None => match self.evaluate_candidate(&proposal.patch) {
+            final_pred = self.predict_patch(&proposal.patch);
+        }
+
+        // 3. Évaluer. Prédit cassé ⇒ build sauté ; sinon gate réel autoritaire.
+        let fitness = if pred_is_broken(&final_pred) {
+            self.prescreen_skips += 1;
+            Fitness::broken("prescreen: prédit cassé (build évité)")
+        } else {
+            match self.evaluate_candidate(&proposal.patch) {
                 Ok(f) => f,
                 Err(e) => Fitness::broken(format!("could not evaluate: {e}")),
-            },
+            }
         };
 
         // 4. N'accepter que si elle bat le parent sous l'ordre de barrière.
@@ -1550,19 +1593,24 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         o
     }
 
-    /// Interroge le pré-crible. Rend `Some(fitness cassée)` **uniquement** si le
-    /// world model est certain que le patch casse (→ build évité) ; `None`
-    /// sinon (indécis, bon prédit, pas de prédicteur, ou fichier illisible) —
-    /// auquel cas le gate réel s'exécute. Ne peut donc jamais écarter une
-    /// amélioration, seulement épargner un build sûrement perdu.
-    fn prescreen(&self, patch: &Patch) -> Option<Fitness> {
+    /// Demande une proposition (rejets passés + feedback simulé du step).
+    fn propose_with(&mut self, parent: &Variant, rejections: &[String], sim_feedback: &[String]) -> Result<Option<Proposal>> {
+        let ctx = ImprovementContext {
+            workspace_root: &self.config.workspace_root,
+            goal: &self.config.goal,
+            parent_fitness: parent.fitness.as_ref(),
+            recent_rejections: rejections,
+            simulated_feedback: sim_feedback,
+        };
+        self.proposer.propose(&ctx, &mut self.rng)
+    }
+
+    /// Interroge le prédicteur. `None` si pas de prédicteur / fichier illisible.
+    fn predict_patch(&self, patch: &Patch) -> Option<Prediction> {
         let pred = self.predictor.as_ref()?;
         let content =
             std::fs::read_to_string(self.config.workspace_root.join(&patch.target)).ok()?;
-        match pred.predict_pass(&patch.target, &content, &patch.find, &patch.replace) {
-            Some(false) => Some(Fitness::broken("prescreen: prédit cassé (build évité)")),
-            _ => None,
-        }
+        Some(pred.predict(&patch.target, &content, &patch.find, &patch.replace))
     }
 
     fn evaluate_candidate(&self, patch: &Patch) -> Result<Fitness> {
@@ -2036,6 +2084,7 @@ RATIONALE: bump the constant
             goal: "g",
             parent_fitness: None,
             recent_rejections: &[],
+            simulated_feedback: &[],
         };
         let ok = LlmProposer::new(FixedModel(WELL_FORMED.to_string()), vec!["src/lib.rs".into()]);
         assert!(ok.propose(&ctx, &mut rng).unwrap().is_some());
@@ -2101,15 +2150,37 @@ RATIONALE: bump the constant
 
     struct AlwaysBreaks;
     impl VerdictPredictor for AlwaysBreaks {
-        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
-            Some(false)
+        fn predict(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Prediction {
+            Prediction { pass: Some(false), reason: Some("test: casse".into()) }
         }
     }
 
     struct AlwaysUndecided;
     impl VerdictPredictor for AlwaysUndecided {
-        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
-            None
+        fn predict(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Prediction {
+            Prediction::default()
+        }
+    }
+
+    struct BreaksWhileBad;
+    impl VerdictPredictor for BreaksWhileBad {
+        fn predict(&self, _t: &str, _c: &str, _f: &str, replace: &str) -> Prediction {
+            if replace.contains("BAD") {
+                Prediction { pass: Some(false), reason: Some("contient BAD".into()) }
+            } else {
+                Prediction { pass: Some(true), reason: None }
+            }
+        }
+    }
+
+    struct FixesOnFeedback;
+    impl Proposer for FixesOnFeedback {
+        fn propose(&self, ctx: &ImprovementContext<'_>, _rng: &mut Rng) -> Result<Option<Proposal>> {
+            let replace = if ctx.simulated_feedback.is_empty() { "level = 0 BAD" } else { "level = 1" };
+            Ok(Some(Proposal {
+                patch: Patch::new("src/level.txt", "level = 0", replace),
+                rationale: format!("feedback={}", ctx.simulated_feedback.len()),
+            }))
         }
     }
 
@@ -2151,6 +2222,33 @@ RATIONALE: bump the constant
         eng.run(5).unwrap();
         assert!(eng.archive().len() >= 2, "indécis ⇒ gate réel ⇒ améliorations archivées");
         assert_eq!(eng.prescreen_skips(), 0);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn simulated_revision_fixes_a_predicted_break_in_one_step() {
+        let ws = toy_workspace("sim-revise");
+        let mut cfg = DgmConfig::new(&ws, "raise");
+        cfg.simulated_revisions = 2;
+        let mut eng = DgmEngine::new(Archive::with_root(fit(true, 1, 0, 0.0)), FixesOnFeedback, level_evaluator(), cfg, 1)
+            .with_predictor(Box::new(BreaksWhileBad));
+        eng.run(1).unwrap();
+        assert_eq!(eng.revisions(), 1);
+        assert_eq!(eng.prescreen_skips(), 0);
+        assert!(eng.archive().len() >= 2);
+        assert!(eng.best().unwrap().fitness.as_ref().unwrap().score >= 1.0);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn without_revisions_a_predicted_break_is_skipped() {
+        let ws = toy_workspace("sim-norevise");
+        let mut eng = DgmEngine::new(Archive::with_root(fit(true, 1, 0, 0.0)), FixesOnFeedback, level_evaluator(), DgmConfig::new(&ws, "raise"), 1)
+            .with_predictor(Box::new(BreaksWhileBad));
+        eng.run(3).unwrap();
+        assert_eq!(eng.revisions(), 0);
+        assert_eq!(eng.prescreen_skips(), 3);
+        assert_eq!(eng.archive().len(), 1);
         let _ = std::fs::remove_dir_all(&ws);
     }
 

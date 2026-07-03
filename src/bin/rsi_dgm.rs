@@ -38,13 +38,13 @@ use std::time::Duration;
 
 use rsi::dgm::{
     Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, Evaluator, LlmCodeModel, LlmProposer,
-    StepOutcome, VerdictPredictor, WorkspaceSnapshot,
+    Prediction, StepOutcome, VerdictPredictor, WorkspaceSnapshot,
 };
 
 const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
-    "--prescreen-model", "--prescreen-num-predict",
+    "--prescreen-model", "--prescreen-num-predict", "--revise",
 ];
 
 /// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
@@ -56,18 +56,24 @@ struct WorldModelPredictor {
 }
 
 impl VerdictPredictor for WorldModelPredictor {
-    fn predict_pass(&self, target: &str, content: &str, find: &str, replace: &str) -> Option<bool> {
+    fn predict(&self, target: &str, content: &str, find: &str, replace: &str) -> Prediction {
         use rsi::llm::LlmClient;
         let prompt = rsi::simulation::build_sim_prompt(target, content, find, replace);
-        let text = self.client.complete_raw(&prompt).ok()?;
+        let text = match self.client.complete_raw(&prompt) {
+            Ok(t) => t,
+            Err(_) => return Prediction::default(),
+        };
         let v = rsi::simulation::parse_sim_verdict(&text);
-        if v.compiles == Some(false) || v.tests_pass == Some(false) {
-            Some(false) // conclu cassé ⇒ build évitable
+        let (pass, reason) = if v.compiles == Some(false) {
+            (Some(false), Some("le simulateur prédit que ce patch NE COMPILE PAS".to_string()))
+        } else if v.tests_pass == Some(false) {
+            (Some(false), Some("le simulateur prédit que ce patch CASSE des tests".to_string()))
         } else if v.tests_pass == Some(true) {
-            Some(true)
+            (Some(true), None)
         } else {
-            None // indécis (dont réponse tronquée) ⇒ gate réel
-        }
+            (None, None)
+        };
+        Prediction { pass, reason }
     }
 }
 
@@ -228,8 +234,10 @@ fn main() {
 
     // --- Boucle. ------------------------------------------------------------ //
     let min_gain: f64 = flag_value(&args, "--min-gain").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let revise: u32 = flag_value(&args, "--revise").and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut config = DgmConfig::new(&ws, &goal);
     config.min_score_gain = min_gain;
+    config.simulated_revisions = revise;
     let mut engine = DgmEngine::new(Archive::with_root(baseline.clone()), proposer, evaluator, config, seed);
 
     // --- Pré-crible optionnel par world model (--prescreen-model TAG). ------- //
@@ -246,7 +254,12 @@ fn main() {
             .with_num_ctx(np + 8192);
         engine = engine.with_predictor(Box::new(WorldModelPredictor { client }));
         prescreen_note = format!(", pré-crible={sim_model}");
-        println!("• pré-crible world model : {sim_model} (num_predict={np}) — saute le build sur « cassé » sûr");
+        let mode = if revise > 0 {
+            format!(" — révision simulée ×{revise} (le proposeur se corrige avant le gate)")
+        } else {
+            " — saute le build sur « cassé » sûr".to_string()
+        };
+        println!("• pré-crible world model : {sim_model} (num_predict={np}){mode}");
     }
 
     println!("• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}");
@@ -301,6 +314,9 @@ fn main() {
             "\n  pré-crible : {} build(s) évité(s) (patchs prédits cassés par le world model)",
             engine.prescreen_skips()
         );
+    }
+    if engine.revisions() > 0 {
+        println!("  révision simulée : {} correction(s) demandée(s) au proposeur", engine.revisions());
     }
 
     // --- Verdict / promotion. ---------------------------------------------- //

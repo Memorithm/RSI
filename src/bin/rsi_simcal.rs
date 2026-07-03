@@ -155,6 +155,7 @@ fn main() {
             goal: &goal,
             parent_fitness: Some(&baseline),
             recent_rejections: &rejections,
+            simulated_feedback: &[],
         };
         let proposal = match proposer.propose(&ctx, &mut rng) {
             Ok(Some(p)) => p,

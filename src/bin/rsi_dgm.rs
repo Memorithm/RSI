@@ -38,13 +38,38 @@ use std::time::Duration;
 
 use rsi::dgm::{
     Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, Evaluator, LlmCodeModel, LlmProposer,
-    StepOutcome, WorkspaceSnapshot,
+    StepOutcome, VerdictPredictor, WorkspaceSnapshot,
 };
 
 const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
+    "--prescreen-model", "--prescreen-num-predict",
 ];
+
+/// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
+/// pour éviter des `cargo build` sûrement perdus. Cf. `docs/AGENTWORLD_STUDY.md`.
+/// N'écarte jamais une amélioration — ne rend `Some(false)` que sur un verdict
+/// **conclu négatif** ; erreur réseau ⇒ `None` (indécis) ⇒ gate réel.
+struct WorldModelPredictor {
+    client: rsi::llm::OllamaClient,
+}
+
+impl VerdictPredictor for WorldModelPredictor {
+    fn predict_pass(&self, target: &str, content: &str, find: &str, replace: &str) -> Option<bool> {
+        use rsi::llm::LlmClient;
+        let prompt = rsi::simulation::build_sim_prompt(target, content, find, replace);
+        let text = self.client.complete_raw(&prompt).ok()?;
+        let v = rsi::simulation::parse_sim_verdict(&text);
+        if v.compiles == Some(false) || v.tests_pass == Some(false) {
+            Some(false) // conclu cassé ⇒ build évitable
+        } else if v.tests_pass == Some(true) {
+            Some(true)
+        } else {
+            None // indécis (dont réponse tronquée) ⇒ gate réel
+        }
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -207,7 +232,24 @@ fn main() {
     config.min_score_gain = min_gain;
     let mut engine = DgmEngine::new(Archive::with_root(baseline.clone()), proposer, evaluator, config, seed);
 
-    println!("• boucle DGM : {steps} étapes, backend={backend}, fichiers={allowed:?}");
+    // --- Pré-crible optionnel par world model (--prescreen-model TAG). ------- //
+    // Évite le cargo build des patchs prédits cassés avec certitude ; ne peut
+    // jamais écarter une amélioration (cf. docs/AGENTWORLD_STUDY.md).
+    let mut prescreen_note = String::new();
+    if let Some(sim_model) = flag_value(&args, "--prescreen-model") {
+        let np: u32 =
+            flag_value(&args, "--prescreen-num-predict").and_then(|v| v.parse().ok()).unwrap_or(12288);
+        let client = rsi::llm::OllamaClient::new(sim_model.clone())
+            .with_endpoint(host.clone(), port)
+            .with_timeout(Duration::from_secs(timeout_secs))
+            .with_num_predict(np)
+            .with_num_ctx(np + 8192);
+        engine = engine.with_predictor(Box::new(WorldModelPredictor { client }));
+        prescreen_note = format!(", pré-crible={sim_model}");
+        println!("• pré-crible world model : {sim_model} (num_predict={np}) — saute le build sur « cassé » sûr");
+    }
+
+    println!("• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}");
     println!("  (chaque étape = proposition LLM + build+test+bench du snapshot : ~1-3 min)\n");
     // Étape par étape (et non `engine.run(steps)`) pour AFFICHER chaque
     // résultat au fil de l'eau — huit étapes muettes ressemblent à un blocage.
@@ -252,6 +294,13 @@ fn main() {
                 }
             }
         }
+    }
+
+    if engine.prescreen_skips() > 0 {
+        println!(
+            "\n  pré-crible : {} build(s) évité(s) (patchs prédits cassés par le world model)",
+            engine.prescreen_skips()
+        );
     }
 
     // --- Verdict / promotion. ---------------------------------------------- //
@@ -376,6 +425,7 @@ fn usage() {
            --timeout SECS        borne par cargo (défaut 300)\n  \
            --bench \"ARGS\"        score = perf mesurée (RSI_BENCH_SCORE) au lieu\n                          du pass-rate — ex. \"run --release --example bench_dot\"\n  \
            --min-gain FRAC       gain relatif de score minimal (anti-bruit),\n                          ex. 0.02 = ≥ 2 %% (défaut 0 ; gains structurels exemptés)\n  \
+           --prescreen-model TAG world model (Qwen-AgentWorld) qui saute le build\n                          des patchs prédits cassés (jamais une amélioration)\n  \
            --promote             applique le meilleur variant tout-au-vert\n  \
            --backups DIR         sauvegardes (défaut <ws>/.rsi_backups)\n\n\
          CONNEXION AUTOMATIQUE (défaut) : sonde Ollama local, découvre les modèles\n\

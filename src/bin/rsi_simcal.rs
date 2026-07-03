@@ -31,7 +31,7 @@ use rsi::simulation::{build_sim_prompt, parse_sim_verdict, CalibrationStats, Sim
 
 const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--sim-model", "--model", "--steps", "--bench", "--seed", "--timeout",
-    "--out", "--ollama-host", "--ollama-port",
+    "--out", "--ollama-host", "--ollama-port", "--sim-num-predict",
 ];
 
 fn main() {
@@ -74,6 +74,12 @@ fn main() {
         .map(|s| s.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
     let sim_model = flag_value(&args, "--sim-model").unwrap_or_else(|| "agentworld".to_string());
+    // AgentWorld raisonne EN LONG (chain-of-thought) : le défaut num_predict de
+    // 4096 le tronque avant la ligne de verdict (constaté : 15/15 done_reason=
+    // length). On lui laisse beaucoup de place + un contexte qui l'englobe.
+    let sim_num_predict: u32 =
+        flag_value(&args, "--sim-num-predict").and_then(|v| v.parse().ok()).unwrap_or(12288);
+    let sim_num_ctx: u32 = sim_num_predict + 8192; // prompt (~5k) + génération
 
     // --- Proposeur : connexion automatique (comme rsi-dgm). ----------------- //
     let pref = flag_value(&args, "--model").or_else(|| std::env::var("RSI_LLM_MODEL").ok());
@@ -100,7 +106,7 @@ fn main() {
         exit(2);
     }
     println!("• proposeur (code)  : {code_model}");
-    println!("• world model (sim) : {sim_model}");
+    println!("• world model (sim) : {sim_model} (num_predict={sim_num_predict}, num_ctx={sim_num_ctx})");
 
     let proposer = LlmProposer::new(
         LlmCodeModel::new(
@@ -112,7 +118,9 @@ fn main() {
     );
     let sim_client = OllamaClient::new(sim_model.clone())
         .with_endpoint(host.clone(), port)
-        .with_timeout(Duration::from_secs(timeout_secs));
+        .with_timeout(Duration::from_secs(timeout_secs))
+        .with_num_predict(sim_num_predict)
+        .with_num_ctx(sim_num_ctx);
     let evaluator = CargoEvaluator {
         bench_command: bench,
         timeout: Duration::from_secs(timeout_secs),
@@ -311,6 +319,7 @@ fn usage() {
            --sim-model NAME    world model Ollama (défaut « agentworld »)\n  \
            --model NAME        proposeur de code (sinon découverte auto)\n  \
            --steps N           patchs à calibrer (défaut 10)   --bench \"ARGS\"\n  \
+           --sim-num-predict N tokens de génération du world model (défaut 12288 —\n                      il raisonne long ; trop bas ⇒ verdict tronqué/indécis)\n  \
            --seed N  --timeout SECS  --out RAPPORT.md  --ollama-host/-port\n\n\
          Cf. docs/AGENTWORLD_STUDY.md."
     );

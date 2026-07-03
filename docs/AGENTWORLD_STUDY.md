@@ -130,7 +130,7 @@ c'est un **modèle**, il se branche par les backends LLM existants :
 |---|-------|------|--------|------|
 | 1 | GGUF AgentWorld sur le Thor + sonde manuelle | 1 h | faisabilité brute | ✅ **fait** |
 | 2 | **Calibration** : proposeur réel → gate réel (vérité terrain) vs verdict simulé → matrice de confusion (`rsi-simcal`) | ½ j | tout le reste | ✅ **outillé** — à faire tourner |
-| 3 | `SimulatedEvaluator` + pré-crible optionnel dans `dgm.rs` | 1-2 j | axe 1 | ⏳ après chiffres de l'étape 2 |
+| 3 | Pré-crible optionnel dans `dgm.rs` (`VerdictPredictor`) | 1-2 j | axe 1 | ✅ **livré** |
 | 4 | Feedback anticipé dans le prompt (axe 3) | ½ j | — | ⏳ |
 | 5 | Exportateur de trajectoires (axe 4) | 1 j | flywheel | ⏳ |
 | 6 | Chaos simulé / AgentWorldBench (axes 5-6) | recherche continue | — | ⏳ |
@@ -155,9 +155,72 @@ sur le Thor :
 cargo build --release --features llm-ollama --bin rsi-simcal
 rsi-simcal . --goal "optimise kernels" --allow src/kernels.rs \
   --bench "run --release --example bench_kernel" \
-  --sim-model agentworld --model qwen3-coder:30b --steps 15
+  --sim-model agentworld --model qwen3-coder:30b --steps 15 \
+  --sim-num-predict 12288
 ```
+
+> **Note fenêtre de génération** : AgentWorld raisonne en *longue* chaîne de
+> pensée. Un premier run avec le défaut `num_predict=4096` a été tronqué 15/15
+> (`done_reason=length`) *avant* la ligne de verdict → tout indécis. D'où
+> `--sim-num-predict` (défaut 12288) : il faut lui laisser la place de conclure.
 
 Décision go/no-go de l'axe 1 : viser une **exactitude « tests » élevée** avec
 **peu de faux négatifs** (fn = amélioration réelle écartée à tort — le seul
 coût dangereux d'un pré-crible ; un faux positif ne coûte qu'un build).
+
+### Résultat de calibration (Jetson Thor, matmul, n=15) — ✅ GO
+
+Après avoir écarté un flooder Ollama (`openevolve`, agent autonome de
+SoulSystem, qui saturait le GPU) et donné à AgentWorld la place de raisonner
+(`num_predict=12288`) :
+
+| | décidés | exactitude | fp | fn |
+|---|---|---|---|---|
+| compile | 6/15 | **100 %** | 0 | 0 |
+| tests | 9/15 | 67 %→**100 %** après fix | 0 | 3→**0** |
+
+**Constat central** : *tout* verdict **conclu** par AgentWorld était correct
+(10/10 cumulés sur deux runs, les deux axes) ; les 3 seuls faux négatifs
+venaient **exclusivement de réponses tronquées** (chain-of-thought coupée à
+12288 tokens) que le repli-prose du parseur interprétait à tort comme
+« échec ». Correctif : le parseur ne conclut plus que sur un signal `cargo`
+explicite (`test result: ok|FAILED`) ou la ligne `SIMCAL_VERDICT` — une
+réponse tronquée reste **indécise** → passe au gate réel. **Zéro faux négatif,
+zéro faux positif sur les verdicts conclus.**
+
+**Décision : GO pour l'étape 3.** Règle de pré-crible qui en découle et ne
+perd jamais rien : *n'agir que sur un verdict conclu et négatif* (le
+simulateur prédit « casse » → on saute le build réel) ; **tout le reste
+— indécis OU prédit bon — passe au gate réel**. On n'économise un build que
+lorsqu'on est sûr que ça casse ; on ne jette jamais une idée. Reste
+opérationnel : garder les deux modèles résidents
+(`OLLAMA_MAX_LOADED_MODELS=2`) et ne pas partager le GPU avec un agent
+flooder pendant les runs.
+
+### Étape 3 ✅ livrée — pré-crible dans le moteur
+
+Trait std-only `dgm::VerdictPredictor` + champ optionnel de `DgmEngine`
+(`with_predictor`) : avant chaque `cargo build`, si le prédicteur rend
+`Some(false)` (verdict **conclu négatif**), l'engine produit une fitness
+cassée **sans build** (rejetée par le chemin normal) et incrémente
+`prescreen_skips`. Tout le reste (`Some(true)`, `None`, erreur réseau, fichier
+illisible) passe au gate réel — **le simulateur ne peut qu'épargner un build
+sûrement perdu, jamais écarter une amélioration**. Tests :
+`prescreen_skips_build_on_confident_break` (l'évaluateur réel PANIQUE s'il
+tourne → prouve le saut), `prescreen_undecided_falls_through_to_real_gate`.
+
+L'implémentation world-model (`WorldModelPredictor`, Ollama + `simulation`)
+vit dans le binaire. Usage :
+
+```bash
+rsi-dgm . --goal "..." --allow src/kernels.rs \
+  --bench "run --release --example bench_kernel" \
+  --model qwen3-coder:30b \
+  --prescreen-model agentworld            # + --prescreen-num-predict 12288
+```
+
+Gain attendu sur un plateau (matmul : la majorité des candidats cassent) :
+le world model reconnaît les casses (calibration : tous les verdicts conclus
+corrects) et évite leur build (~1-3 min chacun) ; les candidats prometteurs et
+les indécis paient le vrai gate. Le rapport de fin indique le nombre de builds
+évités. Deux modèles résidents recommandés (`OLLAMA_MAX_LOADED_MODELS=2`).

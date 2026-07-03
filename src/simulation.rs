@@ -84,15 +84,19 @@ pub fn parse_sim_verdict(text: &str) -> SimVerdict {
         None
     };
 
+    // Repli sur la prose : ne se fier QU'aux lignes de sortie `cargo` explicites
+    // (`test result: ok|FAILED`). Un world model RAISONNE en évoquant des
+    // scénarios d'échec (« l'assertion échouerait si… ») ; une réponse
+    // **tronquée** avant sa conclusion contient ces mots sans verdict final —
+    // les prendre pour un échec fabrique des **faux négatifs** (idées réelles
+    // écartées : mesuré, 3 fn sur des réponses coupées à 12288 tokens, alors
+    // que tous les verdicts CONCLUS étaient corrects). Sans signal cargo net ⇒
+    // indécis ⇒ le gate réel tranche, **rien n'est perdu**.
     let tests_pass = if compiles == Some(false) {
         Some(false) // ne compile pas ⇒ tests ne passent pas
-    } else if low.contains("test result: ok") || low.contains("0 failed") || low.contains("; 0 failed") {
+    } else if low.contains("test result: ok") || low.contains("; 0 failed") {
         Some(true)
-    } else if low.contains("test result: failed")
-        || low.contains(" failed")
-        || low.contains("panicked")
-        || low.contains("assertion")
-    {
+    } else if low.contains("test result: failed") {
         Some(false)
     } else {
         None
@@ -260,6 +264,23 @@ error: test failed, to rerun pass `--lib`";
         );
         assert_eq!(v.compiles, Some(true));
         assert_eq!(v.tests_pass, Some(true));
+    }
+
+    #[test]
+    fn truncated_reasoning_is_undecided_not_false_negative() {
+        // Chaîne de pensée COUPÉE avant conclusion (cas réel Thor, done_reason=
+        // length) : évoque « assertion »/« failed » en raisonnant, sans ligne
+        // `test result:` ni SIMCAL_VERDICT. DOIT rester indécis — sinon faux
+        // négatif (le pré-crible écarterait une amélioration réelle).
+        let t = "Analysons le patch : si la boucle est réordonnée, l'assertion \
+                 pourrait échouer (failed) dans certains cas. Vérifions chaque \
+                 test un par un. Le premier test compare la sortie à"; // tronqué
+        assert_eq!(parse_sim_verdict(t).tests_pass, None);
+        // mais un vrai verdict cargo reste lu
+        assert_eq!(
+            parse_sim_verdict("... test result: FAILED. 0 passed; 1 failed").tests_pass,
+            Some(false)
+        );
     }
 
     #[test]

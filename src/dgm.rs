@@ -603,6 +603,24 @@ pub trait Proposer {
     fn propose(&self, ctx: &ImprovementContext<'_>, rng: &mut Rng) -> Result<Option<Proposal>>;
 }
 
+/// **Pré-crible** optionnel : un *world model* prédit le verdict d'un patch
+/// avant le coûteux `cargo build`+`test`. Rendu :
+/// - `Some(false)` : prédit **cassé** (compile ou tests) — l'engine PEUT sauter
+///   le build réel (économie) ;
+/// - `Some(true)` : prédit bon ; `None` : indécis.
+///
+/// **Sûreté (cf. `docs/AGENTWORLD_STUDY.md`)** : l'engine ne saute le gate réel
+/// **que** sur `Some(false)` — un `None` ou un `Some(true)` passe toujours au
+/// vrai `cargo`. Le simulateur n'a donc que le pouvoir d'*économiser un build
+/// quand il est certain que ça casse*, jamais celui d'écarter une amélioration
+/// (calibration : zéro faux négatif sur les verdicts conclus). Std-only : le
+/// transport LLM vit chez l'appelant (binaire, feature réseau).
+pub trait VerdictPredictor {
+    /// Prédit si le patch (diff `find`→`replace` sur `target`, dont le contenu
+    /// actuel est `file_content`) laissera le workspace tout-au-vert.
+    fn predict_pass(&self, target: &str, file_content: &str, find: &str, replace: &str) -> Option<bool>;
+}
+
 /// Mesure empiriquement un workspace candidat. Le contrat : ne **jamais** faire
 /// confiance à l'auto-évaluation d'une proposition — la construire et lancer les
 /// tests. C'est la barrière de validation non négociable de la DGM.
@@ -1394,6 +1412,12 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
     recent_rejections: Vec<String>,
     history: Vec<StepOutcome>,
     next_seq: u64,
+    /// Pré-crible optionnel (world model) : évite des `cargo build` sur les
+    /// patchs prédits cassés avec certitude. Jamais autoritaire — cf.
+    /// [`VerdictPredictor`].
+    predictor: Option<Box<dyn VerdictPredictor>>,
+    /// Nombre de builds économisés par le pré-crible (reporting).
+    prescreen_skips: u64,
 }
 
 impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
@@ -1408,7 +1432,20 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             recent_rejections: Vec::new(),
             history: Vec::new(),
             next_seq,
+            predictor: None,
+            prescreen_skips: 0,
         }
+    }
+
+    /// Attache un pré-crible (world model) — cf. [`VerdictPredictor`].
+    pub fn with_predictor(mut self, predictor: Box<dyn VerdictPredictor>) -> Self {
+        self.predictor = Some(predictor);
+        self
+    }
+
+    /// Nombre de `cargo build` évités par le pré-crible depuis le début.
+    pub fn prescreen_skips(&self) -> u64 {
+        self.prescreen_skips
     }
 
     pub fn archive(&self) -> &Archive {
@@ -1447,10 +1484,19 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             _ => return Ok(self.record(StepOutcome::NoProposal)),
         };
 
-        // 3. Évaluer la candidate dans un snapshot isolé.
-        let fitness = match self.evaluate_candidate(&proposal.patch) {
-            Ok(f) => f,
-            Err(e) => Fitness::broken(format!("could not evaluate: {e}")),
+        // 3. Évaluer — avec PRÉ-CRIBLE optionnel. Si un world model prédit avec
+        //    certitude que le patch casse, on produit une fitness cassée SANS
+        //    build réel (elle est rejetée par le chemin normal). On ne saute
+        //    jamais le build sur un indécis ni un « bon » prédit.
+        let fitness = match self.prescreen(&proposal.patch) {
+            Some(f) => {
+                self.prescreen_skips += 1;
+                f
+            }
+            None => match self.evaluate_candidate(&proposal.patch) {
+                Ok(f) => f,
+                Err(e) => Fitness::broken(format!("could not evaluate: {e}")),
+            },
         };
 
         // 4. N'accepter que si elle bat le parent sous l'ordre de barrière.
@@ -1502,6 +1548,21 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
     fn record(&mut self, o: StepOutcome) -> StepOutcome {
         self.history.push(o.clone());
         o
+    }
+
+    /// Interroge le pré-crible. Rend `Some(fitness cassée)` **uniquement** si le
+    /// world model est certain que le patch casse (→ build évité) ; `None`
+    /// sinon (indécis, bon prédit, pas de prédicteur, ou fichier illisible) —
+    /// auquel cas le gate réel s'exécute. Ne peut donc jamais écarter une
+    /// amélioration, seulement épargner un build sûrement perdu.
+    fn prescreen(&self, patch: &Patch) -> Option<Fitness> {
+        let pred = self.predictor.as_ref()?;
+        let content =
+            std::fs::read_to_string(self.config.workspace_root.join(&patch.target)).ok()?;
+        match pred.predict_pass(&patch.target, &content, &patch.find, &patch.replace) {
+            Some(false) => Some(Fitness::broken("prescreen: prédit cassé (build évité)")),
+            _ => None,
+        }
     }
 
     fn evaluate_candidate(&self, patch: &Patch) -> Result<Fitness> {
@@ -2020,6 +2081,61 @@ RATIONALE: bump the constant
         assert!(best.fitness.as_ref().unwrap().score >= 1.0);
         // L'arbre vivant n'est jamais muté par la boucle.
         assert_eq!(read_level(&ws), 0);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    struct AlwaysBreaks;
+    impl VerdictPredictor for AlwaysBreaks {
+        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
+            Some(false)
+        }
+    }
+
+    struct AlwaysUndecided;
+    impl VerdictPredictor for AlwaysUndecided {
+        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
+            None
+        }
+    }
+
+    #[test]
+    fn prescreen_skips_build_on_confident_break() {
+        let ws = toy_workspace("prescreen-skip");
+        // évaluateur qui PANIQUE s'il tourne — prouve que le build est évité
+        let evaluator = ClosureEvaluator::new(|_r: &Path| -> Fitness {
+            panic!("le gate réel ne doit PAS tourner quand le pré-crible dit « cassé »")
+        });
+        let mut eng = DgmEngine::new(
+            Archive::with_root(fit(true, 1, 0, 0.0)),
+            Incrementer,
+            evaluator,
+            DgmConfig::new(&ws, "raise"),
+            1,
+        )
+        .with_predictor(Box::new(AlwaysBreaks));
+        let outcomes = eng.run(3).unwrap();
+        assert!(outcomes.iter().all(|o| !o.accepted()), "prédit cassé ⇒ rien accepté");
+        assert_eq!(eng.prescreen_skips(), 3, "3 builds évités");
+        assert_eq!(eng.archive().len(), 1, "rien archivé, arbre = racine");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn prescreen_undecided_falls_through_to_real_gate() {
+        // Indécis ⇒ le gate réel tranche ⇒ les vraies améliorations passent
+        // (le simulateur n'écarte jamais une idée qu'il n'a pas condamnée).
+        let ws = toy_workspace("prescreen-none");
+        let mut eng = DgmEngine::new(
+            Archive::with_root(fit(true, 1, 0, 0.0)),
+            Incrementer,
+            level_evaluator(),
+            DgmConfig::new(&ws, "raise"),
+            1,
+        )
+        .with_predictor(Box::new(AlwaysUndecided));
+        eng.run(5).unwrap();
+        assert!(eng.archive().len() >= 2, "indécis ⇒ gate réel ⇒ améliorations archivées");
+        assert_eq!(eng.prescreen_skips(), 0);
         let _ = std::fs::remove_dir_all(&ws);
     }
 

@@ -1,0 +1,551 @@
+diff --git a/docs/AGENTWORLD_STUDY.md b/docs/AGENTWORLD_STUDY.md
+index be2feb2..27e180d 100644
+--- a/docs/AGENTWORLD_STUDY.md
++++ b/docs/AGENTWORLD_STUDY.md
+@@ -131,7 +131,7 @@ c'est un **modèle**, il se branche par les backends LLM existants :
+ | 1 | GGUF AgentWorld sur le Thor + sonde manuelle | 1 h | faisabilité brute | ✅ **fait** |
+ | 2 | **Calibration** : proposeur réel → gate réel (vérité terrain) vs verdict simulé → matrice de confusion (`rsi-simcal`) | ½ j | tout le reste | ✅ **outillé** — à faire tourner |
+ | 3 | Pré-crible optionnel dans `dgm.rs` (`VerdictPredictor`) | 1-2 j | axe 1 | ✅ **livré** |
+-| 4 | Feedback anticipé dans le prompt (axe 3) | ½ j | — | ⏳ |
++| 4 | Feedback anticipé dans le prompt (axe 3) — `--revise N` | ½ j | — | ✅ **livré** |
+ | 5 | Exportateur de trajectoires (axe 4) | 1 j | flywheel | ⏳ |
+ | 6 | Chaos simulé / AgentWorldBench (axes 5-6) | recherche continue | — | ⏳ |
+ 
+@@ -224,3 +224,32 @@ le world model reconnaît les casses (calibration : tous les verdicts conclus
+ corrects) et évite leur build (~1-3 min chacun) ; les candidats prometteurs et
+ les indécis paient le vrai gate. Le rapport de fin indique le nombre de builds
+ évités. Deux modèles résidents recommandés (`OLLAMA_MAX_LOADED_MODELS=2`).
++
++### Étape 4 ✅ livrée — révision simulée (axe 3), `--revise N`
++
++Le pré-crible est le cas *zéro-révision* d'une boucle plus générale. Le trait
++rend désormais une `Prediction { pass, reason }` : sur une casse prédite, la
++`reason` (« ne compile pas » / « casse des tests ») est réinjectée dans le
++prompt du proposeur (`ImprovementContext::simulated_feedback`) qui **se corrige
++dans le même step**, avant le gate réel. Boucle interne bornée
++propose→simule→révise (≤ `--revise N` tours), puis le vrai `cargo` tranche —
++la simulation n'oriente que la proposition, elle ne l'accepte ni ne la rejette
++jamais. Sûreté inchangée : `simulated_revisions = 0` ⇒ pré-crible pur ; une
++casse prédite non corrigée après N tours retombe sur le saut de build (jamais
++d'idée perdue). Tests : `simulated_revision_fixes_a_predicted_break_in_one_step`
++et son contraste `without_revisions_a_predicted_break_is_skipped`.
++
++C'est le remède direct au double constat des runs matmul/json : `pas de
++proposition` fréquent et répétition de la même transformation fausse — le
++proposeur reçoit maintenant *pourquoi* ça casse avant de resoumettre. Usage :
++
++```bash
++rsi-dgm . --goal "..." --allow src/json.rs \
++  --bench "run --release --example bench_json" \
++  --model qwen3-coder:30b \
++  --prescreen-model agentworld --prescreen-num-predict 12288 \
++  --revise 2                              # jusqu'à 2 corrections guidées / step
++```
++
++Coût : chaque révision = un appel world model + un appel proposeur de plus sur
++ce step (pas de build). À arbitrer via le chrono, comme le pré-crible.
+diff --git a/src/bin/rsi_dgm.rs b/src/bin/rsi_dgm.rs
+index 02ba2ba..2c38439 100644
+--- a/src/bin/rsi_dgm.rs
++++ b/src/bin/rsi_dgm.rs
+@@ -38,36 +38,44 @@ use std::time::Duration;
+ 
+ use rsi::dgm::{
+     Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, Evaluator, LlmCodeModel, LlmProposer,
+-    StepOutcome, VerdictPredictor, WorkspaceSnapshot,
++    Prediction, StepOutcome, VerdictPredictor, WorkspaceSnapshot,
+ };
+ 
+ const VALUE_FLAGS: &[&str] = &[
+     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
+     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
+-    "--prescreen-model", "--prescreen-num-predict",
++    "--prescreen-model", "--prescreen-num-predict", "--revise",
+ ];
+ 
+-/// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
+-/// pour éviter des `cargo build` sûrement perdus. Cf. `docs/AGENTWORLD_STUDY.md`.
+-/// N'écarte jamais une amélioration — ne rend `Some(false)` que sur un verdict
+-/// **conclu négatif** ; erreur réseau ⇒ `None` (indécis) ⇒ gate réel.
++/// Pré-crible + révision par world model (Qwen-AgentWorld) : prédit le verdict
++/// d'un patch pour éviter des `cargo build` sûrement perdus ET, en mode
++/// révision (`--revise N`), renvoyer une raison au proposeur. Cf.
++/// `docs/AGENTWORLD_STUDY.md`. N'écarte jamais une amélioration — ne rend
++/// `pass=Some(false)` que sur un verdict **conclu négatif** ; erreur réseau ⇒
++/// `None` (indécis) ⇒ gate réel.
+ struct WorldModelPredictor {
+     client: rsi::llm::OllamaClient,
+ }
+ 
+ impl VerdictPredictor for WorldModelPredictor {
+-    fn predict_pass(&self, target: &str, content: &str, find: &str, replace: &str) -> Option<bool> {
++    fn predict(&self, target: &str, content: &str, find: &str, replace: &str) -> Prediction {
+         use rsi::llm::LlmClient;
+         let prompt = rsi::simulation::build_sim_prompt(target, content, find, replace);
+-        let text = self.client.complete_raw(&prompt).ok()?;
++        let text = match self.client.complete_raw(&prompt) {
++            Ok(t) => t,
++            Err(_) => return Prediction::default(), // réseau KO ⇒ indécis ⇒ gate réel
++        };
+         let v = rsi::simulation::parse_sim_verdict(&text);
+-        if v.compiles == Some(false) || v.tests_pass == Some(false) {
+-            Some(false) // conclu cassé ⇒ build évitable
++        let (pass, reason) = if v.compiles == Some(false) {
++            (Some(false), Some("le simulateur prédit que ce patch NE COMPILE PAS".to_string()))
++        } else if v.tests_pass == Some(false) {
++            (Some(false), Some("le simulateur prédit que ce patch CASSE des tests (compile mais tests rouges)".to_string()))
+         } else if v.tests_pass == Some(true) {
+-            Some(true)
++            (Some(true), None)
+         } else {
+-            None // indécis (dont réponse tronquée) ⇒ gate réel
+-        }
++            (None, None) // indécis (dont réponse tronquée) ⇒ gate réel
++        };
++        Prediction { pass, reason }
+     }
+ }
+ 
+@@ -228,13 +236,16 @@ fn main() {
+ 
+     // --- Boucle. ------------------------------------------------------------ //
+     let min_gain: f64 = flag_value(&args, "--min-gain").and_then(|v| v.parse().ok()).unwrap_or(0.0);
++    let revise: u32 = flag_value(&args, "--revise").and_then(|v| v.parse().ok()).unwrap_or(0);
+     let mut config = DgmConfig::new(&ws, &goal);
+     config.min_score_gain = min_gain;
++    config.simulated_revisions = revise;
+     let mut engine = DgmEngine::new(Archive::with_root(baseline.clone()), proposer, evaluator, config, seed);
+ 
+-    // --- Pré-crible optionnel par world model (--prescreen-model TAG). ------- //
+-    // Évite le cargo build des patchs prédits cassés avec certitude ; ne peut
+-    // jamais écarter une amélioration (cf. docs/AGENTWORLD_STUDY.md).
++    // --- Pré-crible + révision optionnels par world model (--prescreen-model). //
++    // Évite le cargo build des patchs prédits cassés avec certitude, et — en mode
++    // --revise N — renvoie la raison au proposeur pour qu'il se corrige dans le
++    // même step. Ne peut jamais écarter une amélioration (docs/AGENTWORLD_STUDY.md).
+     let mut prescreen_note = String::new();
+     if let Some(sim_model) = flag_value(&args, "--prescreen-model") {
+         let np: u32 =
+@@ -246,7 +257,14 @@ fn main() {
+             .with_num_ctx(np + 8192);
+         engine = engine.with_predictor(Box::new(WorldModelPredictor { client }));
+         prescreen_note = format!(", pré-crible={sim_model}");
+-        println!("• pré-crible world model : {sim_model} (num_predict={np}) — saute le build sur « cassé » sûr");
++        let mode = if revise > 0 {
++            format!(" — révision simulée ×{revise} (le proposeur se corrige avant le gate)")
++        } else {
++            " — saute le build sur « cassé » sûr".to_string()
++        };
++        println!("• pré-crible world model : {sim_model} (num_predict={np}){mode}");
++    } else if revise > 0 {
++        eprintln!("note : --revise est sans effet sans --prescreen-model (aucun simulateur attaché).");
+     }
+ 
+     println!("• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}");
+@@ -302,6 +320,12 @@ fn main() {
+             engine.prescreen_skips()
+         );
+     }
++    if engine.revisions() > 0 {
++        println!(
++            "  révision simulée : {} correction(s) demandée(s) au proposeur avant le gate",
++            engine.revisions()
++        );
++    }
+ 
+     // --- Verdict / promotion. ---------------------------------------------- //
+     let best = engine.best().cloned();
+@@ -426,6 +450,8 @@ fn usage() {
+            --bench \"ARGS\"        score = perf mesurée (RSI_BENCH_SCORE) au lieu\n                          du pass-rate — ex. \"run --release --example bench_dot\"\n  \
+            --min-gain FRAC       gain relatif de score minimal (anti-bruit),\n                          ex. 0.02 = ≥ 2 %% (défaut 0 ; gains structurels exemptés)\n  \
+            --prescreen-model TAG world model (Qwen-AgentWorld) qui saute le build\n                          des patchs prédits cassés (jamais une amélioration)\n  \
++           --prescreen-num-predict N  tokens de génération du world model (défaut 12288)\n  \
++           --revise N            axe 3 : jusqu'à N révisions/step — le proposeur\n                          reçoit la raison de la casse prédite et se corrige\n                          avant le gate réel (défaut 0 ; requiert --prescreen-model)\n  \
+            --promote             applique le meilleur variant tout-au-vert\n  \
+            --backups DIR         sauvegardes (défaut <ws>/.rsi_backups)\n\n\
+          CONNEXION AUTOMATIQUE (défaut) : sonde Ollama local, découvre les modèles\n\
+diff --git a/src/bin/rsi_simcal.rs b/src/bin/rsi_simcal.rs
+index c2a87b1..dafe7d6 100644
+--- a/src/bin/rsi_simcal.rs
++++ b/src/bin/rsi_simcal.rs
+@@ -155,6 +155,7 @@ fn main() {
+             goal: &goal,
+             parent_fitness: Some(&baseline),
+             recent_rejections: &rejections,
++            simulated_feedback: &[],
+         };
+         let proposal = match proposer.propose(&ctx, &mut rng) {
+             Ok(Some(p)) => p,
+diff --git a/src/dgm.rs b/src/dgm.rs
+index fc0ea3b..d0ed8c2 100644
+--- a/src/dgm.rs
++++ b/src/dgm.rs
+@@ -577,6 +577,11 @@ pub struct ImprovementContext<'a> {
+     /// Justifications des tentatives récemment rejetées, pour éviter de répéter
+     /// les impasses (« renforcement verbal » bon marché, cf. Reflexion).
+     pub recent_rejections: &'a [String],
++    /// Verdicts d'un *simulateur* sur les tentatives de CE step (axe 3) : quand
++    /// un world model prédit qu'une proposition casserait, sa raison est
++    /// réinjectée ici pour que le proposeur se corrige *avant* le gate réel.
++    /// Vide au premier essai d'un step.
++    pub simulated_feedback: &'a [String],
+ }
+ 
+ impl ImprovementContext<'_> {
+@@ -603,22 +608,35 @@ pub trait Proposer {
+     fn propose(&self, ctx: &ImprovementContext<'_>, rng: &mut Rng) -> Result<Option<Proposal>>;
+ }
+ 
++/// Verdict prédit par un *world model* sur un patch, avec raison optionnelle.
++#[derive(Debug, Clone, Default)]
++pub struct Prediction {
++    /// `None` = indécis ; `Some(true)` = prédit bon ; `Some(false)` = prédit cassé.
++    pub pass: Option<bool>,
++    /// Courte cause d'une casse prédite (« ne compile pas », « casse tel test »),
++    /// réinjectée au proposeur pour la **révision simulée** (axe 3). `None` si
++    /// indécis, prédit bon, ou si l'impl n'en fournit pas.
++    pub reason: Option<String>,
++}
++
+ /// **Pré-crible** optionnel : un *world model* prédit le verdict d'un patch
+-/// avant le coûteux `cargo build`+`test`. Rendu :
+-/// - `Some(false)` : prédit **cassé** (compile ou tests) — l'engine PEUT sauter
+-///   le build réel (économie) ;
+-/// - `Some(true)` : prédit bon ; `None` : indécis.
++/// avant le coûteux `cargo build`+`test`. Deux usages, tous deux **non
++/// autoritaires** (cf. `docs/AGENTWORLD_STUDY.md`) :
++/// 1. **pré-crible** — sur `Some(false)` (conclu cassé) l'engine PEUT sauter le
++///    build réel ; un `None`/`Some(true)` passe toujours au vrai `cargo`. Le
++///    simulateur ne peut donc qu'*épargner un build sûrement perdu*, jamais
++///    écarter une amélioration (calibration : zéro faux négatif sur les
++///    verdicts conclus) ;
++/// 2. **révision simulée** (axe 3) — la `reason` d'une casse prédite est
++///    réinjectée dans le prompt du proposeur pour qu'il se corrige *avant* le
++///    gate réel, dans le même step.
+ ///
+-/// **Sûreté (cf. `docs/AGENTWORLD_STUDY.md`)** : l'engine ne saute le gate réel
+-/// **que** sur `Some(false)` — un `None` ou un `Some(true)` passe toujours au
+-/// vrai `cargo`. Le simulateur n'a donc que le pouvoir d'*économiser un build
+-/// quand il est certain que ça casse*, jamais celui d'écarter une amélioration
+-/// (calibration : zéro faux négatif sur les verdicts conclus). Std-only : le
+-/// transport LLM vit chez l'appelant (binaire, feature réseau).
++/// Std-only : le transport LLM vit chez l'appelant (binaire, feature réseau).
+ pub trait VerdictPredictor {
+     /// Prédit si le patch (diff `find`→`replace` sur `target`, dont le contenu
+-    /// actuel est `file_content`) laissera le workspace tout-au-vert.
+-    fn predict_pass(&self, target: &str, file_content: &str, find: &str, replace: &str) -> Option<bool>;
++    /// actuel est `file_content`) laissera le workspace tout-au-vert, avec une
++    /// raison optionnelle en cas de casse prédite.
++    fn predict(&self, target: &str, file_content: &str, find: &str, replace: &str) -> Prediction;
+ }
+ 
+ /// Mesure empiriquement un workspace candidat. Le contrat : ne **jamais** faire
+@@ -1164,6 +1182,17 @@ impl<M: CodeModel> LlmProposer<M> {
+                 lessons.push_str(&format!("- {r}\n"));
+             }
+         }
++        // Feedback simulé de CE step (axe 3) : un world model a prédit que ta ou
++        // tes tentatives précédentes casseraient. Corrige-toi maintenant.
++        if !ctx.simulated_feedback.is_empty() {
++            lessons.push_str(
++                "\nA fast simulator predicted your PREVIOUS attempt this step would FAIL. \
++                 Fix the specific problem — do NOT resubmit the same edit:\n",
++            );
++            for f in ctx.simulated_feedback {
++                lessons.push_str(&format!("- {f}\n"));
++            }
++        }
+ 
+         // Contenu ACTUEL des fichiers éditables : sans lui, le modèle invente du
+         // code inexistant et son `FIND` ne matche jamais. On borne chaque fichier
+@@ -1343,6 +1372,13 @@ fn extract_block(raw: &str, key: &str, ends: &[&str]) -> Option<String> {
+     }
+ }
+ 
++/// Un verdict prédit est-il un **cassé conclu** (`pass == Some(false)`) ? Seul
++/// ce cas autorise le saut de build / déclenche une révision simulée ; indécis
++/// (`None`) et prédit-bon (`Some(true)`) passent au gate réel.
++fn pred_is_broken(pred: &Option<Prediction>) -> bool {
++    matches!(pred, Some(p) if p.pass == Some(false))
++}
++
+ // ════════════════════════════════ Moteur ═════════════════════════════════ //
+ 
+ /// Réglages de la boucle.
+@@ -1365,6 +1401,12 @@ pub struct DgmConfig {
+     /// Sans effet sur les gains *structurels* (compile / tests) qui restent
+     /// toujours acceptés.
+     pub min_score_gain: f64,
++    /// **Révision simulée** (axe 3) : nombre maximal de fois où, dans un même
++    /// step, une proposition *prédite cassée* par le world model est renvoyée au
++    /// proposeur (avec la raison) pour qu'il la corrige avant le gate réel. `0`
++    /// = pré-crible pur (comportement d'origine : prédit cassé ⇒ build sauté).
++    /// Sans prédicteur attaché, ce réglage est inerte.
++    pub simulated_revisions: u32,
+ }
+ 
+ impl DgmConfig {
+@@ -1375,6 +1417,7 @@ impl DgmConfig {
+             accept_requires_all_green: true,
+             rejection_memory: 8,
+             min_score_gain: 0.0,
++            simulated_revisions: 0,
+         }
+     }
+ }
+@@ -1418,6 +1461,8 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
+     predictor: Option<Box<dyn VerdictPredictor>>,
+     /// Nombre de builds économisés par le pré-crible (reporting).
+     prescreen_skips: u64,
++    /// Nombre de révisions simulées effectuées (axe 3, reporting).
++    revisions: u64,
+ }
+ 
+ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
+@@ -1434,6 +1479,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
+             next_seq,
+             predictor: None,
+             prescreen_skips: 0,
++            revisions: 0,
+         }
+     }
+ 
+@@ -1448,6 +1494,11 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
+         self.prescreen_skips
+     }
+ 
++    /// Nombre de révisions simulées (axe 3) effectuées depuis le début.
++    pub fn revisions(&self) -> u64 {
++        self.revisions
++    }
++
+     pub fn archive(&self) -> &Archive {
+         &self.archive
+     }
+@@ -1468,35 +1519,52 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
+             None => return Ok(self.record(StepOutcome::NoProposal)),
+         };
+ 
+-        // 2. Demander un changement au proposeur.
++        // 2. Demander un changement au proposeur (premier essai : aucun feedback
++        //    simulé).
+         let rejections = self.recent_rejections.clone();
+-        let proposal = {
+-            let ctx = ImprovementContext {
+-                workspace_root: &self.config.workspace_root,
+-                goal: &self.config.goal,
+-                parent_fitness: parent.fitness.as_ref(),
+-                recent_rejections: &rejections,
+-            };
+-            self.proposer.propose(&ctx, &mut self.rng)?
+-        };
+-        let proposal = match proposal {
++        let mut sim_feedback: Vec<String> = Vec::new();
++        let mut proposal = match self.propose_with(&parent, &rejections, &sim_feedback)? {
+             Some(p) if !p.patch.is_noop() => p,
+             _ => return Ok(self.record(StepOutcome::NoProposal)),
+         };
+ 
+-        // 3. Évaluer — avec PRÉ-CRIBLE optionnel. Si un world model prédit avec
+-        //    certitude que le patch casse, on produit une fitness cassée SANS
+-        //    build réel (elle est rejetée par le chemin normal). On ne saute
+-        //    jamais le build sur un indécis ni un « bon » prédit.
+-        let fitness = match self.prescreen(&proposal.patch) {
+-            Some(f) => {
+-                self.prescreen_skips += 1;
+-                f
++        // 2b. Pré-crible + RÉVISION SIMULÉE (axe 3). Le world model prédit le
++        //     verdict de la proposition. Tant qu'il la juge cassée et qu'il reste
++        //     des tours, on réinjecte sa raison au proposeur pour qu'il se
++        //     corrige AVANT le gate réel. `simulated_revisions = 0` ⇒ pré-crible
++        //     pur (aucune révision, juste le saut de build sur « cassé »). Le
++        //     gate réel reste seul juge : la simulation n'oriente que la
++        //     proposition, elle ne l'accepte ni ne la rejette jamais.
++        let mut final_pred = self.predict_patch(&proposal.patch);
++        let mut rev = 0;
++        while rev < self.config.simulated_revisions && pred_is_broken(&final_pred) {
++            let reason = final_pred
++                .as_ref()
++                .and_then(|p| p.reason.clone())
++                .unwrap_or_else(|| "un simulateur prédit que ce patch casserait (compile ou tests)".to_string());
++            sim_feedback.push(reason);
++            self.revisions += 1;
++            rev += 1;
++            match self.propose_with(&parent, &rejections, &sim_feedback)? {
++                Some(p) if !p.patch.is_noop() => proposal = p,
++                // Le proposeur abandonne (NO PROPOSAL / no-op) : on garde la
++                // dernière proposition et son verdict, on sort.
++                _ => break,
++            }
++            final_pred = self.predict_patch(&proposal.patch);
++        }
++
++        // 3. Évaluer. Si la proposition FINALE est prédite cassée (verdict
++        //    conclu négatif), on saute le build réel (rejet sans coût). Indécis
++        //    ou prédit bon ⇒ gate réel autoritaire.
++        let fitness = if pred_is_broken(&final_pred) {
++            self.prescreen_skips += 1;
++            Fitness::broken("prescreen: prédit cassé (build évité)")
++        } else {
++            match self.evaluate_candidate(&proposal.patch) {
+                 Ok(f) => f,
+                 Err(e) => Fitness::broken(format!("could not evaluate: {e}")),
+-            },
++            }
+         };
+ 
+         // 4. N'accepter que si elle bat le parent sous l'ordre de barrière.
+@@ -1550,19 +1618,33 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
+         o
+     }
+ 
+-    /// Interroge le pré-crible. Rend `Some(fitness cassée)` **uniquement** si le
+-    /// world model est certain que le patch casse (→ build évité) ; `None`
+-    /// sinon (indécis, bon prédit, pas de prédicteur, ou fichier illisible) —
+-    /// auquel cas le gate réel s'exécute. Ne peut donc jamais écarter une
+-    /// amélioration, seulement épargner un build sûrement perdu.
+-    fn prescreen(&self, patch: &Patch) -> Option<Fitness> {
++    /// Demande une proposition au proposeur avec le contexte courant (rejets
++    /// passés + feedback simulé de CE step). Isole l'emprunt de `ctx`.
++    fn propose_with(
++        &mut self,
++        parent: &Variant,
++        rejections: &[String],
++        sim_feedback: &[String],
++    ) -> Result<Option<Proposal>> {
++        let ctx = ImprovementContext {
++            workspace_root: &self.config.workspace_root,
++            goal: &self.config.goal,
++            parent_fitness: parent.fitness.as_ref(),
++            recent_rejections: rejections,
++            simulated_feedback: sim_feedback,
++        };
++        self.proposer.propose(&ctx, &mut self.rng)
++    }
++
++    /// Interroge le prédicteur sur un patch. Rend `None` s'il n'y a pas de
++    /// prédicteur ou si le fichier cible est illisible (⇒ indécis ⇒ gate réel).
++    /// Ne décide jamais rien : c'est l'appelant qui applique la règle de sûreté
++    /// (n'agir que sur un `pass == Some(false)` conclu).
++    fn predict_patch(&self, patch: &Patch) -> Option<Prediction> {
+         let pred = self.predictor.as_ref()?;
+         let content =
+             std::fs::read_to_string(self.config.workspace_root.join(&patch.target)).ok()?;
+-        match pred.predict_pass(&patch.target, &content, &patch.find, &patch.replace) {
+-            Some(false) => Some(Fitness::broken("prescreen: prédit cassé (build évité)")),
+-            _ => None,
+-        }
++        Some(pred.predict(&patch.target, &content, &patch.find, &patch.replace))
+     }
+ 
+     fn evaluate_candidate(&self, patch: &Patch) -> Result<Fitness> {
+@@ -2036,6 +2118,7 @@ RATIONALE: bump the constant
+             goal: "g",
+             parent_fitness: None,
+             recent_rejections: &[],
++            simulated_feedback: &[],
+         };
+         let ok = LlmProposer::new(FixedModel(WELL_FORMED.to_string()), vec!["src/lib.rs".into()]);
+         assert!(ok.propose(&ctx, &mut rng).unwrap().is_some());
+@@ -2101,15 +2184,45 @@ RATIONALE: bump the constant
+ 
+     struct AlwaysBreaks;
+     impl VerdictPredictor for AlwaysBreaks {
+-        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
+-            Some(false)
++        fn predict(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Prediction {
++            Prediction { pass: Some(false), reason: Some("test: casse toujours".into()) }
+         }
+     }
+ 
+     struct AlwaysUndecided;
+     impl VerdictPredictor for AlwaysUndecided {
+-        fn predict_pass(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Option<bool> {
+-            None
++        fn predict(&self, _t: &str, _c: &str, _f: &str, _r: &str) -> Prediction {
++            Prediction::default()
++        }
++    }
++
++    /// Prédit « cassé » tant que le REPLACE contient le marqueur « BAD », « bon »
++    /// sinon — pour tester la révision simulée (axe 3).
++    struct BreaksWhileBad;
++    impl VerdictPredictor for BreaksWhileBad {
++        fn predict(&self, _t: &str, _c: &str, _f: &str, replace: &str) -> Prediction {
++            if replace.contains("BAD") {
++                Prediction { pass: Some(false), reason: Some("contient BAD".into()) }
++            } else {
++                Prediction { pass: Some(true), reason: None }
++            }
++        }
++    }
++
++    /// Propose du « BAD » au premier essai d'un step, puis du « bon » dès qu'un
++    /// feedback simulé arrive — modèle jouet d'un proposeur qui se corrige.
++    struct FixesOnFeedback;
++    impl Proposer for FixesOnFeedback {
++        fn propose(&self, ctx: &ImprovementContext<'_>, _rng: &mut Rng) -> Result<Option<Proposal>> {
++            let replace = if ctx.simulated_feedback.is_empty() {
++                "level = 0 BAD"
++            } else {
++                "level = 1"
++            };
++            Ok(Some(Proposal {
++                patch: Patch::new("src/level.txt", "level = 0", replace),
++                rationale: format!("feedback={}", ctx.simulated_feedback.len()),
++            }))
+         }
+     }
+ 
+@@ -2154,6 +2267,51 @@ RATIONALE: bump the constant
+         let _ = std::fs::remove_dir_all(&ws);
+     }
+ 
++    #[test]
++    fn simulated_revision_fixes_a_predicted_break_in_one_step() {
++        // Axe 3 : la 1ʳᵉ proposition est prédite cassée ; le proposeur reçoit la
++        // raison et se corrige DANS LE MÊME step ; la version corrigée passe le
++        // gate réel et est acceptée.
++        let ws = toy_workspace("sim-revise");
++        let mut cfg = DgmConfig::new(&ws, "raise");
++        cfg.simulated_revisions = 2;
++        let mut eng = DgmEngine::new(
++            Archive::with_root(fit(true, 1, 0, 0.0)),
++            FixesOnFeedback,
++            level_evaluator(),
++            cfg,
++            1,
++        )
++        .with_predictor(Box::new(BreaksWhileBad));
++        eng.run(1).unwrap();
++        assert_eq!(eng.revisions(), 1, "une révision a suffi");
++        assert_eq!(eng.prescreen_skips(), 0, "la version corrigée est buildée, pas sautée");
++        assert!(eng.archive().len() >= 2, "la correction est acceptée");
++        assert!(eng.best().unwrap().fitness.as_ref().unwrap().score >= 1.0);
++        let _ = std::fs::remove_dir_all(&ws);
++    }
++
++    #[test]
++    fn without_revisions_a_predicted_break_is_skipped() {
++        // Contraste : mêmes acteurs, simulated_revisions=0 ⇒ pré-crible pur ⇒ la
++        // proposition « BAD » prédite cassée est sautée, rien accepté (prouve que
++        // c'est bien la révision, et non le hasard, qui débloque le cas ci-dessus).
++        let ws = toy_workspace("sim-norevise");
++        let mut eng = DgmEngine::new(
++            Archive::with_root(fit(true, 1, 0, 0.0)),
++            FixesOnFeedback,
++            level_evaluator(),
++            DgmConfig::new(&ws, "raise"), // simulated_revisions = 0 par défaut
++            1,
++        )
++        .with_predictor(Box::new(BreaksWhileBad));
++        eng.run(3).unwrap();
++        assert_eq!(eng.revisions(), 0);
++        assert_eq!(eng.prescreen_skips(), 3, "3 propositions BAD sautées");
++        assert_eq!(eng.archive().len(), 1, "rien accepté");
++        let _ = std::fs::remove_dir_all(&ws);
++    }
++
+     struct Saboteur;
+     impl Proposer for Saboteur {
+         fn propose(&self, _ctx: &ImprovementContext<'_>, _rng: &mut Rng) -> Result<Option<Proposal>> {

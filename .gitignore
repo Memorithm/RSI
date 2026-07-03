@@ -15,3 +15,8 @@ rsi_full_trajectory.*
 
 # secrets locaux (cf. .env.example) — ne jamais committer
 .env
+
+# artefacts d.execution des boucles (jamais versionnes) : backups DGM, scholar, simcal
+/.rsi_backups/
+/.rsi_scholar/
+/.rsi_simcal_report.md

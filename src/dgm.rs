@@ -1258,7 +1258,7 @@ fn parse_proposal(raw: &str) -> Option<Proposal> {
     // propositions, le bloc REPLACE de la première ne doit pas avaler
     // l'enveloppe de la seconde (vécu : littéral « REPLACE: » injecté dans le
     // fichier, attrapé par le gate mais évitable ici).
-    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:"])?;
+    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:", "REPLACE:"])?;
     let rationale = line_value(raw, "RATIONALE:").unwrap_or_else(|| "llm proposal".to_string());
     if find.is_empty() || find == replace {
         return None;
@@ -1278,7 +1278,7 @@ fn explain_parse_failure(raw: &str) -> &'static str {
     if find.is_none() {
         return "bloc FIND absent ou vide";
     }
-    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:"]);
+    let replace = extract_block(raw, "REPLACE:", &["RATIONALE:", "TARGET:", "FIND:", "REPLACE:"]);
     if replace.is_none() {
         return "bloc REPLACE absent ou vide (réponse tronquée ?)";
     }
@@ -1961,6 +1961,21 @@ RATIONALE: bump the constant
                    FIND:\n<<<\nlet y = 0;\n>>>\nREPLACE:\n<<<\nlet y = 1;\n>>>\nRATIONALE: deux\n";
         let p = parse_proposal(raw).unwrap();
         assert_eq!(p.patch.replace, "let x = 1;");
+        assert!(!p.patch.replace.contains("REPLACE:"));
+    }
+
+    #[test]
+    fn repeated_replace_label_does_not_leak_into_file() {
+        let raw = "TARGET: src/kernels.rs\n\
+                   FIND:\n\
+                   for i in 0..n {\n    c[i] = 0.0;\n}\n\
+                   REPLACE:\n\
+                   for i in 0..n {\n    c[i] = 0.0f32;\n}\n\
+                   REPLACE:\n\
+                   for i in 0..n {\n    c[i] = 0.0f32;\n}\n\
+                   RATIONALE: retype\n";
+        let p = parse_proposal(raw).unwrap();
+        assert_eq!(p.patch.replace, "for i in 0..n {\n    c[i] = 0.0f32;\n}");
         assert!(!p.patch.replace.contains("REPLACE:"));
     }
 

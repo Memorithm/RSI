@@ -24,7 +24,7 @@ use rsi::tuning::ConfigTuning;
 const VALUE_FLAGS: &[&str] = &[
     "--model", "--ollama-host", "--ollama-port", "--iters", "--patience", "--k", "--target",
     "--min-delta", "--max-calls", "--max-seconds", "--max-overfit", "--seed", "--timeout",
-    "--num-predict", "--fn", "--lo", "--hi", "--n",
+    "--num-predict", "--temperature", "--top-p", "--fn", "--lo", "--hi", "--n",
 ];
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
@@ -62,6 +62,11 @@ fn usage() {
          \x20 --ollama-port PORT   défaut 11434\n\
          \x20 --timeout SECS       timeout HTTP par appel (défaut 180)\n\
          \x20 --num-predict N      plafond de tokens générés (optionnel)\n\
+         \n\
+         Exploration (diversité des propositions) :\n\
+         \x20 --temperature F      température d'échantillonnage (défaut modèle ;\n\
+         \x20                      ↑ = plus de diversité, évite la stagnation)\n\
+         \x20 --top-p F            nucleus sampling ∈ [0,1] (défaut modèle)\n\
          \n\
          Garde-fous (LlmGuard) :\n\
          \x20 --iters N            bornes d'itérations (défaut 20)\n\
@@ -141,12 +146,24 @@ fn main() {
     if let Some(np) = flag_value(&args, "--num-predict").and_then(|v| v.parse::<u32>().ok()) {
         client = client.with_num_predict(np).with_num_ctx(np + 8192);
     }
+    // Leviers d'exploration (diversité des propositions LLM).
+    let temperature = flag_value(&args, "--temperature").and_then(|v| v.parse::<f64>().ok());
+    if let Some(t) = temperature {
+        client = client.with_temperature(t);
+    }
+    if let Some(p) = flag_value(&args, "--top-p").and_then(|v| v.parse::<f64>().ok()) {
+        client = client.with_top_p(p);
+    }
     let seed: u64 = parse_or(&args, "--seed", 2026);
 
     println!("╔══════════════════════════════════════════════════════════════════════╗");
     println!("║   rsi-ascend — ascension auto-améliorante pilotée par LLM (Ollama)     ║");
     println!("╚══════════════════════════════════════════════════════════════════════╝");
     println!("domaine = {domain}  |  modèle = {model}  |  endpoint = {host}:{port}");
+    println!(
+        "exploration : température = {}",
+        temperature.map(|t| format!("{t}")).unwrap_or_else(|| "défaut modèle".to_string())
+    );
     println!(
         "garde-fous : iters≤{}  k={}  patience={}  budget={} appels  cible={}  min_delta={}",
         guard.max_iters,

@@ -355,6 +355,14 @@ pub struct OllamaClient {
     /// Constaté sur Jetson : `src/json.rs` 8/8 non-appliqués, `src/sha256.rs`
     /// réponses coupées au milieu du `FIND`.
     num_ctx: u32,
+    /// Température d'échantillonnage (`options.temperature`). `None` = défaut du
+    /// modèle. **Levier d'exploration** de la boucle `ascend_llm` : à chaque
+    /// itération le prompt (description de l'incumbent) est identique ; une
+    /// température plus haute diversifie les candidats et évite la stagnation
+    /// prématurée (patience atteinte sans nouvelle amélioration).
+    temperature: Option<f64>,
+    /// Nucleus sampling (`options.top_p`). `None` = défaut du modèle.
+    top_p: Option<f64>,
 }
 
 #[cfg(feature = "llm-ollama")]
@@ -369,6 +377,8 @@ impl OllamaClient {
             timeout: std::time::Duration::from_secs(60),
             num_predict: 4096,
             num_ctx: 16384,
+            temperature: None,
+            top_p: None,
         }
     }
     pub fn with_endpoint(mut self, host: impl Into<String>, port: u16) -> Self {
@@ -390,12 +400,27 @@ impl OllamaClient {
         self.num_ctx = n.max(512);
         self
     }
+    /// Fixe la température d'échantillonnage (`options.temperature`, ≥ 0) —
+    /// levier d'exploration de `ascend_llm`. Sans appel, défaut du modèle.
+    pub fn with_temperature(mut self, t: f64) -> Self {
+        self.temperature = Some(t.max(0.0));
+        self
+    }
+    /// Fixe le nucleus sampling (`options.top_p`, borné à [0, 1]).
+    pub fn with_top_p(mut self, p: f64) -> Self {
+        self.top_p = Some(p.clamp(0.0, 1.0));
+        self
+    }
 }
 
 /// Construit la requête HTTP/1.1 brute pour `/api/generate` (fonction pure,
 /// testable hors-ligne). Le corps JSON est sérialisé par `crate::json` (gère
 /// l'échappement des sauts de ligne / guillemets du prompt).
 #[cfg(feature = "llm-ollama")]
+// Fonction pure volontairement plate (paramètres primitifs) pour rester
+// testable hors-ligne sans monter un client ; l'ajout de temperature/top_p la
+// porte à 8 arguments.
+#[allow(clippy::too_many_arguments)]
 fn build_request(
     host: &str,
     port: u16,
@@ -403,10 +428,18 @@ fn build_request(
     prompt: &str,
     num_predict: u32,
     num_ctx: u32,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
 ) -> String {
     let mut options = crate::json::Json::obj();
     options.set("num_predict", crate::json::Json::Num(num_predict as f64));
     options.set("num_ctx", crate::json::Json::Num(num_ctx as f64));
+    if let Some(t) = temperature {
+        options.set("temperature", crate::json::Json::Num(t));
+    }
+    if let Some(p) = top_p {
+        options.set("top_p", crate::json::Json::Num(p));
+    }
     let mut body = crate::json::Json::obj();
     body.set("model", crate::json::Json::Str(model.to_string()));
     body.set("prompt", crate::json::Json::Str(prompt.to_string()));
@@ -708,6 +741,8 @@ impl OllamaClient {
             prompt,
             self.num_predict,
             self.num_ctx,
+            self.temperature,
+            self.top_p,
         );
         stream
             .write_all(req.as_bytes())
@@ -1122,7 +1157,7 @@ mod ollama_tests {
 
     #[test]
     fn request_is_well_formed_http() {
-        let req = build_request("127.0.0.1", 11434, "llama3.2", "salut\n\"x\"", 4096, 16384);
+        let req = build_request("127.0.0.1", 11434, "llama3.2", "salut\n\"x\"", 4096, 16384, None, None);
         assert!(req.starts_with("POST /api/generate HTTP/1.1\r\n"));
         assert!(req.contains("Host: 127.0.0.1:11434\r\n"));
         assert!(req.contains("Content-Type: application/json\r\n"));
@@ -1141,6 +1176,27 @@ mod ollama_tests {
         // num_ctx transmis (défaut serveur 4096 = prompt tronqué sur cibles réelles)
         let nc = j.get("options").and_then(|o| o.get("num_ctx")).and_then(|v| v.as_u64());
         assert_eq!(nc, Some(16384));
+        // sans réglage, PAS de temperature/top_p → défaut du modèle respecté
+        assert!(j.get("options").and_then(|o| o.get("temperature")).is_none());
+        assert!(j.get("options").and_then(|o| o.get("top_p")).is_none());
+    }
+
+    #[test]
+    fn request_includes_temperature_and_top_p_when_set() {
+        let req = build_request("h", 1, "m", "p", 256, 4096, Some(0.9), Some(0.8));
+        let (_, body) = req.split_once("\r\n\r\n").unwrap();
+        let j = crate::json::Json::parse(body).unwrap();
+        let temp = j.get("options").and_then(|o| o.get("temperature")).and_then(|v| v.as_f64());
+        let top_p = j.get("options").and_then(|o| o.get("top_p")).and_then(|v| v.as_f64());
+        assert_eq!(temp, Some(0.9));
+        assert_eq!(top_p, Some(0.8));
+    }
+
+    #[test]
+    fn builders_clamp_temperature_and_top_p() {
+        let c = OllamaClient::new("m").with_temperature(-1.0).with_top_p(2.0);
+        assert_eq!(c.temperature, Some(0.0)); // ≥ 0
+        assert_eq!(c.top_p, Some(1.0)); // borné à [0,1]
     }
 
     #[test]

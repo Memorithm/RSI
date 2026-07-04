@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use crate::agent::{RSIAgent, StepReport};
 use crate::convergence::{ConvergenceDetector, Trend};
+use crate::schedule::{LoopSchedule, MetaMeta};
 
 /// Critères d'arrêt du pilote de boucle.
 #[derive(Clone, Copy, Debug)]
@@ -32,6 +33,11 @@ pub struct LoopConfig {
     /// en cas de déclenchement du disjoncteur, restaure le dernier état sain
     /// (rollback) avant d'arrêter.
     pub rollback_on_breach: bool,
+    /// **boucle méta-méta (L3)** : si défini, la boucle *adapte les cadences*
+    /// (`meta_interval`) selon la tendance au lieu de s'arrêter au plateau —
+    /// ralentit sur plateau (économie), accélère en progression/divergence.
+    /// `None` = comportement d'origine (arrêt motivé).
+    pub meta_meta: Option<MetaMeta>,
 }
 
 impl Default for LoopConfig {
@@ -45,6 +51,7 @@ impl Default for LoopConfig {
             max_seconds: None,
             breaker_rpn: None,
             rollback_on_breach: false,
+            meta_meta: None,
         }
     }
 }
@@ -149,16 +156,29 @@ impl RSIAgent {
                 }
             }
             if det.filled() {
-                match det.trend(cfg.plateau_eps) {
-                    Trend::Plateau => {
-                        reason = StopReason::Plateau;
-                        break;
-                    }
-                    Trend::Diverging if cfg.stop_on_divergence => {
+                let trend = det.trend(cfg.plateau_eps);
+                if let Some(mm) = cfg.meta_meta {
+                    // §L3 — méta-méta : au lieu de s'arrêter, on révise les
+                    // cadences (ralentit sur plateau, accélère sinon) et on
+                    // poursuit. Divergence dure → arrêt reste possible.
+                    let sched = LoopSchedule::new(self.meta_interval, self.substrate_interval);
+                    mm.adapt(sched, trend).apply(self);
+                    if matches!(trend, Trend::Diverging) && cfg.stop_on_divergence {
                         reason = StopReason::Diverged;
                         break;
                     }
-                    _ => {}
+                } else {
+                    match trend {
+                        Trend::Plateau => {
+                            reason = StopReason::Plateau;
+                            break;
+                        }
+                        Trend::Diverging if cfg.stop_on_divergence => {
+                            reason = StopReason::Diverged;
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -238,6 +258,33 @@ mod tests {
         assert_eq!(out.reason, StopReason::Vetoed);
         assert_eq!(out.steps, 5);
         assert_eq!(obs.seen, 5);
+    }
+
+    #[test]
+    fn meta_meta_adapts_cadence_instead_of_stopping() {
+        // Référence : sans méta-méta, l'agent convergent s'arrête au plateau.
+        let mut base = RSIAgent::demo(7);
+        let base_cfg = LoopConfig { max_steps: 2000, plateau_window: 15, ..LoopConfig::default() };
+        assert_eq!(base.run_until(&base_cfg).reason, StopReason::Plateau);
+
+        // Avec méta-méta : même scénario, mais on ADAPTE les cadences au lieu de
+        // s'arrêter → la méta ralentit sur plateau (interval croît) et la boucle
+        // poursuit jusqu'au budget.
+        let mut agent = RSIAgent::demo(7);
+        assert_eq!(agent.meta_interval, 1);
+        let cfg = LoopConfig {
+            max_steps: 800,
+            plateau_window: 15,
+            meta_meta: Some(MetaMeta::default()),
+            ..LoopConfig::default()
+        };
+        let out = agent.run_until(&cfg);
+        assert_ne!(out.reason, StopReason::Plateau, "méta-méta ne doit pas s'arrêter au plateau");
+        assert!(
+            agent.meta_interval > 1,
+            "la cadence méta doit être ralentie sur plateau (interval={})",
+            agent.meta_interval
+        );
     }
 
     #[test]

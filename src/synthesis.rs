@@ -401,10 +401,6 @@ impl SymbolicSynthesis {
         self.lambda = lambda.max(1);
         self
     }
-    pub fn with_tolerance(mut self, tol: f64) -> Self {
-        self.tol = tol.max(0.0);
-        self
-    }
 
     /// Candidat initial trivial.
     pub fn seed_candidate(&self) -> Expr {

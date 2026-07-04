@@ -45,6 +45,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
     "--prescreen-model", "--prescreen-num-predict", "--revise",
+    "--claude-max-tokens", "--claude-base-url",
 ];
 
 /// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
@@ -260,6 +261,13 @@ fn main() {
             " — saute le build sur « cassé » sûr".to_string()
         };
         println!("• pré-crible world model : {sim_model} (num_predict={np}){mode}");
+    } else if revise > 0 {
+        // La révision simulée s'appuie sur le world model du pré-crible ; sans
+        // --prescreen-model, la boucle de révision ne se déclenche jamais.
+        eprintln!(
+            "⚠️  --revise {revise} sans effet : la révision simulée requiert \
+             --prescreen-model (cf. docs/AGENTWORLD_STUDY.md)."
+        );
     }
 
     println!("• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}");
@@ -373,7 +381,15 @@ fn make_claude(args: &[String]) -> Box<dyn CodeModel> {
         exit(2);
     }
     let name = flag_value(args, "--model").unwrap_or_else(|| "claude-sonnet-4-6".to_string());
-    Box::new(LlmCodeModel::new(rsi::llm::ClaudeClient::with_ureq(key, name)))
+    let mut client = rsi::llm::ClaudeClient::with_ureq(key, name);
+    // Réglages optionnels du backend Claude (symétrie avec les flags Ollama).
+    if let Some(mt) = flag_value(args, "--claude-max-tokens").and_then(|v| v.parse::<u32>().ok()) {
+        client = client.with_max_tokens(mt);
+    }
+    if let Some(url) = flag_value(args, "--claude-base-url") {
+        client = client.with_base_url(url);
+    }
+    Box::new(LlmCodeModel::new(client))
 }
 
 #[cfg(not(feature = "llm-claude-ureq"))]

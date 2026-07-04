@@ -16,7 +16,38 @@ dépôt, bins/examples/tests inclus) avant d'être listé.
 > `criticality`/`omega_tasks`, et décrit un `vendor/scirust-rsi/` remplacé
 > depuis par une dépendance git). Le présent document ne le remplace pas.
 
-## Constat global
+## État — findings traités dans cette branche
+
+> Les findings ci-dessous ont été **corrigés** (build vert, clippy 0 warning
+> défaut + toutes features, 206 tests lib + tests LLM). Résumé :
+>
+> - **Majeur — `risk_delta` inerte** : branché comme garde-fou de **vélocité**
+>   du risque (`agent.rs` : si Risk_global grimpe de plus de δ par pas → réponse
+>   conservatrice `damp_risk_delta`). Helper testable + tests.
+> - **Bug latent Claude** : `ClaudeClient::complete_raw` surchargé (texte brut,
+>   lignes vides/indentation préservées) → DGM matche à nouveau au caractère près.
+>   Test de non-régression ajouté.
+> - **`propose` ignore `k`** : Ollama & Claude honorent désormais `k` (borne
+>   supérieure). Test ajouté.
+> - **Liaisons manquantes** : `MetaMeta::adapt` branché dans `run_until`
+>   (`LoopConfig::meta_meta` — adapte les cadences au lieu de s'arrêter au
+>   plateau, testé) ; `--revise` sans `--prescreen-model` et `--paper-model`
+>   sans `--paper-llm` avertissent désormais ; optimiseur inconnu (`main`)
+>   avertit ; `rsi_dgm_start`/`status` listés **conditionnellement** à
+>   `llm-ollama` ; `RSI_DEFAULT_OPTIMIZER` mort supprimé.
+> - **Redondance** : `0.05.max(0.05)` de `MEMORY_POISON` éliminée.
+> - **Code mort supprimé** : `capability_levels`, `COMPONENTS`,
+>   `standard_bottleneck`, `StaticKnowledge`, `knowledge::{from_dir,with_args}`,
+>   `with_tolerance` (×2), `with_substrate_interval`.
+> - **Builders câblés** (plutôt que supprimés) : `ClaudeClient::{with_max_tokens,
+>   with_base_url}` exposés via `--claude-max-tokens`/`--claude-base-url` (rsi-dgm).
+> - **Conservés comme API délibérée** : `Matrix::identity` (primitive testée),
+>   paires persistance `checkpoint::{save,load}` et sérialisation `rng::{state,
+>   from_state}`.
+>
+> Le texte d'origine est conservé ci-dessous comme état initial de l'audit.
+
+## Constat global (état initial de l'audit)
 
 Aucun marqueur littéral (`TODO`/`FIXME`/`unimplemented!`/`todo!`/`placeholder`)
 dans le code Rust. Les implémentations « maison » sont **réelles et complètes**

@@ -11,7 +11,6 @@
 //! sous-processus implémentant le même trait, sans alourdir le cœur.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 /// Source de connaissances : chaque `absorb` ingère un lot et renvoie le niveau
 /// cumulé de connaissance ∈ [0,1] (monotone croissant).
@@ -36,21 +35,6 @@ impl CorpusKnowledge {
     /// Construit depuis des textes en mémoire.
     pub fn from_texts(documents: Vec<String>) -> Self {
         CorpusKnowledge { documents, cursor: 0, concepts: HashSet::new(), scale: 64.0 }
-    }
-
-    /// Construit depuis tous les fichiers d'un répertoire (lecture paresseuse au fil
-    /// des `absorb`). Les fichiers illisibles sont ignorés.
-    pub fn from_dir(dir: impl AsRef<Path>) -> std::io::Result<Self> {
-        let mut docs = Vec::new();
-        for entry in std::fs::read_dir(dir)? {
-            let path = entry?.path();
-            if path.is_file() {
-                if let Ok(text) = std::fs::read_to_string(&path) {
-                    docs.push(text);
-                }
-            }
-        }
-        Ok(CorpusKnowledge::from_texts(docs))
     }
 
     /// Règle l'échelle de saturation (nombre de concepts pour ~63 % du niveau).
@@ -147,12 +131,6 @@ impl PapersKnowledge {
     /// Sous-commande PAPERS (défaut `extract` ; p. ex. `analyze`).
     pub fn with_subcommand(mut self, sub: impl Into<String>) -> Self {
         self.subcommand = sub.into();
-        self
-    }
-
-    /// Arguments supplémentaires passés à PAPERS (p. ex. `--no-llm`).
-    pub fn with_args(mut self, args: Vec<String>) -> Self {
-        self.extra_args = args;
         self
     }
 
@@ -265,18 +243,6 @@ impl KnowledgeSource for PapersKnowledge {
 
     fn level(&self) -> f64 {
         saturating_level(self.concepts.len(), self.scale)
-    }
-}
-
-/// Source triviale de niveau constant (utile pour tests / calibration).
-pub struct StaticKnowledge(pub f64);
-
-impl KnowledgeSource for StaticKnowledge {
-    fn absorb(&mut self) -> f64 {
-        self.0.clamp(0.0, 1.0)
-    }
-    fn level(&self) -> f64 {
-        self.0.clamp(0.0, 1.0)
     }
 }
 

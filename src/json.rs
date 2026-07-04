@@ -380,7 +380,7 @@ impl Parser {
                 break;
             }
         }
-        let slice: String = self.chars[start..self.pos].iter().collect();
+        let slice: &str = &self.chars[start..self.pos].iter().collect::<String>();
         slice
             .parse::<f64>()
             .map(Json::Num)

@@ -155,7 +155,10 @@ fn props(pairs: &[(&str, Json)]) -> Json {
 fn tools_list() -> Json {
     let id = || ("id", prop("string", "Identifiant de session (défaut: 'default')."));
 
-    let tools = vec![
+    // Les outils DGM (rsi_dgm_start/status) ne sont listés que si la feature
+    // `llm-ollama` est compilée — sinon ils échoueraient systématiquement.
+    #[cfg_attr(not(feature = "llm-ollama"), allow(unused_mut))]
+    let mut tools = vec![
         tool(
             "rsi_describe",
             "Décrit le système RSI (modèle mathématique) et le catalogue de commandes.",
@@ -295,7 +298,13 @@ fn tools_list() -> Json {
             ]),
             &["state"],
         ),
-        tool(
+    ];
+
+    // Outils DGM — listés uniquement sous la feature `llm-ollama` (sinon
+    // `dgm_job::start` renvoie systématiquement « outil indisponible »).
+    #[cfg(feature = "llm-ollama")]
+    {
+        tools.push(tool(
             "rsi_dgm_start",
             "Lance en ARRIÈRE-PLAN une boucle d'auto-amélioration DGM/STOP sur un dépôt réel : \
              le LLM (connexion automatique : modèle Ollama découvert, ou 'model') propose des \
@@ -303,7 +312,7 @@ fn tools_list() -> Json {
              seulement s'il est strictement meilleur. DRY-RUN STRICT : rien n'est jamais écrit \
              dans l'arbre vivant depuis MCP — la promotion reste un acte humain en CLI \
              (rsi-dgm --promote) après revue du diff. Suivre via rsi_dgm_status. \
-             Un seul job à la fois. Requiert la feature llm-ollama.",
+             Un seul job à la fois.",
             props(&[
                 ("workspace", prop("string", "Racine du dépôt (répertoire).")),
                 ("goal", prop("string", "Objectif d'amélioration remis au proposeur (directif = plus efficace).")),
@@ -316,15 +325,15 @@ fn tools_list() -> Json {
                 ("timeout_secs", prop("integer", "Borne par invocation cargo (défaut 300, max 1800).")),
             ]),
             &["workspace", "goal", "allow"],
-        ),
-        tool(
+        ));
+        tools.push(tool(
             "rsi_dgm_status",
             "État du job DGM d'arrière-plan : phase courante, résultats par étape (accepté/rejeté, \
              fitness, raison), meilleur variant promouvable (dry-run), erreur éventuelle.",
             Json::obj(),
             &[],
-        ),
-    ];
+        ));
+    }
 
     let mut out = Json::obj();
     out.set("tools", Json::Arr(tools));

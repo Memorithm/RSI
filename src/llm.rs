@@ -734,13 +734,19 @@ impl OllamaClient {
 
 #[cfg(feature = "llm-ollama")]
 impl LlmClient for OllamaClient {
-    fn propose(&self, prompt: &str, _k: usize) -> Result<Vec<String>, LlmError> {
+    fn propose(&self, prompt: &str, k: usize) -> Result<Vec<String>, LlmError> {
         let raw = self.http_roundtrip(prompt)?;
-        let out = parse_response(&raw);
-        if out.is_err() {
-            Self::debug_dump(&raw);
+        match parse_response(&raw) {
+            Ok(mut props) => {
+                // Contrat du trait : rendre au plus `k` propositions.
+                props.truncate(k.max(1));
+                Ok(props)
+            }
+            Err(e) => {
+                Self::debug_dump(&raw);
+                Err(e)
+            }
         }
-        out
     }
 
     /// Complétion brute (lignes vides préservées) — requis par DGM pour que le
@@ -808,6 +814,21 @@ impl<T: ClaudeTransport> ClaudeClient<T> {
         self.base_url = url.into();
         self
     }
+
+    /// Envoie `prompt` à l'API Messages et rend le corps de réponse brut.
+    /// Point unique de transport, partagé par `propose` et `complete_raw`.
+    fn post(&self, prompt: &str) -> Result<String, LlmError> {
+        let body = claude_request_body(&self.model, prompt, self.max_tokens);
+        let headers = vec![
+            ("x-api-key".to_string(), self.api_key.clone()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+        let url = format!("{}/v1/messages", self.base_url);
+        self.transport
+            .post_json(&url, &headers, &body)
+            .map_err(LlmError::Backend)
+    }
 }
 
 /// Corps JSON d'une requête Messages API (fonction pure, testable hors-ligne).
@@ -867,21 +888,60 @@ fn parse_claude_response(body: &str) -> Result<Vec<String>, LlmError> {
     }
 }
 
+/// Concatène le texte brut des blocs `text` d'une réponse Messages API **sans**
+/// découper par ligne ni trim (lignes vides et indentation préservées).
+/// Contrairement à [`parse_claude_response`] (adaptée au raffinement, une
+/// proposition par ligne), ceci sert à [`ClaudeClient::complete_raw`] pour DGM.
+#[cfg(feature = "llm-claude")]
+fn claude_raw_text(body: &str) -> Result<String, LlmError> {
+    let json = crate::json::Json::parse(body)
+        .map_err(|e| LlmError::Backend(format!("JSON Claude invalide: {e}")))?;
+
+    if json.get("type").and_then(|v| v.as_str()) == Some("error") {
+        let msg = json
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("erreur API Claude");
+        return Err(LlmError::Backend(msg.to_string()));
+    }
+
+    let content = json
+        .get("content")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| LlmError::Backend("champ 'content' absent".to_string()))?;
+    let mut text = String::new();
+    for block in content {
+        if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+            if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                text.push_str(t);
+            }
+        }
+    }
+    if text.is_empty() {
+        Err(LlmError::Empty)
+    } else {
+        Ok(text)
+    }
+}
+
 #[cfg(feature = "llm-claude")]
 impl<T: ClaudeTransport> LlmClient for ClaudeClient<T> {
-    fn propose(&self, prompt: &str, _k: usize) -> Result<Vec<String>, LlmError> {
-        let body = claude_request_body(&self.model, prompt, self.max_tokens);
-        let headers = vec![
-            ("x-api-key".to_string(), self.api_key.clone()),
-            ("anthropic-version".to_string(), "2023-06-01".to_string()),
-            ("content-type".to_string(), "application/json".to_string()),
-        ];
-        let url = format!("{}/v1/messages", self.base_url);
-        let resp = self
-            .transport
-            .post_json(&url, &headers, &body)
-            .map_err(LlmError::Backend)?;
-        parse_claude_response(&resp)
+    fn propose(&self, prompt: &str, k: usize) -> Result<Vec<String>, LlmError> {
+        let resp = self.post(prompt)?;
+        let mut props = parse_claude_response(&resp)?;
+        // Contrat du trait : rendre au plus `k` propositions.
+        props.truncate(k.max(1));
+        Ok(props)
+    }
+
+    /// Complétion brute (lignes vides et indentation **préservées**) — requis
+    /// par DGM pour que le `FIND` matche le fichier au caractère près. Sans cette
+    /// surcharge, le défaut du trait passait par `propose` (qui trim/filtre les
+    /// lignes) et cassait silencieusement le matching sur le backend Claude.
+    fn complete_raw(&self, prompt: &str) -> Result<String, LlmError> {
+        let resp = self.post(prompt)?;
+        claude_raw_text(&resp)
     }
 }
 
@@ -1253,5 +1313,36 @@ mod claude_tests {
             "claude-sonnet-4-6",
         );
         assert!(matches!(client.propose("p", 1), Err(LlmError::Backend(_))));
+    }
+
+    #[test]
+    fn complete_raw_preserves_blank_lines_and_indentation() {
+        // Un patch DGM doit matcher le fichier au caractère près : lignes vides
+        // et indentation NE doivent PAS être supprimées (régression du défaut
+        // du trait qui passait par `propose`).
+        let text = "fn f() {\n\n    let x = 0;\n}";
+        let escaped = crate::json::Json::Str(text.to_string()).to_string();
+        let body = format!(r#"{{"content":[{{"type":"text","text":{escaped}}}]}}"#);
+        let client = ClaudeClient::new(
+            MockTransport { body, fail: false },
+            "sk-test",
+            "claude-sonnet-4-6",
+        );
+        assert_eq!(client.complete_raw("prompt").unwrap(), text);
+        // ... alors que propose (raffinement) trim/filtre les lignes vides :
+        let props = client.propose("prompt", 8).unwrap();
+        assert!(!props.iter().any(|l| l.is_empty()));
+    }
+
+    #[test]
+    fn propose_honours_k_upper_bound() {
+        let body = r#"{"content":[{"type":"text","text":"a\nb\nc\nd\ne"}]}"#;
+        let client = ClaudeClient::new(
+            MockTransport { body: body.to_string(), fail: false },
+            "sk-test",
+            "claude-sonnet-4-6",
+        );
+        assert_eq!(client.propose("p", 2).unwrap().len(), 2);
+        assert_eq!(client.propose("p", 0).unwrap().len(), 1); // k=0 → au moins 1
     }
 }

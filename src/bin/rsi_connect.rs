@@ -118,15 +118,11 @@ fn locate_mcp_binary(override_path: &Option<String>) -> String {
 
 /// Construit l'entrée serveur MCP standard pour RSI.
 fn server_entry(bin: &str) -> Json {
-    let mut env = Json::obj();
-    // place-holders d'environnement utiles (overridables par le runtime)
-    env.set("RSI_DEFAULT_OPTIMIZER", Json::Str("random".into()));
-
     let mut entry = Json::obj();
     entry
         .set("command", Json::Str(bin.into()))
         .set("args", Json::Arr(vec![]))
-        .set("env", env)
+        .set("env", Json::obj())
         .set(
             "description",
             Json::Str(

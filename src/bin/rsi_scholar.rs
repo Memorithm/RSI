@@ -104,6 +104,12 @@ fn main() {
     // `--paper-model` : modèle passé à PAPERS (défaut PAPERS : gemma4:e2b).
     let paper_llm = args.iter().any(|a| a == "--paper-llm");
     let paper_model = flag_value(&args, "--paper-model");
+    if paper_model.is_some() && !paper_llm {
+        eprintln!(
+            "⚠️  --paper-model ignoré sans --paper-llm : l'analyse heuristique \
+             (--no-llm) n'utilise aucun modèle."
+        );
+    }
     let llm_model: Option<String> = if paper_llm { Some(paper_model.unwrap_or_default()) } else { None };
     println!(
         "• analyse du papier « {paper} » (papers analyze{})…",

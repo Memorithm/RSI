@@ -68,10 +68,6 @@ impl SymbolicSynthesis {
         self.lambda = lambda.max(1);
         self
     }
-    pub fn with_tolerance(mut self, tol: f64) -> Self {
-        self.tol = tol.max(0.0);
-        self
-    }
 
     /// Score scalaire = fraction de cas réussis − pénalité de complexité.
     /// (sandbox : `Expr::eval` est notre interpréteur, aucune exécution externe)

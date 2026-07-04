@@ -56,7 +56,14 @@ fn main() {
 
     let mut agent = match args.optimizer.as_str() {
         "cma" | "cma-es" | "sep-cma-es" => RSIAgent::demo_cma(args.seed),
-        _ => RSIAgent::demo(args.seed),
+        "random" | "demo" | "" => RSIAgent::demo(args.seed),
+        other => {
+            eprintln!(
+                "⚠️  optimiseur inconnu « {other} » — repli sur « random » \
+                 (connus : random, cma)."
+            );
+            RSIAgent::demo(args.seed)
+        }
     };
 
     println!("╔══════════════════════════════════════════════════════════════════════╗");

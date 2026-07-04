@@ -149,9 +149,11 @@ impl RiskModel {
             },
             ModeDef {
                 name: modes::MEMORY_POISON,
+                // Occurrence de base appliquée via `memory_base` dans `assess`
+                // (unique source de vérité, évite le doublon 0.05.max(0.05)).
                 severity: 0.6,
                 detection: 0.7,
-                occurrence: |s| if s.memory_active { 0.05 } else { 0.0 },
+                occurrence: |_s| 0.0,
             },
             ModeDef {
                 name: modes::WIREHEADING,

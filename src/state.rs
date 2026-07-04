@@ -14,9 +14,6 @@
 use crate::linalg::{mean, norm};
 use crate::rng::Rng;
 
-/// Ordre canonique des composantes.
-pub const COMPONENTS: [&str; 6] = ["D", "M", "R", "A", "C", "V"];
-
 /// Dimensions de chaque composante de S.
 #[derive(Clone, Copy, Debug)]
 pub struct Dims {
@@ -124,18 +121,6 @@ impl CognitiveState {
     /// Taille totale du vecteur d'état.
     pub fn size(&self) -> usize {
         self.dims().total()
-    }
-
-    /// Niveau (moyenne) de chaque composante — lecture humaine.
-    pub fn capability_levels(&self) -> [(&'static str, f64); 6] {
-        [
-            ("D", mean(&self.d)),
-            ("M", mean(&self.m)),
-            ("R", mean(&self.r)),
-            ("A", mean(&self.a)),
-            ("C", mean(&self.c)),
-            ("V", mean(&self.v)),
-        ]
     }
 
     /// Niveaux sous forme de tableau ordonné (D,M,R,A,C,V).

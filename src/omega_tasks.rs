@@ -15,7 +15,7 @@
 use crate::state::CognitiveState;
 use crate::substrate::Substrate;
 use crate::surface::{
-    Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
+    CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
 };
 
 /// Une tâche **concrète** de Ω : profil de besoins + exigence + importance.
@@ -115,11 +115,6 @@ pub fn report(
             limiter: if g < phi { Limiter::Substrate } else { Limiter::Cognition },
         })
         .collect()
-}
-
-/// Goulot agrégé du banc standard (raccourci pratique).
-pub fn standard_bottleneck(state: &CognitiveState, substrate: &Substrate) -> Bottleneck {
-    surface(&standard_suite()).bottleneck(state, substrate)
 }
 
 #[cfg(test)]

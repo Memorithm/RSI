@@ -48,7 +48,7 @@ pub struct StepReport {
     /// SI_safe = SI_global − κ · Risk_global.
     pub si_safe: f64,
     /// réponse de sûreté appliquée à ce pas (§7 garde-fou actif) :
-    /// "none" | "damp_gain" | "realign_V" | "trust_floor".
+    /// "none" | "damp_gain" | "damp_risk_delta" | "realign_V" | "trust_floor".
     pub mitigation: &'static str,
 }
 
@@ -91,6 +91,10 @@ pub struct RSIAgent {
     /// taux de montée de D vers le niveau de connaissance ingéré.
     pub knowledge_rate: f64,
     pub t: usize,
+    /// (§7) Risk_global structurel du pas précédent, pour le garde-fou de
+    /// **vélocité** `risk_delta` (borne la hausse de risque par pas). `NaN` tant
+    /// qu'aucun pas n'a été fait.
+    prev_pre_risk: f64,
 }
 
 impl RSIAgent {
@@ -122,6 +126,7 @@ impl RSIAgent {
             knowledge: None,
             knowledge_rate: 0.25,
             t: 0,
+            prev_pre_risk: f64::NAN,
         }
     }
 
@@ -176,12 +181,6 @@ impl RSIAgent {
     /// (§C) n'exécute la méta-révision que tous les `interval` pas. Builder.
     pub fn with_meta_interval(mut self, interval: usize) -> Self {
         self.meta_interval = interval.max(1);
-        self
-    }
-
-    /// (§L3) cadence de l'améliorateur de substrat (un pas sur `interval`). Builder.
-    pub fn with_substrate_interval(mut self, interval: usize) -> Self {
-        self.substrate_interval = interval.max(1);
         self
     }
 
@@ -323,11 +322,18 @@ impl RSIAgent {
         // une réponse *ciblée* selon le mode le plus critique.
         let mut active = self.strategy.clone();
         let mut mitigation = "none";
-        let over_threshold = self.risk_cfg.active_response && pre_risk.max_rpn > self.risk_cfg.rpn_max;
+        let rpn_exceeded = self.risk_cfg.active_response && pre_risk.max_rpn > self.risk_cfg.rpn_max;
+        // §7 — garde-fou de VÉLOCITÉ : si le risque structurel grimpe de plus de
+        // `risk_delta` d'un pas à l'autre, on entre en mode conservateur *avant*
+        // que le risque n'accélère (borne la dérivée de Risk_global par pas).
+        let risk_rising = self.risk_cfg.active_response
+            && risk_velocity_exceeded(self.prev_pre_risk, pre_risk.risk_global, self.risk_cfg.risk_delta);
+        let over_threshold = rpn_exceeded || risk_rising;
         if over_threshold {
             active.gain *= 0.5; // réponse de base : pas conservateur
-            mitigation = "damp_gain";
+            mitigation = if rpn_exceeded { "damp_gain" } else { "damp_risk_delta" };
         }
+        self.prev_pre_risk = pre_risk.risk_global;
 
         // 2) ℳ(S_t, V_t, H, O) : proposition d'auto-modification (état + logiciel)
         let (meta_delta, new_substrate) = active.apply(&self.state, &self.substrate);
@@ -492,6 +498,13 @@ impl RSIAgent {
     }
 }
 
+/// Garde-fou de vélocité du risque (§7) : vrai si le Risk_global a augmenté de
+/// plus de `delta` depuis le pas précédent. Faux tant qu'il n'y a pas de pas
+/// précédent (`prev` = NaN). Extrait pour être testé indépendamment de la boucle.
+fn risk_velocity_exceeded(prev: f64, cur: f64, delta: f64) -> bool {
+    prev.is_finite() && (cur - prev) > delta
+}
+
 /// Hash stable (FNV-1a) d'une stratégie ℳ, pour l'identifier dans l'audit.
 fn strategy_hash(strategy: &MetaStrategy) -> u64 {
     let theta = strategy.encode();
@@ -508,6 +521,40 @@ fn strategy_hash(strategy: &MetaStrategy) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn risk_velocity_guardrail_logic() {
+        // pas de pas précédent (NaN) → jamais déclenché
+        assert!(!risk_velocity_exceeded(f64::NAN, 0.9, 0.1));
+        // hausse au-delà de δ → déclenché
+        assert!(risk_velocity_exceeded(0.30, 0.45, 0.1));
+        // hausse sous δ → pas déclenché
+        assert!(!risk_velocity_exceeded(0.30, 0.35, 0.1));
+        // baisse du risque → jamais déclenché
+        assert!(!risk_velocity_exceeded(0.50, 0.20, 0.1));
+    }
+
+    #[test]
+    fn risk_delta_config_gates_conservative_steps() {
+        // rpn_max énorme → seul le garde-fou de vélocité peut déclencher.
+        let count = |delta: f64| {
+            RSIAgent::demo(11)
+                .with_risk_config(crate::criticality::RiskConfig {
+                    kappa: 0.5,
+                    rpn_max: 1e9,
+                    risk_delta: delta,
+                    active_response: true,
+                })
+                .run(60)
+                .iter()
+                .filter(|r| r.mitigation != "none")
+                .count()
+        };
+        // δ immense : aucune hausse ne dépasse le seuil → jamais conservateur.
+        assert_eq!(count(1e9), 0);
+        // δ = 0 : toute hausse de risque structurel enclenche la réponse.
+        assert!(count(0.0) >= 1, "risk_delta=0 devrait borner la vélocité");
+    }
 
     #[test]
     fn si_is_monotone_within_epsilon() {

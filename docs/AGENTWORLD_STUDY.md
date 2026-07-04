@@ -131,7 +131,7 @@ c'est un **modèle**, il se branche par les backends LLM existants :
 | 1 | GGUF AgentWorld sur le Thor + sonde manuelle | 1 h | faisabilité brute | ✅ **fait** |
 | 2 | **Calibration** : proposeur réel → gate réel (vérité terrain) vs verdict simulé → matrice de confusion (`rsi-simcal`) | ½ j | tout le reste | ✅ **outillé** — à faire tourner |
 | 3 | Pré-crible optionnel dans `dgm.rs` (`VerdictPredictor`) | 1-2 j | axe 1 | ✅ **livré** |
-| 4 | Feedback anticipé dans le prompt (axe 3) | ½ j | — | ⏳ |
+| 4 | Feedback anticipé dans le prompt (axe 3) — `--revise N` | ½ j | — | ✅ **livré** |
 | 5 | Exportateur de trajectoires (axe 4) | 1 j | flywheel | ⏳ |
 | 6 | Chaos simulé / AgentWorldBench (axes 5-6) | recherche continue | — | ⏳ |
 
@@ -224,3 +224,15 @@ le world model reconnaît les casses (calibration : tous les verdicts conclus
 corrects) et évite leur build (~1-3 min chacun) ; les candidats prometteurs et
 les indécis paient le vrai gate. Le rapport de fin indique le nombre de builds
 évités. Deux modèles résidents recommandés (`OLLAMA_MAX_LOADED_MODELS=2`).
+
+
+### Étape 4 ✅ livrée + validée sur le Thor — révision simulée (`--revise N`)
+
+Le pré-crible devient le cas *zéro-révision* d'une boucle générale : sur une
+casse prédite, la raison du world model est réinjectée dans le prompt du
+proposeur qui **se corrige dans le même step** avant le gate réel (borné par
+`--revise N`, gate réel seul juge, zéro idée perdue). Run json (15 steps,
+`--revise 2`) : démarrage `révision simulée ×2`, **3 corrections demandées**,
+2 builds pré-criblés, 4 ACCEPTÉ, meilleur 128.41 (+1.8 % vs réf, contre +1.5 %
+sans révision). **Mécanisme validé ; gain marginal sur cible quasi-saturée** —
+l'axe 3 paiera davantage sur une cible à propositions souvent cassées (matmul).

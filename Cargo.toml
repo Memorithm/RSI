@@ -119,6 +119,13 @@ name = "rsi-simcal"
 path = "src/bin/rsi_simcal.rs"
 required-features = ["llm-ollama"]
 
+# Ascension auto-améliorante pilotée par LLM (ascend_llm + LlmGuard) sur les
+# domaines std-only synthesis/prompt/tuning. Backend Ollama local.
+[[bin]]
+name = "rsi-ascend"
+path = "src/bin/rsi_ascend.rs"
+required-features = ["llm-ollama"]
+
 [profile.release]
 opt-level = 3
 lto = true

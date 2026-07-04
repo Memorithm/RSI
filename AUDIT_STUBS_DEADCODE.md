@@ -31,7 +31,9 @@ dépôt, bins/examples/tests inclus) avant d'être listé.
 >   supérieure). Test ajouté.
 > - **Liaisons manquantes** : `MetaMeta::adapt` branché dans `run_until`
 >   (`LoopConfig::meta_meta` — adapte les cadences au lieu de s'arrêter au
->   plateau, testé) ; `--revise` sans `--prescreen-model` et `--paper-model`
+>   plateau, testé) ; **`ascend_llm` + `LlmGuard` câblés dans un binaire livré**
+>   (`rsi-ascend`, backend Ollama, domaines synthesis/prompt/tuning) ;
+>   `--revise` sans `--prescreen-model` et `--paper-model`
 >   sans `--paper-llm` avertissent désormais ; optimiseur inconnu (`main`)
 >   avertit ; `rsi_dgm_start`/`status` listés **conditionnellement** à
 >   `llm-ollama` ; `RSI_DEFAULT_OPTIMIZER` mort supprimé.

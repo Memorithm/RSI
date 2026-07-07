@@ -97,6 +97,7 @@
 use crate::json::Json;
 use crate::rng::Rng;
 use crate::sha256::sha256_hex;
+use crate::trajectory::Trajectory;
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -1449,6 +1450,8 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
     prescreen_skips: u64,
     /// Nombre de révisions simulées effectuées (axe 3, reporting).
     revisions: u64,
+    /// Trajectoires à vérité terrain (axe 4, flywheel). Cf. [`crate::trajectory`].
+    trajectories: Vec<Trajectory>,
 }
 
 impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
@@ -1466,6 +1469,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             predictor: None,
             prescreen_skips: 0,
             revisions: 0,
+            trajectories: Vec::new(),
         }
     }
 
@@ -1483,6 +1487,11 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
     /// Nombre de révisions simulées (axe 3) effectuées depuis le début.
     pub fn revisions(&self) -> u64 {
         self.revisions
+    }
+
+    /// Trajectoires à vérité terrain (axe 4). Sérialiser via [`crate::trajectory::to_jsonl`].
+    pub fn trajectories(&self) -> &[Trajectory] {
+        &self.trajectories
     }
 
     pub fn archive(&self) -> &Archive {
@@ -1537,7 +1546,10 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             Fitness::broken("prescreen: prédit cassé (build évité)")
         } else {
             match self.evaluate_candidate(&proposal.patch) {
-                Ok(f) => f,
+                Ok(f) => {
+                    self.capture_trajectory(&proposal.patch, &f);
+                    f
+                }
                 Err(e) => Fitness::broken(format!("could not evaluate: {e}")),
             }
         };
@@ -1611,6 +1623,24 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         let content =
             std::fs::read_to_string(self.config.workspace_root.join(&patch.target)).ok()?;
         Some(pred.predict(&patch.target, &content, &patch.find, &patch.replace))
+    }
+
+    /// Enregistre une trajectoire à vérité terrain (axe 4). Contenu borné (~12k).
+    fn capture_trajectory(&mut self, patch: &Patch, fitness: &Fitness) {
+        const MAX_FILE_CHARS: usize = 12_000;
+        let content = std::fs::read_to_string(self.config.workspace_root.join(&patch.target))
+            .unwrap_or_default();
+        let file_content: String = content.chars().take(MAX_FILE_CHARS).collect();
+        self.trajectories.push(Trajectory {
+            target: patch.target.clone(),
+            find: patch.find.clone(),
+            replace: patch.replace.clone(),
+            file_content,
+            compiles: fitness.compiles,
+            tests_passed: fitness.tests_passed,
+            tests_failed: fitness.tests_failed,
+            score: fitness.score,
+        });
     }
 
     fn evaluate_candidate(&self, patch: &Patch) -> Result<Fitness> {

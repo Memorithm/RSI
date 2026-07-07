@@ -48,6 +48,7 @@ pub mod ascent;
 pub mod audit;
 #[cfg(feature = "ccos")]
 pub mod ccos_audit;
+pub mod chaos;
 pub mod checkpoint;
 pub mod cma;
 pub mod convergence;

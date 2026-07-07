@@ -26,6 +26,12 @@ pub struct Trajectory {
     pub tests_passed: u32,
     pub tests_failed: u32,
     pub score: f64,
+    /// Sortie `cargo` RÉELLE (bornée) capturée au gate — erreur du compilateur
+    /// ou détail des tests échoués. Rend la complétion beaucoup plus riche qu'un
+    /// gabarit (le world model apprend *pourquoi* ça casse, pas seulement que ça
+    /// casse). `None` sur succès : le gabarit « running N tests…ok » suffit et
+    /// reste cargo-réaliste. La ligne `SIMCAL_VERDICT` reste toujours appendue.
+    pub output: Option<String>,
 }
 
 impl Trajectory {
@@ -42,9 +48,19 @@ impl Trajectory {
         format!("SIMCAL_VERDICT: compile={compile}; tests={tests}")
     }
 
-    /// Complétion cible : sortie `cargo` réaliste + ligne de verdict.
+    /// Complétion cible : sortie `cargo` (réelle si capturée, sinon gabarit
+    /// réaliste) **terminée par la ligne machine `SIMCAL_VERDICT`** — qui reste
+    /// faisant autorité pour le parseur, donc l'invariant de round-trip tient
+    /// quel que soit le corps.
     pub fn completion(&self) -> String {
-        let body = if !self.compiles {
+        let body = self.output.clone().unwrap_or_else(|| self.template_body());
+        format!("{body}\n{}", self.verdict_line())
+    }
+
+    /// Corps « cargo réaliste » synthétique — repli quand aucune sortie réelle
+    /// n'a été capturée (typiquement les succès, où le détail n'apporte rien).
+    fn template_body(&self) -> String {
+        if !self.compiles {
             "error[E0308]: le patch ne compile pas (build échoué)".to_string()
         } else if self.tests_failed == 0 {
             format!(
@@ -57,8 +73,7 @@ impl Trajectory {
                 "running {total} tests\ntest result: FAILED. {} passed; {} failed; 0 ignored",
                 self.tests_passed, self.tests_failed
             )
-        };
-        format!("{body}\n{}", self.verdict_line())
+        }
     }
 
     /// Invite exacte du pré-crible pour cette trajectoire.
@@ -118,6 +133,7 @@ mod tests {
             tests_passed: passed,
             tests_failed: failed,
             score: 1.0,
+            output: None,
         }
     }
 
@@ -136,6 +152,28 @@ mod tests {
             let want_tests = if !t.compiles { Some(false) } else { Some(t.tests_failed == 0) };
             assert_eq!(v.tests_pass, want_tests, "tests: {}", t.completion());
         }
+    }
+
+    #[test]
+    fn real_output_enriches_completion_and_still_roundtrips() {
+        // Échec de compilation avec vraie sortie cargo capturée.
+        let mut t = traj(false, 0, 0);
+        t.output = Some("Compiling rsi v0.10.0\nerror[E0412]: cannot find type `Foo` in this scope".into());
+        let c = t.completion();
+        assert!(c.contains("error[E0412]"), "la vraie sortie doit apparaître : {c}");
+        // le verdict machine reste faisant autorité → round-trip intact
+        let v = parse_sim_verdict(&c);
+        assert_eq!(v.compiles, Some(false));
+        assert_eq!(v.tests_pass, Some(false)); // na → non-pass
+
+        // Test échoué avec détail réel.
+        let mut t = traj(true, 40, 2);
+        t.output = Some("test result: FAILED. 40 passed; 2 failed\n---- json::deep panicked ----".into());
+        let c = t.completion();
+        assert!(c.contains("panicked"), "le détail réel doit apparaître : {c}");
+        let v = parse_sim_verdict(&c);
+        assert_eq!(v.compiles, Some(true));
+        assert_eq!(v.tests_pass, Some(false));
     }
 
     #[test]

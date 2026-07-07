@@ -21,6 +21,17 @@ goulot : cognitif (0 %) ──────────────► substrat (
 > checkpoint/replay, disjoncteurs de sûreté, multi-échelles, pilotage MCP,
 > swarm, banc d'essai) — dans [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## Relation avec le contrat mémoire CCOS d'OpenClaw
+
+RSI est un **consommateur optionnel** de CCOS (backend d'audit uniquement :
+`src/ccos_audit.rs` adapte le `EventLog` de CCOS derrière le trait `AuditLog` de
+RSI). Son serveur `rsi-mcp` expose des outils `rsi_*` d'auto-amélioration,
+**pas** `ccos.recall` / `get` / `sync`. La propre `recall` de RSI
+(`src/memory.rs`, `src/octasoma_memory.rs`) est un k-NN sur vecteurs
+d'embeddings, sans rapport avec le `ccos.recall` du contrat. OpenClaw pointe
+`mcporter` vers le serveur CCOS
+([Memorithm/CCOS](https://github.com/Memorithm/CCOS)), pas vers `rsi-mcp`.
+
 ## 🚀 Installation en une commande
 
 Connecte RSI à ton agent IA (openclaw, hermes-agent, soullink, ou tout client

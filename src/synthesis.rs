@@ -484,15 +484,32 @@ impl LlmRefineTask for SymbolicSynthesis {
     /// Prompt : montre l'incumbent et son score, demande des variantes (une
     /// expression par ligne). C'est tout ce que le LLM « voit ».
     fn describe(&self, incumbent: &Expr) -> String {
+        // Échantillon ÉTALÉ des points d'entraînement (x, f(x)) : donne au modèle
+        // la *forme* de la cible (indispensable pour deviner le bon degré — sans
+        // ça il tâtonne à l'aveugle et stagne sur un optimum local). Le held-out
+        // n'est jamais montré (anti-Goodhart).
+        let step = (self.cases.len() / 10).max(1);
+        let points: String = self
+            .cases
+            .iter()
+            .step_by(step)
+            .take(10)
+            .map(|(x, y)| format!("  f({x:.2}) = {y:.3}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         format!(
-            "Tâche : proposer des expressions arithmétiques sur la variable x \
-             (opérateurs + - *, constantes, parenthèses) qui approchent la \
-             fonction cible sur les cas de test.\n\
-             Incumbent : {}\n\
-             Score (fraction de cas réussis) : {:.3}\n\
-             Réponds avec une expression améliorée par ligne, p. ex. : x*x + 1",
-            incumbent.pretty(),
-            self.pass_fraction(incumbent)
+            "Trouve une expression arithmétique de la variable x qui reproduit la fonction cible f.\n\
+             Points cibles (x, f(x)) :\n{points}\n\
+             Grammaire STRICTE : uniquement `x`, des constantes numériques, les opérateurs + - * et des parenthèses. \
+             Essaie des STRUCTURES VARIÉES et différents degrés (x ; x*x ; x*x*x ; combinaisons).\n\
+             Meilleure expression actuelle : {inc}  (score {score:.3} ; plus haut = mieux).\n\
+             RÉPONDS UNIQUEMENT par des expressions candidates, UNE PAR LIGNE — aucune prose, \
+             aucun commentaire, aucune numérotation. Format attendu (exemples de SYNTAXE) :\n\
+             x*x - 2\n\
+             (x + 1) * x\n\
+             3*x",
+            inc = incumbent.pretty(),
+            score = self.pass_fraction(incumbent),
         )
     }
 

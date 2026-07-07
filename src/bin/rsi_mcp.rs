@@ -564,8 +564,11 @@ mod dgm_job {
                 let mut j = Json::obj();
                 j.set("step", Json::Num(i as f64));
                 match &outcome {
-                    StepOutcome::NoProposal => {
+                    StepOutcome::NoProposal { reason } => {
                         j.set("kind", Json::Str("no_proposal".into()));
+                        if let Some(r) = reason {
+                            j.set("reason", Json::Str(r.clone()));
+                        }
                     }
                     StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => {
                         j.set("kind", Json::Str("evaluated".into()))

@@ -283,7 +283,10 @@ fn main() {
             }
         };
         match &o {
-            StepOutcome::NoProposal => println!("  step {i:2} · pas de proposition"),
+            StepOutcome::NoProposal { reason } => match reason {
+                Some(r) => println!("  step {i:2} · pas de proposition ({r})"),
+                None => println!("  step {i:2} · pas de proposition"),
+            },
             StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => {
                 println!(
                     "  step {i:2} · {} · compiles={} passed={} failed={} score={:.4} · {}",

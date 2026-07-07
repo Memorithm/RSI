@@ -220,7 +220,10 @@ fn main() {
                 }
             };
             match &o {
-                StepOutcome::NoProposal => println!("  step {i:2} · pas de proposition"),
+                StepOutcome::NoProposal { reason } => match reason {
+                    Some(r) => println!("  step {i:2} · pas de proposition ({r})"),
+                    None => println!("  step {i:2} · pas de proposition"),
+                },
                 StepOutcome::Evaluated { accepted: acc, fitness, variant_id, .. } => {
                     if *acc {
                         accepted += 1;

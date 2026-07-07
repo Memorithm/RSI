@@ -44,7 +44,7 @@ use rsi::dgm::{
 const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
-    "--prescreen-model", "--prescreen-num-predict", "--revise",
+    "--prescreen-model", "--prescreen-num-predict", "--revise", "--export-trajectories",
     "--claude-max-tokens", "--claude-base-url",
 ];
 
@@ -325,6 +325,16 @@ fn main() {
     }
     if engine.revisions() > 0 {
         println!("  révision simulée : {} correction(s) demandée(s) au proposeur", engine.revisions());
+    }
+    if let Some(path) = flag_value(&args, "--export-trajectories") {
+        let traj = engine.trajectories();
+        match std::fs::write(&path, rsi::trajectory::to_jsonl(traj)) {
+            Ok(()) => println!(
+                "  flywheel : {} trajectoire(s) à vérité terrain exportée(s) -> {path} (JSONL)",
+                traj.len()
+            ),
+            Err(e) => eprintln!("  flywheel : échec d'écriture de {path} : {e}"),
+        }
     }
 
     // --- Verdict / promotion. ---------------------------------------------- //

@@ -87,6 +87,7 @@ pub mod scirust_bridge;
 pub mod sha256;
 pub mod simulation;
 pub mod state;
+pub mod trajectory;
 pub mod substrate;
 pub mod surface;
 pub mod swarm;

@@ -1631,6 +1631,14 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         let content = std::fs::read_to_string(self.config.workspace_root.join(&patch.target))
             .unwrap_or_default();
         let file_content: String = content.chars().take(MAX_FILE_CHARS).collect();
+        // Sur échec (build cassé / tests rouges), `notes` porte la vraie sortie
+        // cargo bornée → complétion riche. Sur succès, on laisse le gabarit
+        // « running N tests…ok » (plus cargo-réaliste que le résumé de `notes`).
+        let output = if !fitness.compiles || fitness.tests_failed > 0 {
+            Some(fitness.notes.clone())
+        } else {
+            None
+        };
         self.trajectories.push(Trajectory {
             target: patch.target.clone(),
             find: patch.find.clone(),
@@ -1640,6 +1648,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             tests_passed: fitness.tests_passed,
             tests_failed: fitness.tests_failed,
             score: fitness.score,
+            output,
         });
     }
 

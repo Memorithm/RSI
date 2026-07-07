@@ -604,6 +604,13 @@ pub struct Proposal {
 /// changement utile cette étape » — un résultat légitime et courant.
 pub trait Proposer {
     fn propose(&self, ctx: &ImprovementContext<'_>, rng: &mut Rng) -> Result<Option<Proposal>>;
+
+    /// Raison du dernier `propose` ayant rendu `None` — remontée dans
+    /// [`StepOutcome::NoProposal`] pour l'observabilité (« pourquoi pas de
+    /// proposition »). Défaut : aucune (les proposeurs qui déclinent sans motif).
+    fn last_skip_reason(&self) -> Option<String> {
+        None
+    }
 }
 
 /// **Pré-crible** optionnel : un *world model* prédit le verdict d'un patch
@@ -1151,11 +1158,15 @@ pub struct LlmProposer<M: CodeModel> {
     /// Fichiers que le modèle a le droit de toucher, relatifs à la racine. Un
     /// changement sur autre chose est écarté — le garde-fou principal.
     allowed_paths: Vec<String>,
+    /// Raison du dernier `propose` ayant rendu `None` (observabilité). Mutée
+    /// à travers `&self` (propose ne prend pas `&mut self`) via `RefCell` ;
+    /// mono-thread côté engine, donc pas de contention.
+    last_skip: std::cell::RefCell<Option<String>>,
 }
 
 impl<M: CodeModel> LlmProposer<M> {
     pub fn new(model: M, allowed_paths: Vec<String>) -> Self {
-        Self { model, allowed_paths }
+        Self { model, allowed_paths, last_skip: std::cell::RefCell::new(None) }
     }
 
     fn build_prompt(&self, ctx: &ImprovementContext<'_>) -> String {
@@ -1242,6 +1253,8 @@ impl<M: CodeModel> Proposer for LlmProposer<M> {
         let proposal = match parse_proposal(&raw) {
             Some(p) => p,
             None => {
+                let why = explain_parse_failure(&raw);
+                *self.last_skip.borrow_mut() = Some(why.to_string());
                 // Diagnostic : `RSI_DGM_DEBUG=1` affiche la RAISON de l'échec
                 // et la réponse brute EN ENTIER. L'ancien aperçu de 2000 chars
                 // masquait la fin — des réponses complètes mais no-op (FIND ==
@@ -1249,9 +1262,8 @@ impl<M: CodeModel> Proposer for LlmProposer<M> {
                 if std::env::var("RSI_DGM_DEBUG").is_ok() {
                     let full: String = raw.chars().take(20_000).collect();
                     eprintln!(
-                        "[dgm] réponse LLM non parsée ({} chars) — {} :\n{full}\n--- fin ---",
+                        "[dgm] réponse LLM non parsée ({} chars) — {why} :\n{full}\n--- fin ---",
                         raw.len(),
-                        explain_parse_failure(&raw)
                     );
                 }
                 return Ok(None);
@@ -1263,9 +1275,16 @@ impl<M: CodeModel> Proposer for LlmProposer<M> {
                 "dgm.proposal_outside_allowlist",
                 &format!("target={}", proposal.patch.target),
             );
+            *self.last_skip.borrow_mut() =
+                Some(format!("cible hors allowlist: {}", proposal.patch.target));
             return Ok(None);
         }
+        *self.last_skip.borrow_mut() = None;
         Ok(Some(proposal))
+    }
+
+    fn last_skip_reason(&self) -> Option<String> {
+        self.last_skip.borrow().clone()
     }
 }
 
@@ -1412,8 +1431,10 @@ impl DgmConfig {
 /// Ce qui s'est passé en une étape — l'unité auditée de progrès.
 #[derive(Debug, Clone)]
 pub enum StepOutcome {
-    /// Le proposeur a décliné de suggérer un changement.
-    NoProposal,
+    /// Le proposeur a décliné de suggérer un changement. `reason` explique
+    /// pourquoi quand c'est connu (modèle décliné, hors-format, FIND
+    /// introuvable, no-op, pas de parent…) — observabilité des runs.
+    NoProposal { reason: Option<String> },
     /// Une candidate a été évaluée. `accepted` est vrai ssi elle entre dans
     /// l'archive.
     Evaluated {
@@ -1511,7 +1532,11 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         // 1. Choisir un parent dont brancher (sélection ouverte).
         let parent = match self.archive.select_parent(&mut self.rng) {
             Some(v) => v.clone(),
-            None => return Ok(self.record(StepOutcome::NoProposal)),
+            None => {
+                return Ok(self.record(StepOutcome::NoProposal {
+                    reason: Some("aucun parent à brancher".to_string()),
+                }))
+            }
         };
 
         // 2. Proposeur (premier essai : aucun feedback simulé).
@@ -1519,7 +1544,16 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         let mut sim_feedback: Vec<String> = Vec::new();
         let mut proposal = match self.propose_with(&parent, &rejections, &sim_feedback)? {
             Some(p) if !p.patch.is_noop() => p,
-            _ => return Ok(self.record(StepOutcome::NoProposal)),
+            Some(_) => {
+                return Ok(self.record(StepOutcome::NoProposal {
+                    reason: Some("no-op (FIND == REPLACE)".to_string()),
+                }))
+            }
+            None => {
+                return Ok(self.record(StepOutcome::NoProposal {
+                    reason: self.proposer.last_skip_reason(),
+                }))
+            }
         };
 
         // 2b. Pré-crible + RÉVISION SIMULÉE (axe 3) sur la proposition finale.
@@ -2129,6 +2163,32 @@ RATIONALE: bump the constant
         assert!(ok.propose(&ctx, &mut rng).unwrap().is_some());
         let blocked = LlmProposer::new(FixedModel(WELL_FORMED.to_string()), vec!["other.rs".into()]);
         assert!(blocked.propose(&ctx, &mut rng).unwrap().is_none());
+    }
+
+    #[test]
+    fn proposer_records_skip_reason_for_observability() {
+        let mut rng = Rng::new(0);
+        let ctx = ImprovementContext {
+            workspace_root: std::path::Path::new("/tmp"),
+            goal: "g",
+            parent_fitness: None,
+            recent_rejections: &[],
+            simulated_feedback: &[],
+        };
+        // Modèle qui décline (« NO PROPOSAL. ») → non parsable → raison remontée.
+        let declines = LlmProposer::new(FixedModel("NO PROPOSAL.".into()), vec!["src/lib.rs".into()]);
+        assert!(declines.propose(&ctx, &mut rng).unwrap().is_none());
+        assert_eq!(declines.last_skip_reason().as_deref(), Some("TARGET absent"));
+
+        // Cible hors liste blanche → raison dédiée.
+        let blocked = LlmProposer::new(FixedModel(WELL_FORMED.to_string()), vec!["other.rs".into()]);
+        assert!(blocked.propose(&ctx, &mut rng).unwrap().is_none());
+        assert!(blocked.last_skip_reason().unwrap().contains("hors allowlist"));
+
+        // Proposition valide → la raison est effacée.
+        let ok = LlmProposer::new(FixedModel(WELL_FORMED.to_string()), vec!["src/lib.rs".into()]);
+        assert!(ok.propose(&ctx, &mut rng).unwrap().is_some());
+        assert_eq!(ok.last_skip_reason(), None);
     }
 
     // ---- Boucle complète (jouet, déterministe, sans cargo) ---- //

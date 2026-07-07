@@ -86,7 +86,7 @@ fn main() {
     let outcomes = engine.run(12).unwrap();
     for (i, o) in outcomes.iter().enumerate() {
         match o {
-            StepOutcome::NoProposal => println!("  step {i:2} · pas de proposition"),
+            StepOutcome::NoProposal { .. } => println!("  step {i:2} · pas de proposition"),
             StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => println!(
                 "  step {i:2} · {} · score={:>4} · variant={}",
                 if *accepted { "ACCEPTÉ " } else { "rejeté  " },

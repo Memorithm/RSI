@@ -28,5 +28,5 @@ séparée**.
 
 ---
 
-*Copyright 2026 Tarek Zekriti / CHECKUPAUTO. Voir [LICENSE.md](LICENSE.md) pour
+*Copyright 2026 Tarek Zekriti / Memorithm. Voir [LICENSE.md](LICENSE.md) pour
 le texte complet de la licence non commerciale.*

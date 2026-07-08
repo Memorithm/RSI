@@ -28,7 +28,7 @@
         # dans la liste nixpkgs ⇒ licence décrite à la main (non « free »).
         rsiLicense = {
           fullName = "PolyForm Noncommercial 1.0.0 OR Commercial (LicenseRef)";
-          url = "https://github.com/CHECKUPAUTO/RSI/blob/main/LICENSING.md";
+          url = "https://github.com/Memorithm/RSI/blob/main/LICENSING.md";
           free = false;
         };
       in
@@ -73,7 +73,7 @@
 
           meta = {
             description = manifest.description;
-            homepage = "https://github.com/CHECKUPAUTO/RSI";
+            homepage = "https://github.com/Memorithm/RSI";
             license = rsiLicense;
             mainProgram = "rsi-mcp";
             platforms = pkgs.lib.platforms.unix;

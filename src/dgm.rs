@@ -1,7 +1,7 @@
 //! # Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP)
 //!
 //! Port natif, **std-only et sans dépendance**, du contenu de `soul-rsi`
-//! (`github.com/CHECKUPAUTO/soul-rsi`) dans le moteur RSI. Là où le reste de
+//! (`github.com/Memorithm/soul-rsi`) dans le moteur RSI. Là où le reste de
 //! RSI fait **proposer du texte** au LLM pour des domaines abstraits (synthèse
 //! d'expressions, configs, prompts, WASM ; cf. [`crate::llm`]), ce module fait
 //! de l'auto-amélioration **empirique de code source réel** :

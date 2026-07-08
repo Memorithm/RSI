@@ -1,6 +1,6 @@
 # RSI — Recursive Self-Improvement (Rust)
 
-[![CI](https://github.com/CHECKUPAUTO/RSI/actions/workflows/ci.yml/badge.svg)](https://github.com/CHECKUPAUTO/RSI/actions/workflows/ci.yml)
+[![CI](https://github.com/Memorithm/RSI/actions/workflows/ci.yml/badge.svg)](https://github.com/Memorithm/RSI/actions/workflows/ci.yml)
 
 Implémentation **100 % Rust** (std-only, aucune dépendance externe) du
 **système mathématique d'auto-amélioration récursive** — formulation
@@ -38,7 +38,7 @@ Connecte RSI à ton agent IA (openclaw, hermes-agent, soullink, ou tout client
 MCP via `RSI_CONNECT_TARGETS`) — aucune configuration manuelle :
 
 ```bash
-git clone https://github.com/CHECKUPAUTO/RSI && cd RSI && ./install.sh
+git clone https://github.com/Memorithm/RSI && cd RSI && ./install.sh
 ```
 
 C'est tout. `install.sh` compile le serveur MCP et l'enregistre auprès de tes
@@ -351,7 +351,7 @@ stabilise (patience), 100 % des cas de test réussis, `is_monotone() == true`.
 Là où l'agent ci-dessus améliore des objets abstraits (expressions, configs,
 prompts) que le moteur *interprète*, le module [`src/dgm.rs`](src/dgm.rs) ajoute
 la variante **empirique sur du code source réel** — port natif **std-only** du
-crate [`soul-rsi`](https://github.com/CHECKUPAUTO/soul-rsi) :
+crate [`soul-rsi`](https://github.com/Memorithm/soul-rsi) :
 
 > propose un patch `find → replace` ▸ l'évalue dans une **copie isolée** du dépôt
 > (`cargo build` + `cargo test`) ▸ ne le **garde que s'il est prouvé meilleur**

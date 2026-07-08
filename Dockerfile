@@ -44,7 +44,7 @@ FROM scratch AS runtime
 
 LABEL org.opencontainers.image.title="RSI" \
       org.opencontainers.image.description="Recursive Self-Improvement — cœur std-only (serveur MCP + démo)" \
-      org.opencontainers.image.source="https://github.com/CHECKUPAUTO/RSI" \
+      org.opencontainers.image.source="https://github.com/Memorithm/RSI" \
       org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
 
 ARG BIN_DIR=/build/target/x86_64-unknown-linux-musl/release

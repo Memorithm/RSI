@@ -8,10 +8,10 @@ description = "Recursive Self-Improvement — implémentation Rust du système g
 # SPDX « A OR B » reflète le choix laissé à l'utilisateur (LicenseRef pour la
 # licence commerciale, hors liste SPDX standard).
 license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
-authors = ["Tarek Zekriti / CHECKUPAUTO"]
-repository = "https://github.com/CHECKUPAUTO/RSI"
-homepage = "https://github.com/CHECKUPAUTO/RSI"
-documentation = "https://github.com/CHECKUPAUTO/RSI/tree/main/docs"
+authors = ["Tarek Zekriti / Memorithm"]
+repository = "https://github.com/Memorithm/RSI"
+homepage = "https://github.com/Memorithm/RSI"
+documentation = "https://github.com/Memorithm/RSI/tree/main/docs"
 readme = "README.md"
 keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
 categories = ["science", "simulation"]

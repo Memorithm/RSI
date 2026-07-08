@@ -364,7 +364,7 @@ différence de config entre environnements (dev/prod/research).
 
 - **crates.io** : publier `rsi` 0.11.0 après P0+P1+P3. Vérifier
   `cargo publish --dry-run`.
-- **Homebrew** : `brew install rsi` (tap `CHECKUPAUTO/tap`).
+- **Homebrew** : `brew install rsi` (tap `Memorithm/tap`).
 - **Docker** : `docker run -i rsi-mcp` (image multi-arch, ~20 MB via
   `cargo build --target x86_64-unknown-linux-musl`).
 - **Nix** : `flake.nix` pour reproductibilité bit-identique.

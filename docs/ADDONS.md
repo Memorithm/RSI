@@ -43,7 +43,7 @@ s'améliorer (étude complète : `docs/PAPERS_SYNERGY.md`). Trois canaux :
 **Installation** (sur la machine d'exécution, p. ex. le Jetson) :
 
 ```bash
-# PAPERS V2 (dépôt CHECKUPAUTO/PAPERS-AGENT, crate papers_core)
+# PAPERS V2 (dépôt Memorithm/PAPERS-AGENT, crate papers_core)
 cd PAPERS-AGENT/papers_core && cargo build --release
 export RSI_PAPERS_BIN=$PWD/target/release/papers   # ou mettre sur le PATH
 ```

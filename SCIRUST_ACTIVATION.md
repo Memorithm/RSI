@@ -11,14 +11,14 @@ répète`, élitiste/borné/reproductible) de **deux** façons :
 ## Activer le moteur réel
 
 Le crate `scirust-rsi` est consommé en **dépendance git amont**
-(`CHECKUPAUTO/scirust`, sous-crate `scirust-rsi`). La feature est déjà câblée :
+(`Memorithm/scirust`, sous-crate `scirust-rsi`). La feature est déjà câblée :
 
 ```toml
 [features]
 scirust = ["dep:scirust-rsi", "dep:rand"]
 
 [dependencies]
-scirust-rsi = { git = "https://github.com/CHECKUPAUTO/scirust", optional = true }
+scirust-rsi = { git = "https://github.com/Memorithm/scirust", optional = true }
 ```
 
 Activation (nécessite un accès réseau à `github.com` — niveau **Trusted** en
@@ -31,7 +31,7 @@ cargo clippy --features scirust --all-targets
 ```
 
 > ✅ **Validé de bout en bout** : `cargo test --features scirust` compile le vrai
-> crate amont (`scirust-rsi v0.1.0 @ CHECKUPAUTO/scirust`) et passe les 131 tests
+> crate amont (`scirust-rsi v0.1.0 @ Memorithm/scirust`) et passe les 131 tests
 > sans aucune modification du bridge — l'API ci-dessous correspond exactement.
 
 ## API ciblée (vérifiée contre le crate amont)

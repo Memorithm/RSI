@@ -31,7 +31,7 @@
 ## 1. Résumé exécutif
 
 Les quatre dépôts sont des projets **Rust de la même organisation
-(CHECKUPAUTO)** et couvrent, à eux quatre, presque toutes les composantes que le
+(Memorithm)** et couvrent, à eux quatre, presque toutes les composantes que le
 moteur RSI ne modélise aujourd'hui que de façon *stylisée*. Le constat clé :
 
 - **Forge** peut rendre **réels** le méta-optimiseur `ℳ` et le substrat `P_eff`

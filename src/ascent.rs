@@ -1,6 +1,6 @@
 //! Pilote d'**ascension élitiste bornée** — *stand-in local* du contrat
 //! `scirust-rsi`, en attendant l'autorisation d'accès au dépôt
-//! `CHECKUPAUTO/scirust` dans la session.
+//! `Memorithm/scirust` dans la session.
 //!
 //! Reproduit fidèlement le contrat documenté de `scirust-rsi` :
 //! - trait [`RefineTask`] : `score` (évaluateur → *fitness*) + `refine`

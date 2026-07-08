@@ -20,15 +20,15 @@ env:
   CARGO_TERM_COLOR: always
   # Les features testées ici sont std-only / crates publiques. MAIS cargo RÉSOUT
   # tout le graphe — y compris les deps git optionnelles `forge/octasoma/ccos/
-  # scirust` (dépôts CHECKUPAUTO) NON activées : il clone chaque git-dep pour en
-  # lire le manifeste, même sous `--locked` et même sans la feature. Si l'un de
-  # ces dépôts devient privé/inaccessible (HTTP 401) ou perd sa révision épinglée
-  # (force-push), TOUTE la CI casse dès le premier `cargo`. Deux parades ici :
+  # scirust` (dépôts Memorithm, PUBLICS) NON activées : il clone chaque git-dep
+  # pour en lire le manifeste, même sous `--locked` et même sans la feature. Si
+  # l'un de ces dépôts devient privé/inaccessible (HTTP 401) ou perd sa révision
+  # épinglée (force-push), TOUTE la CI casse dès le premier `cargo`. Deux parades :
   #   1. `CARGO_NET_GIT_FETCH_WITH_CLI=true` + un secret `DEPS_TOKEN` (PAT en
-  #      lecture sur les dépôts privés CHECKUPAUTO) → l'étape « Auth » ci-dessous
-  #      configure git pour les cloner ; OU
-  #   2. garder ces dépôts PUBLICS (aucun secret nécessaire — l'étape Auth est
-  #      alors un no-op).
+  #      lecture) si l'un de ces dépôts repassait privé → l'étape « Auth »
+  #      ci-dessous configure git pour les cloner ; OU
+  #   2. garder ces dépôts PUBLICS (cas nominal — aucun secret nécessaire,
+  #      l'étape Auth est alors un no-op).
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq"
 
@@ -46,21 +46,22 @@ jobs:
           components: clippy
 
       # Cargo clone les deps git optionnelles (forge/octasoma/ccos/scirust) même
-      # non activées, pour résoudre le graphe. Si elles sont PRIVÉES, il faut un
-      # PAT en lecture (secret `DEPS_TOKEN`). No-op si le secret est absent (les
-      # dépôts sont alors supposés publics) : la CI reste verte sans secret dès
-      # lors que les dépôts CHECKUPAUTO sont publics.
-      - name: Auth deps git privées CHECKUPAUTO (si DEPS_TOKEN présent)
+      # non activées, pour résoudre le graphe. Elles sont PUBLIQUES (org Memorithm)
+      # → aucun secret requis en nominal. Filet de sécurité : si l'une repassait
+      # privée, un PAT en lecture (secret `DEPS_TOKEN`) rétablit le fetch. No-op
+      # quand le secret est absent : la CI reste verte tant que les dépôts sont
+      # publics.
+      - name: Auth deps git Memorithm (filet — si DEPS_TOKEN présent)
         env:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
         run: |
           if [ -n "$DEPS_TOKEN" ]; then
             git config --global \
-              url."https://x-access-token:${DEPS_TOKEN}@github.com/CHECKUPAUTO/".insteadOf \
-              "https://github.com/CHECKUPAUTO/"
-            echo "auth CHECKUPAUTO configurée (fetch privé activé)"
+              url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
+              "https://github.com/Memorithm/"
+            echo "auth Memorithm configurée (fetch privé activé)"
           else
-            echo "DEPS_TOKEN absent — les dépôts CHECKUPAUTO doivent être publics"
+            echo "DEPS_TOKEN absent — les dépôts Memorithm sont publics (nominal)"
           fi
 
       - name: Cache cargo

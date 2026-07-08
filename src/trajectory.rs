@@ -2,7 +2,7 @@
 //!
 //! Chaque évaluation RÉELLE du gate DGM est une trajectoire à **vérité terrain** :
 //! un patch (`find`→`replace` sur un fichier) et le verdict `cargo build`+`test`
-//! qu'il a réellement produit. Exportées en **JSONL** `{prompt, completion}` —
+//! qu'il a réellement produit. Exportées en **JSONL** `{prompt, completion, score}` —
 //! `prompt` = l'invite exacte du world model ([`crate::simulation::build_sim_prompt`]),
 //! `completion` = une sortie `cargo` réaliste terminée par la ligne machine
 //! `SIMCAL_VERDICT` — ces paires servent à **fine-tuner un world model
@@ -81,13 +81,26 @@ impl Trajectory {
         build_sim_prompt(&self.target, &self.file_content, &self.find, &self.replace)
     }
 
-    /// Ligne JSONL `{"prompt": "...", "completion": "..."}`.
+    /// Ligne JSONL `{"prompt": "...", "completion": "...", "score": <f64>}`.
+    /// Le `score` (récompense mesurée du gate : perf réelle ou pass-rate) est
+    /// exporté en champ à part — un pipeline SFT l'ignore, un world model qui
+    /// prédit AUSSI la perf peut l'apprendre. Métadonnée additive et sûre.
     pub fn to_jsonl(&self) -> String {
         format!(
-            "{{\"prompt\":\"{}\",\"completion\":\"{}\"}}",
+            "{{\"prompt\":\"{}\",\"completion\":\"{}\",\"score\":{}}}",
             json_escape(&self.prompt()),
-            json_escape(&self.completion())
+            json_escape(&self.completion()),
+            json_number(self.score),
         )
+    }
+}
+
+/// Formate un `f64` en nombre JSON valide (non-fini ⇒ `null`, jamais `NaN`).
+fn json_number(n: f64) -> String {
+    if n.is_finite() {
+        format!("{n}")
+    } else {
+        "null".to_string()
     }
 }
 
@@ -183,7 +196,11 @@ mod tests {
         let line = t.to_jsonl();
         assert_eq!(line.matches('\n').count(), 0, "une trajectoire = une ligne");
         assert!(line.contains("\\n") && line.contains("\\\""), "échappement présent");
-        assert!(line.starts_with("{\"prompt\":\"") && line.ends_with("\"}"));
+        assert!(line.starts_with("{\"prompt\":\"") && line.ends_with('}'));
+        // JSON valide de bout en bout, avec le champ score exporté.
+        let j = crate::json::Json::parse(&line).expect("JSONL valide");
+        assert!(j.get("prompt").is_some() && j.get("completion").is_some());
+        assert_eq!(j.get("score").and_then(|v| v.as_f64()), Some(1.0));
     }
 
     #[test]

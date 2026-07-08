@@ -45,7 +45,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
     "--prescreen-model", "--prescreen-num-predict", "--revise", "--export-trajectories",
-    "--claude-max-tokens", "--claude-base-url",
+    "--claude-max-tokens", "--claude-base-url", "--temperature", "--top-p",
 ];
 
 /// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
@@ -142,10 +142,20 @@ fn main() {
     let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
     let port: u16 = flag_value(&args, "--ollama-port").and_then(|v| v.parse().ok()).unwrap_or(11434);
 
+    // Leviers d'exploration du proposeur (diversité des patchs proposés) — utile
+    // quand un modèle décline/répète ; `None` ⇒ défaut du modèle.
+    let temperature = flag_value(&args, "--temperature").and_then(|v| v.parse::<f64>().ok());
+    let top_p = flag_value(&args, "--top-p").and_then(|v| v.parse::<f64>().ok());
     let make_ollama = |name: String| -> Box<dyn CodeModel> {
-        let client = rsi::llm::OllamaClient::new(name)
+        let mut client = rsi::llm::OllamaClient::new(name)
             .with_endpoint(host.clone(), port)
             .with_timeout(Duration::from_secs(timeout_secs));
+        if let Some(t) = temperature {
+            client = client.with_temperature(t);
+        }
+        if let Some(p) = top_p {
+            client = client.with_top_p(p);
+        }
         Box::new(LlmCodeModel::new(client))
     };
     // Découvre les modèles installés et applique la préférence éventuelle.
@@ -468,6 +478,8 @@ fn usage() {
            --backend auto|ollama|claude (défaut auto) --model NAME (sinon découvert)\n  \
            --package-subdir DIR  sous-crate à builder  --test-args \"ARGS\"\n  \
            --timeout SECS        borne par cargo (défaut 300)\n  \
+           --temperature F       température du proposeur (exploration ; défaut modèle)\n  \
+           --top-p F             nucleus sampling du proposeur ∈ [0,1]\n  \
            --bench \"ARGS\"        score = perf mesurée (RSI_BENCH_SCORE) au lieu\n                          du pass-rate — ex. \"run --release --example bench_dot\"\n  \
            --min-gain FRAC       gain relatif de score minimal (anti-bruit),\n                          ex. 0.02 = ≥ 2 %% (défaut 0 ; gains structurels exemptés)\n  \
            --prescreen-model TAG world model (Qwen-AgentWorld) qui saute le build\n                          des patchs prédits cassés (jamais une amélioration)\n  \

@@ -37,7 +37,7 @@ const fn raw(name: &'static str, p: [f64; 6], demand: f64, weight: f64) -> Named
 }
 
 /// Banc de tâches standard : sept contextes typiques d'un agent (style
-/// CHECKUPAUTO). Les profils mettent en avant les composantes dominantes ;
+/// Memorithm). Les profils mettent en avant les composantes dominantes ;
 /// `demand` reflète l'intensité calculatoire (long-contexte/perception = lourd).
 ///
 /// Ordre des composantes du profil : `[D, M, R, A, C, V]`.

@@ -1,7 +1,7 @@
 //! Démo de l'agent d'auto-amélioration sur le **moteur réel `scirust-rsi`**.
 //!
 //! Cet exemple ne compile/s'exécute qu'avec la feature `scirust` activée (donc
-//! dans un environnement où `CHECKUPAUTO/scirust` est joignable) :
+//! dans un environnement où `Memorithm/scirust` est joignable) :
 //!
 //! ```text
 //! cargo run --release --features scirust --example self_improve_real
@@ -30,7 +30,7 @@ fn main() {
 fn main() {
     eprintln!(
         "Cet exemple requiert le moteur réel `scirust-rsi`.\n\
-         Active-le dans un environnement où CHECKUPAUTO/scirust est autorisé :\n\
+         Active-le dans un environnement où Memorithm/scirust est autorisé :\n\
          \n\
            cargo run --release --features scirust --example self_improve_real\n\
          \n\

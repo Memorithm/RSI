@@ -122,7 +122,7 @@ Branchement : `RSIAgent::with_audit(Box::new(HashChainLog::new()))`, puis
 `EventPayload::Custom`, `verify_integrity`, `replay_events`).
 
 ```bash
-cargo build --features ccos      # tire CHECKUPAUTO/CCOS (sans async/TLS)
+cargo build --features ccos      # tire Memorithm/CCOS (sans async/TLS)
 ```
 ```rust
 let agent = RSIAgent::demo(0).with_audit(Box::new(rsi::CcosAudit::new("session")));

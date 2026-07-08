@@ -17,7 +17,7 @@ Le niveau **`Trusted`** (le défaut) autorise déjà tout ce dont RSI a besoin :
 |---|---|
 | backend Claude (`llm-claude`) | `api.anthropic.com` |
 | dépendances cargo (`ureq`, `wide`, `wasmtime`, `tracing`…) | crates.io |
-| git-deps (`CHECKUPAUTO/scirust`, `forge`, `octasoma`, `CCOS`) | `github.com`, `codeload.github.com`, `api.github.com` |
+| git-deps (`Memorithm/scirust`, `forge`, `octasoma`, `CCOS`) | `github.com`, `codeload.github.com`, `api.github.com` |
 | images Docker | Docker Hub / ghcr / gcr |
 
 Niveaux : **None** (aucun) · **Trusted** (liste blanche) · **Full** (tout) ·
@@ -60,7 +60,7 @@ mock).
 
 ## Suite (ordre de valeur, une fois en Trusted)
 1. Transport TLS Claude (ci-dessus).
-2. Vraie git-dep `CHECKUPAUTO/scirust` (remplacer la reconstruction vendorisée).
+2. Vraie git-dep `Memorithm/scirust` (remplacer la reconstruction vendorisée).
 3. SIMD de `si_global` via la crate `wide` (sans `unsafe`).
 4. Sandbox WASM (`wasmtime`) — 4ᵉ domaine (exécution réelle isolée).
 5. Observabilité `tracing` + export Prometheus.

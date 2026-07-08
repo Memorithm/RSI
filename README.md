@@ -340,7 +340,7 @@ stabilise (patience), 100 % des cas de test réussis, `is_monotone() == true`.
 >   conformément à `scirust-rsi/INTEGRATION.md`.
 >
 > Le moteur réel est consommé en **dépendance git amont**
-> (`scirust-rsi = { git = "https://github.com/CHECKUPAUTO/scirust" }`) — validé
+> (`scirust-rsi = { git = "https://github.com/Memorithm/scirust" }`) — validé
 > de bout en bout : `cargo test --features scirust` compile le vrai crate et
 > passe les 131 tests sans modifier le bridge. Activation (réseau requis) :
 > `cargo run --features scirust --release --example self_improve_real`. Détails :

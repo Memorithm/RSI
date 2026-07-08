@@ -3,7 +3,7 @@
 //! Ce module implémente le *vrai* contrat de `scirust-rsi`
 //! (`scirust_rsi::refine::{RefineTask, SelfRefiner}`, `scirust_rsi::{Fitness,
 //! Guard}`) pour le domaine de synthèse symbolique de RSI. Il remplace le
-//! *stand-in* local [`crate::ascent`] dès que le dépôt `CHECKUPAUTO/scirust`
+//! *stand-in* local [`crate::ascent`] dès que le dépôt `Memorithm/scirust`
 //! est joignable.
 //!
 //! ## Activation (dans un environnement où `scirust` est autorisé)
@@ -13,7 +13,7 @@
 //!    scirust = ["dep:scirust-rsi", "dep:rand"]
 //!
 //!    [dependencies]
-//!    scirust-rsi = { git = "https://github.com/CHECKUPAUTO/scirust", branch = "master", optional = true }
+//!    scirust-rsi = { git = "https://github.com/Memorithm/scirust", branch = "master", optional = true }
 //!    ```
 //! 2. Dans `src/lib.rs` :
 //!    ```rust,ignore

@@ -9,7 +9,7 @@
 //! dépendance ; cet adaptateur délègue au vrai moteur CCOS quand on veut sa
 //! couche de forensique / MMU cognitive complète.
 //!
-//! Activé via la feature `ccos` (dépendance git sur CHECKUPAUTO/CCOS, qui
+//! Activé via la feature `ccos` (dépendance git sur Memorithm/CCOS, qui
 //! n'impose pas l'async/TLS). Usage :
 //! `RSIAgent::demo(0).with_audit(Box::new(CcosAudit::new("session")))`.
 

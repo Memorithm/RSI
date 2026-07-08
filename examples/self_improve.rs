@@ -4,7 +4,7 @@
 //! Lancement : `cargo run --release --example self_improve`
 //!
 //! NOTE : pilote local (`rsi::ascent`), miroir du contrat `scirust-rsi`, en
-//! attendant l'accès au dépôt `CHECKUPAUTO/scirust`. Le candidat est évalué
+//! attendant l'accès au dépôt `Memorithm/scirust`. Le candidat est évalué
 //! dans le sandbox d'AST de RSI (aucune exécution de code arbitraire).
 
 use rsi::ascent::{ascend, Guard, RefineTask};

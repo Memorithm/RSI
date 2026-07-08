@@ -20,3 +20,6 @@ rsi_full_trajectory.*
 /.rsi_backups/
 /.rsi_scholar/
 /.rsi_simcal_report.md
+
+# datasets flywheel (axe 4) — artefacts d'exécution, jamais versionnés
+/*.jsonl

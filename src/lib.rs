@@ -64,6 +64,7 @@ pub mod forge_substrate;
 pub mod dynamics;
 // Sonde matérielle réelle (CPU/mém/GPU) pour ancrer le substrat — utile sur Jetson.
 pub mod hw_probe;
+pub mod flywheel;
 pub mod json;
 pub mod kernels;
 pub mod knowledge;

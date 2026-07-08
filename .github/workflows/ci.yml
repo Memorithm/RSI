@@ -18,13 +18,18 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Le cœur et les features testées ici sont std-only / crates publiques. Les
-  # features `scirust`/`forge`/`octasoma`/`ccos` (dépôts git CHECKUPAUTO) ne
-  # sont pas construites ici — mais ATTENTION : même non activées, cargo
-  # clone ces dépôts pour vérifier le lock sous `--locked`. La CI exige donc
-  # que ces dépôts restent PUBLICS et que les révisions épinglées dans
-  # Cargo.lock existent (un force-push amont casse la résolution — ré-épingler
-  # via `cargo update -p <dep>` le cas échéant).
+  # Les features testées ici sont std-only / crates publiques. MAIS cargo RÉSOUT
+  # tout le graphe — y compris les deps git optionnelles `forge/octasoma/ccos/
+  # scirust` (dépôts CHECKUPAUTO) NON activées : il clone chaque git-dep pour en
+  # lire le manifeste, même sous `--locked` et même sans la feature. Si l'un de
+  # ces dépôts devient privé/inaccessible (HTTP 401) ou perd sa révision épinglée
+  # (force-push), TOUTE la CI casse dès le premier `cargo`. Deux parades ici :
+  #   1. `CARGO_NET_GIT_FETCH_WITH_CLI=true` + un secret `DEPS_TOKEN` (PAT en
+  #      lecture sur les dépôts privés CHECKUPAUTO) → l'étape « Auth » ci-dessous
+  #      configure git pour les cloner ; OU
+  #   2. garder ces dépôts PUBLICS (aucun secret nécessaire — l'étape Auth est
+  #      alors un no-op).
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq"
 
 jobs:
@@ -40,13 +45,30 @@ jobs:
         with:
           components: clippy
 
+      # Cargo clone les deps git optionnelles (forge/octasoma/ccos/scirust) même
+      # non activées, pour résoudre le graphe. Si elles sont PRIVÉES, il faut un
+      # PAT en lecture (secret `DEPS_TOKEN`). No-op si le secret est absent (les
+      # dépôts sont alors supposés publics) : la CI reste verte sans secret dès
+      # lors que les dépôts CHECKUPAUTO sont publics.
+      - name: Auth deps git privées CHECKUPAUTO (si DEPS_TOKEN présent)
+        env:
+          DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
+        run: |
+          if [ -n "$DEPS_TOKEN" ]; then
+            git config --global \
+              url."https://x-access-token:${DEPS_TOKEN}@github.com/CHECKUPAUTO/".insteadOf \
+              "https://github.com/CHECKUPAUTO/"
+            echo "auth CHECKUPAUTO configurée (fetch privé activé)"
+          else
+            echo "DEPS_TOKEN absent — les dépôts CHECKUPAUTO doivent être publics"
+          fi
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # --- Défaut (cœur sans dépendance) ----------------------------------- #
-      # `--locked` : utilise le Cargo.lock versionné tel quel ⇒ pas de
-      # ré-résolution du manifeste, donc aucune tentative de cloner les deps git
-      # privées (forge/octasoma/ccos/scirust) non activées ici.
+      # --- Défaut (cœur sans dépendance de compilation) -------------------- #
+      # NB : `--locked` fige le Cargo.lock mais NE dispense PAS de cloner les
+      # git-deps optionnelles (cargo lit leur manifeste pour résoudre le graphe).
       - name: Clippy (défaut) — 0 warning
         run: cargo clippy --all-targets --locked -- -D warnings
 

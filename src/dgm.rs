@@ -1230,13 +1230,21 @@ impl<M: CodeModel> LlmProposer<M> {
              unique fragment enclosing your edit (at most ~25 lines). NEVER quote a \
              whole function — long FIND blocks get truncated and are rejected. \
              The REPLACE block MUST DIFFER from FIND: replaying the same code \
-             unchanged is a no-op and is rejected. If you see no real improvement, \
-             answer exactly: NO PROPOSAL. \
+             unchanged is a no-op and is rejected. PREFER a small concrete edit \
+             over declining; answer exactly `NO PROPOSAL.` ONLY if you truly \
+             cannot find any safe improvement. \
              Respond EXACTLY in this format and nothing else (close every code fence):\n\
              TARGET: <relative/path.rs>\n\
              FIND:\n<<<\n<exact existing text, occurring once>\n>>>\n\
              REPLACE:\n<<<\n<the replacement text>\n>>>\n\
-             RATIONALE: <one short line>\n",
+             RATIONALE: <one short line>\n\
+             \n\
+             Worked example (FORMAT ONLY — copy your FIND from the file above, \
+             NOT from this example):\n\
+             TARGET: src/lib.rs\n\
+             FIND:\n<<<\n    let mut sum = 0;\n    for x in xs {{ sum += x; }}\n>>>\n\
+             REPLACE:\n<<<\n    let sum: i64 = xs.iter().sum();\n>>>\n\
+             RATIONALE: replace manual loop with iterator sum\n",
             goal = ctx.goal,
             fitness = fitness,
             allowed = self.allowed_paths.join(", "),

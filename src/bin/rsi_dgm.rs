@@ -44,7 +44,7 @@ use rsi::dgm::{
 const VALUE_FLAGS: &[&str] = &[
     "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
     "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
-    "--prescreen-model", "--prescreen-num-predict", "--revise", "--export-trajectories",
+    "--prescreen-model", "--prescreen-num-predict", "--proposer-num-predict", "--revise", "--export-trajectories",
     "--claude-max-tokens", "--claude-base-url", "--temperature", "--top-p",
 ];
 
@@ -146,6 +146,11 @@ fn main() {
     // quand un modèle décline/répète ; `None` ⇒ défaut du modèle.
     let temperature = flag_value(&args, "--temperature").and_then(|v| v.parse::<f64>().ok());
     let top_p = flag_value(&args, "--top-p").and_then(|v| v.parse::<f64>().ok());
+    // Plafond de génération du PROPOSEUR : le défaut serveur (4096) tronque ses
+    // patchs sur de gros fichiers → propositions coupées / no-ops. Le relever =
+    // plus de propositions valides ET plus de trajectoires flywheel par run.
+    let prop_np: Option<u32> =
+        flag_value(&args, "--proposer-num-predict").and_then(|v| v.parse().ok());
     let make_ollama = |name: String| -> Box<dyn CodeModel> {
         let mut client = rsi::llm::OllamaClient::new(name)
             .with_endpoint(host.clone(), port)
@@ -155,6 +160,9 @@ fn main() {
         }
         if let Some(p) = top_p {
             client = client.with_top_p(p);
+        }
+        if let Some(np) = prop_np {
+            client = client.with_num_predict(np).with_num_ctx(np + 8192);
         }
         Box::new(LlmCodeModel::new(client))
     };

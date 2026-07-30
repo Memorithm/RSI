@@ -37,8 +37,8 @@ use std::process::exit;
 use std::time::Duration;
 
 use rsi::dgm::{
-    Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, Evaluator, LlmCodeModel, LlmProposer,
-    Prediction, StepOutcome, VerdictPredictor, WorkspaceSnapshot,
+    Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, DgmError, Evaluator, LlmCodeModel,
+    LlmProposer, Prediction, StepOutcome, VerdictPredictor, WorkspaceSnapshot,
 };
 
 const VALUE_FLAGS: &[&str] = &[
@@ -292,12 +292,35 @@ fn main() {
     println!("  (chaque étape = proposition LLM + build+test+bench du snapshot : ~1-3 min)\n");
     // Étape par étape (et non `engine.run(steps)`) pour AFFICHER chaque
     // résultat au fil de l'eau — huit étapes muettes ressemblent à un blocage.
+    // Une erreur du proposeur (timeout, complétion tronquée…) est transitoire :
+    // l'étape est sautée au lieu d'avorter le run. Au-delà de
+    // MAX_PROPOSER_FAILURES échecs consécutifs, le backend est réellement
+    // mort : arrêt propre, en CONSERVANT tout ce qui a été collecté
+    // (trajectoires flywheel, archive, meilleur variant).
+    const MAX_PROPOSER_FAILURES: u32 = 3;
+    let mut proposer_failures = 0u32;
+    let mut loop_error: Option<String> = None;
     for i in 0..steps {
         let o = match engine.step() {
-            Ok(o) => o,
+            Ok(o) => {
+                proposer_failures = 0;
+                o
+            }
+            Err(e @ DgmError::Proposer(_)) => {
+                proposer_failures += 1;
+                eprintln!(
+                    "  step {i:2} · proposeur en erreur \
+                     ({proposer_failures}/{MAX_PROPOSER_FAILURES} consécutives) : {e}"
+                );
+                if proposer_failures >= MAX_PROPOSER_FAILURES {
+                    loop_error = Some(e.to_string());
+                    break;
+                }
+                continue;
+            }
             Err(e) => {
-                eprintln!("erreur : la boucle a échoué : {e}");
-                exit(1);
+                loop_error = Some(e.to_string());
+                break;
             }
         };
         match &o {
@@ -338,6 +361,9 @@ fn main() {
         }
     }
 
+    if let Some(e) = &loop_error {
+        eprintln!("\n  ⚠ boucle interrompue : {e} — bilan et exports sur ce qui a été collecté.");
+    }
     if engine.prescreen_skips() > 0 {
         println!(
             "\n  pré-crible : {} build(s) évité(s) (patchs prédits cassés par le world model)",
@@ -401,6 +427,12 @@ fn main() {
                 println!("  note : seul ce patch unique serait appliqué (variant = delta depuis la référence).");
             }
         }
+    }
+
+    // Code de sortie non-zéro si la boucle a été interrompue — les scripts
+    // d'accumulation voient l'échec, mais les exports ci-dessus ont eu lieu.
+    if loop_error.is_some() {
+        exit(1);
     }
 }
 

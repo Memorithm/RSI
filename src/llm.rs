@@ -19,6 +19,8 @@
 //!
 //! Le LLM ne voit jamais `LlmGuard` : il reçoit un prompt, rend `k` propositions.
 
+#![allow(clippy::missing_safety_doc, clippy::manual_dangling_ptr)]
+
 use crate::ascent::RefineTask;
 use std::time::{Duration, Instant};
 
@@ -484,9 +486,7 @@ pub fn ollama_installed_models(
         .map_err(|e| LlmError::Backend(format!("connexion Ollama {addr}: {e}")))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
-    let req = format!(
-        "GET /api/tags HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /api/tags HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
     stream
         .write_all(req.as_bytes())
         .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
@@ -503,7 +503,11 @@ fn parse_tags_response(raw: &str) -> Result<Vec<String>, LlmError> {
     let (headers, body) = raw
         .split_once("\r\n\r\n")
         .ok_or_else(|| LlmError::Backend("réponse HTTP sans corps".to_string()))?;
-    let body = if header_is_chunked(headers) { dechunk(body) } else { body.to_string() };
+    let body = if header_is_chunked(headers) {
+        dechunk(body)
+    } else {
+        body.to_string()
+    };
     let json = crate::json::Json::parse(body.trim())
         .map_err(|e| LlmError::Backend(format!("JSON /api/tags invalide: {e}")))?;
     let models = json
@@ -1104,7 +1108,11 @@ mod tests {
             ..LlmGuard::default()
         };
         let (_best, report) = ascend_llm(&mut task, 0, &client, &guard);
-        assert!(report.llm_calls <= 3, "budget d'appels dépassé: {}", report.llm_calls);
+        assert!(
+            report.llm_calls <= 3,
+            "budget d'appels dépassé: {}",
+            report.llm_calls
+        );
         assert_eq!(report.stop, LlmStop::BudgetExhausted);
     }
 
@@ -1128,7 +1136,10 @@ mod tests {
         let mut task = NumberGame { target: 10 };
         // mock qui ne propose jamais rien ⇒ LlmError::Empty
         let client = MockLlmClient::new(|_p, _k| Vec::new());
-        let guard = LlmGuard { max_iters: 5, ..LlmGuard::default() };
+        let guard = LlmGuard {
+            max_iters: 5,
+            ..LlmGuard::default()
+        };
         let (best, report) = ascend_llm(&mut task, 3, &client, &guard);
         assert_eq!(best, 3, "incumbent inchangé sans proposition valide");
         assert!(report.is_monotone());
@@ -1140,7 +1151,11 @@ mod tests {
         let run = || {
             let mut task = NumberGame { target: 23 };
             let client = neighbor_client();
-            let guard = LlmGuard { target: Some(0.0), max_iters: 100, ..LlmGuard::default() };
+            let guard = LlmGuard {
+                target: Some(0.0),
+                max_iters: 100,
+                ..LlmGuard::default()
+            };
             ascend_llm(&mut task, 0, &client, &guard)
         };
         let (b1, r1) = run();
@@ -1157,7 +1172,16 @@ mod ollama_tests {
 
     #[test]
     fn request_is_well_formed_http() {
-        let req = build_request("127.0.0.1", 11434, "llama3.2", "salut\n\"x\"", 4096, 16384, None, None);
+        let req = build_request(
+            "127.0.0.1",
+            11434,
+            "llama3.2",
+            "salut\n\"x\"",
+            4096,
+            16384,
+            None,
+            None,
+        );
         assert!(req.starts_with("POST /api/generate HTTP/1.1\r\n"));
         assert!(req.contains("Host: 127.0.0.1:11434\r\n"));
         assert!(req.contains("Content-Type: application/json\r\n"));
@@ -1171,13 +1195,22 @@ mod ollama_tests {
         assert_eq!(j.get("prompt").unwrap().as_str(), Some("salut\n\"x\""));
         assert_eq!(j.get("stream").unwrap().as_bool(), Some(false));
         // num_predict transmis (anti-troncature des complétions longues)
-        let np = j.get("options").and_then(|o| o.get("num_predict")).and_then(|v| v.as_u64());
+        let np = j
+            .get("options")
+            .and_then(|o| o.get("num_predict"))
+            .and_then(|v| v.as_u64());
         assert_eq!(np, Some(4096));
         // num_ctx transmis (défaut serveur 4096 = prompt tronqué sur cibles réelles)
-        let nc = j.get("options").and_then(|o| o.get("num_ctx")).and_then(|v| v.as_u64());
+        let nc = j
+            .get("options")
+            .and_then(|o| o.get("num_ctx"))
+            .and_then(|v| v.as_u64());
         assert_eq!(nc, Some(16384));
         // sans réglage, PAS de temperature/top_p → défaut du modèle respecté
-        assert!(j.get("options").and_then(|o| o.get("temperature")).is_none());
+        assert!(j
+            .get("options")
+            .and_then(|o| o.get("temperature"))
+            .is_none());
         assert!(j.get("options").and_then(|o| o.get("top_p")).is_none());
     }
 
@@ -1186,15 +1219,23 @@ mod ollama_tests {
         let req = build_request("h", 1, "m", "p", 256, 4096, Some(0.9), Some(0.8));
         let (_, body) = req.split_once("\r\n\r\n").unwrap();
         let j = crate::json::Json::parse(body).unwrap();
-        let temp = j.get("options").and_then(|o| o.get("temperature")).and_then(|v| v.as_f64());
-        let top_p = j.get("options").and_then(|o| o.get("top_p")).and_then(|v| v.as_f64());
+        let temp = j
+            .get("options")
+            .and_then(|o| o.get("temperature"))
+            .and_then(|v| v.as_f64());
+        let top_p = j
+            .get("options")
+            .and_then(|o| o.get("top_p"))
+            .and_then(|v| v.as_f64());
         assert_eq!(temp, Some(0.9));
         assert_eq!(top_p, Some(0.8));
     }
 
     #[test]
     fn builders_clamp_temperature_and_top_p() {
-        let c = OllamaClient::new("m").with_temperature(-1.0).with_top_p(2.0);
+        let c = OllamaClient::new("m")
+            .with_temperature(-1.0)
+            .with_top_p(2.0);
         assert_eq!(c.temperature, Some(0.0)); // ≥ 0
         assert_eq!(c.top_p, Some(1.0)); // borné à [0,1]
     }
@@ -1203,7 +1244,10 @@ mod ollama_tests {
     fn parses_ollama_response_into_lines() {
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n\
                     {\"response\":\"alpha\\nbeta\\n\\n  gamma  \",\"done\":true}";
-        assert_eq!(parse_response(resp).unwrap(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            parse_response(resp).unwrap(),
+            vec!["alpha", "beta", "gamma"]
+        );
     }
 
     #[test]
@@ -1245,7 +1289,10 @@ mod ollama_tests {
         let resp = "HTTP/1.1 200 OK\r\n\r\npas du json";
         assert!(matches!(parse_response(resp), Err(LlmError::Backend(_))));
         // réponse sans corps
-        assert!(matches!(parse_response("HTTP/1.1 500\r\n"), Err(LlmError::Backend(_))));
+        assert!(matches!(
+            parse_response("HTTP/1.1 500\r\n"),
+            Err(LlmError::Backend(_))
+        ));
     }
 
     #[test]
@@ -1253,7 +1300,10 @@ mod ollama_tests {
         // complete_raw (via extract_response_field) doit préserver les lignes
         // vides et l'indentation — sinon le FIND de DGM ne matche pas le fichier.
         let resp = "HTTP/1.1 200 OK\r\n\r\n{\"response\":\"fn f() {\\n\\n    let x = 0;\\n}\"}";
-        assert_eq!(extract_response_field(resp).unwrap(), "fn f() {\n\n    let x = 0;\n}");
+        assert_eq!(
+            extract_response_field(resp).unwrap(),
+            "fn f() {\n\n    let x = 0;\n}"
+        );
     }
 
     #[test]
@@ -1275,13 +1325,25 @@ mod ollama_tests {
         assert_eq!(models.len(), 5);
 
         // préférence exacte puis par préfixe
-        assert_eq!(pick_model(&models, Some("qwen2.5-coder:7b")).as_deref(), Some("qwen2.5-coder:7b"));
-        assert_eq!(pick_model(&models, Some("qwen3-coder")).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, Some("qwen2.5-coder:7b")).as_deref(),
+            Some("qwen2.5-coder:7b")
+        );
+        assert_eq!(
+            pick_model(&models, Some("qwen3-coder")).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // heuristique : le plus gros modèle de CODE (pas le 35b généraliste),
         // jamais un modèle d'embedding
-        assert_eq!(pick_model(&models, None).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, None).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // préférence introuvable → retombe sur l'heuristique via l'appelant
-        assert_eq!(pick_model(&models, Some("inexistant")).as_deref(), Some("qwen3-coder:30b"));
+        assert_eq!(
+            pick_model(&models, Some("inexistant")).as_deref(),
+            Some("qwen3-coder:30b")
+        );
         // aucun modèle de code → le plus gros généraliste
         let generic = vec!["llama3:8b".to_string(), "qwen3.6:35b".to_string()];
         assert_eq!(pick_model(&generic, None).as_deref(), Some("qwen3.6:35b"));
@@ -1309,12 +1371,22 @@ mod claude_tests {
         fail: bool,
     }
     impl ClaudeTransport for MockTransport {
-        fn post_json(&self, url: &str, headers: &[(String, String)], body: &str) -> Result<String, String> {
+        fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &str,
+        ) -> Result<String, String> {
             // vérifie que le client envoie bien l'URL, les en-têtes et un corps JSON valides
             assert!(url.ends_with("/v1/messages"), "url = {url}");
             assert!(headers.iter().any(|(k, _)| k == "x-api-key"));
-            assert!(headers.iter().any(|(k, v)| k == "anthropic-version" && !v.is_empty()));
-            assert!(crate::json::Json::parse(body).is_ok(), "corps non JSON: {body}");
+            assert!(headers
+                .iter()
+                .any(|(k, v)| k == "anthropic-version" && !v.is_empty()));
+            assert!(
+                crate::json::Json::parse(body).is_ok(),
+                "corps non JSON: {body}"
+            );
             if self.fail {
                 Err("transport en panne".to_string())
             } else {
@@ -1331,13 +1403,19 @@ mod claude_tests {
         assert_eq!(j.get("max_tokens").unwrap().as_u64(), Some(256));
         let msgs = j.get("messages").unwrap().as_array().unwrap();
         assert_eq!(msgs[0].get("role").unwrap().as_str(), Some("user"));
-        assert_eq!(msgs[0].get("content").unwrap().as_str(), Some("salut\n\"x\""));
+        assert_eq!(
+            msgs[0].get("content").unwrap().as_str(),
+            Some("salut\n\"x\"")
+        );
     }
 
     #[test]
     fn parses_messages_text_blocks_into_lines() {
         let resp = r#"{"content":[{"type":"text","text":"alpha\nbeta"},{"type":"text","text":"\ngamma"}],"role":"assistant"}"#;
-        assert_eq!(parse_claude_response(resp).unwrap(), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(
+            parse_claude_response(resp).unwrap(),
+            vec!["alpha", "beta", "gamma"]
+        );
     }
 
     #[test]
@@ -1353,7 +1431,10 @@ mod claude_tests {
     fn client_end_to_end_with_mock_transport() {
         let body = r#"{"content":[{"type":"text","text":"x*x + 1\nx + 2"}]}"#;
         let client = ClaudeClient::new(
-            MockTransport { body: body.to_string(), fail: false },
+            MockTransport {
+                body: body.to_string(),
+                fail: false,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );
@@ -1364,7 +1445,10 @@ mod claude_tests {
     #[test]
     fn transport_failure_is_backend_error() {
         let client = ClaudeClient::new(
-            MockTransport { body: String::new(), fail: true },
+            MockTransport {
+                body: String::new(),
+                fail: true,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );
@@ -1394,7 +1478,10 @@ mod claude_tests {
     fn propose_honours_k_upper_bound() {
         let body = r#"{"content":[{"type":"text","text":"a\nb\nc\nd\ne"}]}"#;
         let client = ClaudeClient::new(
-            MockTransport { body: body.to_string(), fail: false },
+            MockTransport {
+                body: body.to_string(),
+                fail: false,
+            },
             "sk-test",
             "claude-sonnet-4-6",
         );
@@ -1411,9 +1498,7 @@ mod ffi_tests {
     fn test_llama_ffi_client_zero_copy() {
         let mut unified_mem = [1.0f32; 100];
         let ctx = 12345 as *mut std::ffi::c_void;
-        let client = unsafe {
-            LlamaKVCacheFFIClient::new(ctx, unified_mem.as_mut_ptr(), 100)
-        };
+        let client = unsafe { LlamaKVCacheFFIClient::new(ctx, unified_mem.as_mut_ptr(), 100) };
         let props = client.propose("test", 3).unwrap();
         assert_eq!(props.len(), 3);
         assert_eq!(props[0], "proposition_ffi_zero_copy_0");
@@ -1452,7 +1537,10 @@ pub mod ffi {
         ///
         /// # Invariants de Sûreté
         /// - Le chemin passé doit être un pointeur valide vers une chaîne de caractères C terminée par un caractère nul.
-        pub fn llama_load_model_from_file(path: *const std::os::raw::c_char, params: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+        pub fn llama_load_model_from_file(
+            path: *const std::os::raw::c_char,
+            params: *const std::ffi::c_void,
+        ) -> *mut std::ffi::c_void;
 
         /// Libère un modèle llama.cpp.
         ///
@@ -1464,7 +1552,10 @@ pub mod ffi {
         ///
         /// # Invariants de Sûreté
         /// - Le pointeur `model` doit être valide et issu de `llama_load_model_from_file`.
-        pub fn llama_new_context_with_model(model: *mut std::ffi::c_void, params: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+        pub fn llama_new_context_with_model(
+            model: *mut std::ffi::c_void,
+            params: *const std::ffi::c_void,
+        ) -> *mut std::ffi::c_void;
 
         /// Libère un contexte d'inférence llama.cpp.
         ///
@@ -1483,7 +1574,12 @@ pub mod ffi {
         /// # Invariants de Sûreté
         /// - Le pointeur `ctx` doit être valide.
         /// - Le pointeur `tokens` doit pointer vers un tableau valide de taille `n_tokens`.
-        pub fn llama_decode_raw(ctx: *mut std::ffi::c_void, tokens: *const i32, n_tokens: i32, n_past: i32) -> i32;
+        pub fn llama_decode_raw(
+            ctx: *mut std::ffi::c_void,
+            tokens: *const i32,
+            n_tokens: i32,
+            n_past: i32,
+        ) -> i32;
     }
 }
 
@@ -1509,7 +1605,11 @@ impl LlamaKVCacheFFIClient {
     ///
     /// # Safety
     /// - `ctx` et `unified_kv_ptr` doivent être des pointeurs valides et alloués de manière unifiée.
-    pub unsafe fn new(ctx: *mut std::ffi::c_void, unified_kv_ptr: *mut f32, kv_size: usize) -> Self {
+    pub unsafe fn new(
+        ctx: *mut std::ffi::c_void,
+        unified_kv_ptr: *mut f32,
+        kv_size: usize,
+    ) -> Self {
         LlamaKVCacheFFIClient {
             ctx,
             unified_kv_ptr,
@@ -1526,7 +1626,9 @@ impl LlmClient for LlamaKVCacheFFIClient {
             // - Le KV cache obtenu via FFI ne doit pas dépasser les limites de la mémoire physique (128GB unifiée).
             // - Aucun autre thread ne doit muter simultanément les adresses pointées par le KV cache récupéré.
             if self.ctx.is_null() {
-                return Err(LlmError::Backend("Le contexte llama.cpp est nul".to_string()));
+                return Err(LlmError::Backend(
+                    "Le contexte llama.cpp est nul".to_string(),
+                ));
             }
 
             // Récupération zéro-copie de la vue du KV cache par FFI direct
@@ -1557,7 +1659,9 @@ impl LlmClient for LlamaKVCacheFFIClient {
             // - `self.ctx` doit être un pointeur valide non nul.
             // - `self.unified_kv_ptr` doit pointer vers un tampon de mémoire unifiée de taille valide.
             if self.ctx.is_null() {
-                return Err(LlmError::Backend("Le contexte llama.cpp est nul".to_string()));
+                return Err(LlmError::Backend(
+                    "Le contexte llama.cpp est nul".to_string(),
+                ));
             }
 
             if !self.unified_kv_ptr.is_null() && self.kv_size > 0 {
@@ -1573,7 +1677,10 @@ impl LlmClient for LlamaKVCacheFFIClient {
 // Stubs pour simuler les symboles externes llama_ lors de la liaison et des tests
 // sans nécessiter une véritable bibliothèque dynamique externe compilée.
 #[no_mangle]
-pub unsafe extern "C" fn llama_load_model_from_file(_path: *const std::os::raw::c_char, _params: *const std::ffi::c_void) -> *mut std::ffi::c_void {
+pub unsafe extern "C" fn llama_load_model_from_file(
+    _path: *const std::os::raw::c_char,
+    _params: *const std::ffi::c_void,
+) -> *mut std::ffi::c_void {
     1 as *mut std::ffi::c_void
 }
 
@@ -1581,7 +1688,10 @@ pub unsafe extern "C" fn llama_load_model_from_file(_path: *const std::os::raw::
 pub unsafe extern "C" fn llama_free_model(_model: *mut std::ffi::c_void) {}
 
 #[no_mangle]
-pub unsafe extern "C" fn llama_new_context_with_model(_model: *mut std::ffi::c_void, _params: *const std::ffi::c_void) -> *mut std::ffi::c_void {
+pub unsafe extern "C" fn llama_new_context_with_model(
+    _model: *mut std::ffi::c_void,
+    _params: *const std::ffi::c_void,
+) -> *mut std::ffi::c_void {
     2 as *mut std::ffi::c_void
 }
 
@@ -1591,7 +1701,10 @@ pub unsafe extern "C" fn llama_free(_ctx: *mut std::ffi::c_void) {}
 static mut DUMMY_CELLS: [LlamaKVCacheCell; 1] = [LlamaKVCacheCell { pos: 0, seq_id: 0 }];
 
 #[no_mangle]
-pub unsafe extern "C" fn llama_get_kv_cache_view(_ctx: *mut std::ffi::c_void, _i_seq: i32) -> LlamaKVCacheView {
+pub unsafe extern "C" fn llama_get_kv_cache_view(
+    _ctx: *mut std::ffi::c_void,
+    _i_seq: i32,
+) -> LlamaKVCacheView {
     LlamaKVCacheView {
         n_cells: 1,
         cells: std::ptr::addr_of_mut!(DUMMY_CELLS) as *mut LlamaKVCacheCell,
@@ -1599,6 +1712,11 @@ pub unsafe extern "C" fn llama_get_kv_cache_view(_ctx: *mut std::ffi::c_void, _i
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn llama_decode_raw(_ctx: *mut std::ffi::c_void, _tokens: *const i32, _n_tokens: i32, _n_past: i32) -> i32 {
+pub unsafe extern "C" fn llama_decode_raw(
+    _ctx: *mut std::ffi::c_void,
+    _tokens: *const i32,
+    _n_tokens: i32,
+    _n_past: i32,
+) -> i32 {
     0
 }

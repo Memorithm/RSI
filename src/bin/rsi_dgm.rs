@@ -42,10 +42,29 @@ use rsi::dgm::{
 };
 
 const VALUE_FLAGS: &[&str] = &[
-    "--goal", "--allow", "--steps", "--seed", "--package-subdir", "--test-args", "--backend",
-    "--model", "--ollama-host", "--ollama-port", "--timeout", "--backups", "--bench", "--min-gain",
-    "--prescreen-model", "--prescreen-num-predict", "--proposer-num-predict", "--revise", "--export-trajectories",
-    "--claude-max-tokens", "--claude-base-url", "--temperature", "--top-p",
+    "--goal",
+    "--allow",
+    "--steps",
+    "--seed",
+    "--package-subdir",
+    "--test-args",
+    "--backend",
+    "--model",
+    "--ollama-host",
+    "--ollama-port",
+    "--timeout",
+    "--backups",
+    "--bench",
+    "--min-gain",
+    "--prescreen-model",
+    "--prescreen-num-predict",
+    "--proposer-num-predict",
+    "--revise",
+    "--export-trajectories",
+    "--claude-max-tokens",
+    "--claude-base-url",
+    "--temperature",
+    "--top-p",
 ];
 
 /// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
@@ -66,9 +85,15 @@ impl VerdictPredictor for WorldModelPredictor {
         };
         let v = rsi::simulation::parse_sim_verdict(&text);
         let (pass, reason) = if v.compiles == Some(false) {
-            (Some(false), Some("le simulateur prédit que ce patch NE COMPILE PAS".to_string()))
+            (
+                Some(false),
+                Some("le simulateur prédit que ce patch NE COMPILE PAS".to_string()),
+            )
         } else if v.tests_pass == Some(false) {
-            (Some(false), Some("le simulateur prédit que ce patch CASSE des tests".to_string()))
+            (
+                Some(false),
+                Some("le simulateur prédit que ce patch CASSE des tests".to_string()),
+            )
         } else if v.tests_pass == Some(true) {
             (Some(true), None)
         } else {
@@ -111,9 +136,15 @@ fn main() {
         exit(2);
     }
 
-    let steps: usize = flag_value(&args, "--steps").and_then(|v| v.parse().ok()).unwrap_or(10);
-    let seed: u64 = flag_value(&args, "--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
-    let timeout_secs: u64 = flag_value(&args, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(300);
+    let steps: usize = flag_value(&args, "--steps")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let seed: u64 = flag_value(&args, "--seed")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(42);
+    let timeout_secs: u64 = flag_value(&args, "--timeout")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
     let promote = args.iter().any(|a| a == "--promote");
 
     // --- Backend LLM : CONNEXION AUTOMATIQUE. -------------------------------- //
@@ -140,7 +171,9 @@ fn main() {
         .or(env_model)
         .or_else(|| std::env::var("RSI_LLM_MODEL").ok());
     let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
-    let port: u16 = flag_value(&args, "--ollama-port").and_then(|v| v.parse().ok()).unwrap_or(11434);
+    let port: u16 = flag_value(&args, "--ollama-port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(11434);
 
     // Leviers d'exploration du proposeur (diversité des patchs proposés) — utile
     // quand un modèle décline/répète ; `None` ⇒ défaut du modèle.
@@ -168,26 +201,30 @@ fn main() {
     };
     // Découvre les modèles installés et applique la préférence éventuelle.
     let discover = |pref: Option<&str>| -> Result<String, String> {
-        let installed =
-            rsi::llm::ollama_installed_models(&host, port, Duration::from_secs(10))
-                .map_err(|e| format!("Ollama injoignable sur {host}:{port} ({e:?})"))?;
+        let installed = rsi::llm::ollama_installed_models(&host, port, Duration::from_secs(10))
+            .map_err(|e| format!("Ollama injoignable sur {host}:{port} ({e:?})"))?;
         match rsi::llm::pick_model(&installed, pref) {
             Some(m) => {
                 println!(
                     "• backend ollama : modèle « {m} » ({} installé(s){})",
                     installed.len(),
-                    pref.map(|p| format!(", préférence « {p} »")).unwrap_or_default()
+                    pref.map(|p| format!(", préférence « {p} »"))
+                        .unwrap_or_default()
                 );
                 Ok(m)
             }
-            None => Err(format!("aucun modèle utilisable sur {host}:{port} (ollama pull …)")),
+            None => Err(format!(
+                "aucun modèle utilisable sur {host}:{port} (ollama pull …)"
+            )),
         }
     };
 
     let (backend, model): (String, Box<dyn CodeModel>) = match backend.as_str() {
         "ollama" => match model_pref.clone() {
             // Modèle donné explicitement : utilisé tel quel (pas de sonde).
-            Some(name) if flag_value(&args, "--model").is_some() => ("ollama".into(), make_ollama(name)),
+            Some(name) if flag_value(&args, "--model").is_some() => {
+                ("ollama".into(), make_ollama(name))
+            }
             pref => match discover(pref.as_deref()) {
                 Ok(m) => ("ollama".into(), make_ollama(m)),
                 Err(e) => {
@@ -223,7 +260,9 @@ fn main() {
 
     // --- Évaluateur empirique réel (cargo build + test, borné). ------------- //
     let evaluator = CargoEvaluator {
-        package_subdir: flag_value(&args, "--package-subdir").map(Into::into).unwrap_or_default(),
+        package_subdir: flag_value(&args, "--package-subdir")
+            .map(Into::into)
+            .unwrap_or_default(),
         test_args: flag_value(&args, "--test-args")
             .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
             .unwrap_or_default(),
@@ -252,20 +291,31 @@ fn main() {
     );
 
     // --- Boucle. ------------------------------------------------------------ //
-    let min_gain: f64 = flag_value(&args, "--min-gain").and_then(|v| v.parse().ok()).unwrap_or(0.0);
-    let revise: u32 = flag_value(&args, "--revise").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let min_gain: f64 = flag_value(&args, "--min-gain")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let revise: u32 = flag_value(&args, "--revise")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut config = DgmConfig::new(&ws, &goal);
     config.min_score_gain = min_gain;
     config.simulated_revisions = revise;
-    let mut engine = DgmEngine::new(Archive::with_root(baseline.clone()), proposer, evaluator, config, seed);
+    let mut engine = DgmEngine::new(
+        Archive::with_root(baseline.clone()),
+        proposer,
+        evaluator,
+        config,
+        seed,
+    );
 
     // --- Pré-crible optionnel par world model (--prescreen-model TAG). ------- //
     // Évite le cargo build des patchs prédits cassés avec certitude ; ne peut
     // jamais écarter une amélioration (cf. docs/AGENTWORLD_STUDY.md).
     let mut prescreen_note = String::new();
     if let Some(sim_model) = flag_value(&args, "--prescreen-model") {
-        let np: u32 =
-            flag_value(&args, "--prescreen-num-predict").and_then(|v| v.parse().ok()).unwrap_or(12288);
+        let np: u32 = flag_value(&args, "--prescreen-num-predict")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12288);
         let client = rsi::llm::OllamaClient::new(sim_model.clone())
             .with_endpoint(host.clone(), port)
             .with_timeout(Duration::from_secs(timeout_secs))
@@ -288,7 +338,9 @@ fn main() {
         );
     }
 
-    println!("• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}");
+    println!(
+        "• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}"
+    );
     println!("  (chaque étape = proposition LLM + build+test+bench du snapshot : ~1-3 min)\n");
     // Étape par étape (et non `engine.run(steps)`) pour AFFICHER chaque
     // résultat au fil de l'eau — huit étapes muettes ressemblent à un blocage.
@@ -328,7 +380,12 @@ fn main() {
                 Some(r) => println!("  step {i:2} · pas de proposition ({r})"),
                 None => println!("  step {i:2} · pas de proposition"),
             },
-            StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => {
+            StepOutcome::Evaluated {
+                accepted,
+                fitness,
+                variant_id,
+                ..
+            } => {
                 println!(
                     "  step {i:2} · {} · compiles={} passed={} failed={} score={:.4} · {}",
                     if *accepted { "ACCEPTÉ " } else { "rejeté  " },
@@ -371,7 +428,10 @@ fn main() {
         );
     }
     if engine.revisions() > 0 {
-        println!("  révision simulée : {} correction(s) demandée(s) au proposeur", engine.revisions());
+        println!(
+            "  révision simulée : {} correction(s) demandée(s) au proposeur",
+            engine.revisions()
+        );
     }
     if let Some(path) = flag_value(&args, "--export-trajectories") {
         let traj = engine.trajectories();
@@ -391,7 +451,10 @@ fn main() {
 
     let promotable = best.as_ref().filter(|b| {
         Some(&b.id) != root_id.as_ref()
-            && b.fitness.as_ref().map(|f| f.all_green() && f.is_better_than(&baseline)).unwrap_or(false)
+            && b.fitness
+                .as_ref()
+                .map(|f| f.all_green() && f.is_better_than(&baseline))
+                .unwrap_or(false)
     });
 
     match promotable {
@@ -423,7 +486,9 @@ fn main() {
                     }
                 }
             } else {
-                println!("  (DRY-RUN : arbre vivant intact. Relancer avec --promote pour appliquer.)");
+                println!(
+                    "  (DRY-RUN : arbre vivant intact. Relancer avec --promote pour appliquer.)"
+                );
                 println!("  note : seul ce patch unique serait appliqué (variant = delta depuis la référence).");
             }
         }
@@ -464,7 +529,10 @@ fn make_claude(_args: &[String]) -> Box<dyn CodeModel> {
 // ----------------------------- parsing args ------------------------------- //
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn required(args: &[String], flag: &str) -> String {
@@ -481,7 +549,7 @@ fn required(args: &[String], flag: &str) -> String {
 /// Premier argument positionnel (ni un drapeau, ni la valeur d'un drapeau).
 fn first_positional(args: &[String]) -> Option<String> {
     let mut i = 2; // 0 = bin, 1 = (déjà géré : peut être le workspace ou un flag)
-    // On considère aussi args[1] s'il n'est pas un flag.
+                   // On considère aussi args[1] s'il n'est pas un flag.
     if !args[1].starts_with("--") {
         return Some(args[1].clone());
     }

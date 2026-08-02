@@ -41,7 +41,10 @@ impl WasmSynthesis {
     /// Construit la tâche depuis une fonction cible échantillonnée sur `inputs`.
     pub fn from_target(target: impl Fn(i64) -> i64, inputs: impl IntoIterator<Item = i64>) -> Self {
         let cases = inputs.into_iter().map(|x| (x, target(x))).collect();
-        WasmSynthesis { cases, size_penalty: 0.0005 }
+        WasmSynthesis {
+            cases,
+            size_penalty: 0.0005,
+        }
     }
 
     /// Candidat initial trivial : `run(x) = 0` (valide, mais médiocre).
@@ -75,7 +78,8 @@ impl WasmSynthesis {
         let run = instance
             .get_typed_func::<i64, i64>(&store, "run")
             .map_err(|e| format!("export 'run' (i64)->i64 absent: {e}"))?;
-        run.call(&mut store, input).map_err(|e| format!("exécution: {e}"))
+        run.call(&mut store, input)
+            .map_err(|e| format!("exécution: {e}"))
     }
 
     /// Fraction de cas réussis (diagnostic).
@@ -229,7 +233,12 @@ mod tests {
                 SQUARE_PLUS_ONE.to_string(),
             ]
         });
-        let guard = LlmGuard { target: Some(0.9), patience: 3, max_iters: 20, ..LlmGuard::default() };
+        let guard = LlmGuard {
+            target: Some(0.9),
+            patience: 3,
+            max_iters: 20,
+            ..LlmGuard::default()
+        };
         let seed = t.seed_candidate();
         let (best, report) = ascend_llm(&mut t, seed, &client, &guard);
         assert!(report.is_monotone());

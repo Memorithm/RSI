@@ -27,7 +27,10 @@ pub struct ConvergenceDetector {
 
 impl ConvergenceDetector {
     pub fn new(window: usize) -> Self {
-        ConvergenceDetector { window: window.max(2), buf: VecDeque::new() }
+        ConvergenceDetector {
+            window: window.max(2),
+            buf: VecDeque::new(),
+        }
     }
 
     /// Ajoute une observation (FIFO sur la fenêtre).

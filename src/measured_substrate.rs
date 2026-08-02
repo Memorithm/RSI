@@ -63,7 +63,9 @@ fn matrix(n: usize, seed: u64) -> Vec<f32> {
     let mut s = seed | 1;
     (0..n * n)
         .map(|_| {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((s >> 33) as f32 / (1u64 << 31) as f32) - 1.0
         })
         .collect()
@@ -80,7 +82,12 @@ pub struct MeasuredSubstrate {
 impl MeasuredSubstrate {
     /// `n` = taille du kernel N×N (défaut conseillé ≥ 96 pour que le tuilage paie).
     pub fn new(n: usize) -> Self {
-        MeasuredSubstrate { n: n.max(16), reps: 3, best_speedup: 1.0, anchor: None }
+        MeasuredSubstrate {
+            n: n.max(16),
+            reps: 3,
+            best_speedup: 1.0,
+            anchor: None,
+        }
     }
 
     fn median_time(&self, run: impl Fn()) -> f64 {
@@ -141,7 +148,9 @@ impl SubstrateImprover for MeasuredSubstrate {
             }
         }
 
-        let anchor = *self.anchor.get_or_insert_with(|| substrate.software_efficiency());
+        let anchor = *self
+            .anchor
+            .get_or_insert_with(|| substrate.software_efficiency());
         let mut out = substrate.clone();
         let measured = self.efficiency(anchor).max(out.software_efficiency());
         out.set_measured_software_eff(Some(measured));
@@ -207,7 +216,12 @@ pub struct SimdMeasuredSubstrate {
 impl SimdMeasuredSubstrate {
     /// `len` = longueur du vecteur réduit (défaut conseillé ≥ 2¹⁶).
     pub fn new(len: usize) -> Self {
-        SimdMeasuredSubstrate { len: len.max(4096), reps: 5, best_speedup: 1.0, anchor: None }
+        SimdMeasuredSubstrate {
+            len: len.max(4096),
+            reps: 5,
+            best_speedup: 1.0,
+            anchor: None,
+        }
     }
 
     /// Speedup SIMD mesuré (≥ 1.0) lors du dernier `improve`.
@@ -252,7 +266,9 @@ impl SubstrateImprover for SimdMeasuredSubstrate {
             }
         }
 
-        let anchor = *self.anchor.get_or_insert_with(|| substrate.software_efficiency());
+        let anchor = *self
+            .anchor
+            .get_or_insert_with(|| substrate.software_efficiency());
         let mut out = substrate.clone();
         let measured = self.efficiency(anchor).max(out.software_efficiency());
         out.set_measured_software_eff(Some(measured));

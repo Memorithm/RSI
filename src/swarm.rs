@@ -6,6 +6,8 @@
 //! par une closure `build(seed)`, donc l'agent ne traverse jamais les threads —
 //! seuls les résultats scalaires reviennent. Déterministe par graine.
 
+#![allow(clippy::items_after_test_module)]
+
 use crate::agent::RSIAgent;
 
 /// Résultat d'un membre de l'essaim.
@@ -39,7 +41,11 @@ where
     let size = size.max(1);
     // Membre marqué invalide (jamais sélectionné, `SI_safe = -∞`) : sert de
     // repli quand un membre panique ou ne produit aucun rapport.
-    let invalid = |seed: u64| SwarmMember { seed, si_global: 0.0, si_safe: f64::NEG_INFINITY };
+    let invalid = |seed: u64| SwarmMember {
+        seed,
+        si_global: 0.0,
+        si_safe: f64::NEG_INFINITY,
+    };
     let members: Vec<SwarmMember> = std::thread::scope(|scope| {
         let handles: Vec<(u64, _)> = (0..size)
             .map(|i| {
@@ -49,9 +55,11 @@ where
                     let mut agent = build(seed);
                     let reports = agent.run(steps);
                     match reports.last() {
-                        Some(last) => {
-                            SwarmMember { seed, si_global: last.si_global, si_safe: last.si_safe }
-                        }
+                        Some(last) => SwarmMember {
+                            seed,
+                            si_global: last.si_global,
+                            si_safe: last.si_safe,
+                        },
                         // run(0) ⇒ aucun rapport : membre invalide plutôt que panic.
                         None => invalid(seed),
                     }
@@ -74,7 +82,10 @@ where
         .map(|(i, _)| i)
         .unwrap_or(0);
 
-    SwarmResult { members, best_index }
+    SwarmResult {
+        members,
+        best_index,
+    }
 }
 
 /// Essaim de démonstration (agents `RSIAgent::demo`) — pratique pour benchmark.
@@ -92,7 +103,10 @@ mod tests {
         assert_eq!(res.members.len(), 6);
         let best = res.best();
         // le meilleur a bien le SI_safe maximal
-        assert!(res.members.iter().all(|m| m.si_safe <= best.si_safe + 1e-12));
+        assert!(res
+            .members
+            .iter()
+            .all(|m| m.si_safe <= best.si_safe + 1e-12));
         assert!(best.si_global > 0.0);
     }
 
@@ -231,13 +245,24 @@ impl SwarmMesh6 {
     }
 
     /// Met à jour de manière atomique l'état d'un nœud spécifique.
-    pub fn update_node_state(&self, node_id: usize, si_global: f64, si_safe: f64, steps: usize, active: bool) {
+    pub fn update_node_state(
+        &self,
+        node_id: usize,
+        si_global: f64,
+        si_safe: f64,
+        steps: usize,
+        active: bool,
+    ) {
         assert!(node_id < 6, "ID de nœud hors limites");
         let node = &self.nodes[node_id];
-        node.si_global.store(si_global.to_bits(), std::sync::atomic::Ordering::Release);
-        node.si_safe.store(si_safe.to_bits(), std::sync::atomic::Ordering::Release);
-        node.steps.store(steps, std::sync::atomic::Ordering::Release);
-        node.active.store(active, std::sync::atomic::Ordering::Release);
+        node.si_global
+            .store(si_global.to_bits(), std::sync::atomic::Ordering::Release);
+        node.si_safe
+            .store(si_safe.to_bits(), std::sync::atomic::Ordering::Release);
+        node.steps
+            .store(steps, std::sync::atomic::Ordering::Release);
+        node.active
+            .store(active, std::sync::atomic::Ordering::Release);
     }
 
     /// Récupère l'état courant d'un nœud spécifique.
@@ -276,8 +301,8 @@ impl SwarmMesh6 {
         assert!(node_id < 6, "ID de nœud hors limites");
         let node = &self.nodes[node_id];
         let mut msgs = [0u64; 5];
-        for i in 0..5 {
-            msgs[i] = node.mailboxes[i].load(std::sync::atomic::Ordering::Acquire);
+        for (i, msg) in msgs.iter_mut().enumerate() {
+            *msg = node.mailboxes[i].load(std::sync::atomic::Ordering::Acquire);
         }
         msgs
     }

@@ -44,10 +44,26 @@ fn polyline(values: &[f64], n: usize, color: &str) -> String {
 pub fn trajectory_svg(reports: &[StepReport]) -> String {
     let n = reports.len();
     let series = [
-        Series { name: "SI_global", color: "#2563eb", values: reports.iter().map(|r| r.si_global).collect() },
-        Series { name: "SI_safe", color: "#16a34a", values: reports.iter().map(|r| r.si_safe).collect() },
-        Series { name: "P_eff", color: "#ea580c", values: reports.iter().map(|r| r.p_eff).collect() },
-        Series { name: "Risk_global", color: "#dc2626", values: reports.iter().map(|r| r.risk_global).collect() },
+        Series {
+            name: "SI_global",
+            color: "#2563eb",
+            values: reports.iter().map(|r| r.si_global).collect(),
+        },
+        Series {
+            name: "SI_safe",
+            color: "#16a34a",
+            values: reports.iter().map(|r| r.si_safe).collect(),
+        },
+        Series {
+            name: "P_eff",
+            color: "#ea580c",
+            values: reports.iter().map(|r| r.p_eff).collect(),
+        },
+        Series {
+            name: "Risk_global",
+            color: "#dc2626",
+            values: reports.iter().map(|r| r.risk_global).collect(),
+        },
     ];
 
     let pw = W - ML - MR;

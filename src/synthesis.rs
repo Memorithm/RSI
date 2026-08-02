@@ -191,7 +191,9 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
                     i += 1;
                 }
                 let lit: String = chars[start..i].iter().collect();
-                let n: f64 = lit.parse().map_err(|_| format!("nombre invalide '{lit}'"))?;
+                let n: f64 = lit
+                    .parse()
+                    .map_err(|_| format!("nombre invalide '{lit}'"))?;
                 out.push(Tok::Num(n));
             }
             other => return Err(format!("caractère inattendu '{other}'")),
@@ -308,7 +310,10 @@ impl Expr {
         };
         let e = p.parse_expr()?;
         if p.pos != p.toks.len() {
-            return Err(format!("jetons superflus à partir de la position {}", p.pos));
+            return Err(format!(
+                "jetons superflus à partir de la position {}",
+                p.pos
+            ));
         }
         Ok(e)
     }
@@ -335,13 +340,7 @@ pub struct SymbolicSynthesis {
 impl SymbolicSynthesis {
     /// Construit la tâche à partir d'une fonction cible échantillonnée sur
     /// `n` points de `[lo, hi]`.
-    pub fn from_target(
-        target: impl Fn(f64) -> f64,
-        lo: f64,
-        hi: f64,
-        n: usize,
-        seed: u64,
-    ) -> Self {
+    pub fn from_target(target: impl Fn(f64) -> f64, lo: f64, hi: f64, n: usize, seed: u64) -> Self {
         let n = n.max(2);
         let cases = (0..n)
             .map(|i| {
@@ -570,7 +569,11 @@ mod tests {
         let mut task = SymbolicSynthesis::from_target(|x| x * x + 1.0, -2.0, 2.0, 21, 42);
         let init = task.seed_candidate();
         let init_fit = task.score(&init);
-        let guard = Guard::new().max_iters(60).patience(15).target(0.99).min_delta(0.0);
+        let guard = Guard::new()
+            .max_iters(60)
+            .patience(15)
+            .target(0.99)
+            .min_delta(0.0);
         let (best, report) = ascend(&mut task, init, &guard);
 
         // Contrat (garanti) : non-régression + terminaison bornée + amélioration.
@@ -667,7 +670,11 @@ mod tests {
         assert!(report.accepted > 0);
         // la solution exacte passe tous les cas (train ET held-out)
         assert_eq!(task.pass_fraction(&best), 1.0, "best={}", best.pretty());
-        assert!(report.best_heldout() > 0.9, "held-out faible: {}", report.best_heldout());
+        assert!(
+            report.best_heldout() > 0.9,
+            "held-out faible: {}",
+            report.best_heldout()
+        );
         assert_eq!(report.stop, LlmStop::Target);
     }
 
@@ -678,14 +685,22 @@ mod tests {
         let mut task = SymbolicSynthesis::from_target_split(|x| x * x + 1.0, -3.0, 3.0, 30, 2);
         // mock qui propose une bonne solution ET une expression géante (interdite)
         let huge = (0..40).map(|_| "x").collect::<Vec<_>>().join(" + "); // 40 termes
-        let client = MockLlmClient::new(move |_p, _k| {
-            vec!["x*x + 1".to_string(), huge.clone()]
-        });
-        let guard = LlmGuard { max_iters: 5, patience: 2, ..LlmGuard::default() };
+        let client = MockLlmClient::new(move |_p, _k| vec!["x*x + 1".to_string(), huge.clone()]);
+        let guard = LlmGuard {
+            max_iters: 5,
+            patience: 2,
+            ..LlmGuard::default()
+        };
         let seed = task.seed_candidate();
         let (best, report) = ascend_llm(&mut task, seed, &client, &guard);
 
-        assert!(report.rejected_unsafe > 0, "l'expression géante aurait dû être rejetée");
-        assert!(best.size() <= MAX_EXPR_SIZE, "un AST trop grand a été adopté");
+        assert!(
+            report.rejected_unsafe > 0,
+            "l'expression géante aurait dû être rejetée"
+        );
+        assert!(
+            best.size() <= MAX_EXPR_SIZE,
+            "un AST trop grand a été adopté"
+        );
     }
 }

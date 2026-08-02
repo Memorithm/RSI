@@ -8,7 +8,10 @@
 use rsi::flywheel::{dedup, split, stats, to_chat_jsonl};
 
 fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn main() {
@@ -20,7 +23,11 @@ fn main() {
         while i < args.len() {
             let a = &args[i];
             if a.starts_with("--") {
-                i += if value_flags.contains(&a.as_str()) { 2 } else { 1 };
+                i += if value_flags.contains(&a.as_str()) {
+                    2
+                } else {
+                    1
+                };
             } else {
                 v.push(a.clone());
                 i += 1;
@@ -36,8 +43,12 @@ fn main() {
         std::process::exit(2);
     }
     let out = flag(&args, "--out").unwrap_or_else(|| "dataset".to_string());
-    let eval_frac: f64 = flag(&args, "--eval-frac").and_then(|v| v.parse().ok()).unwrap_or(0.15);
-    let seed: u64 = flag(&args, "--seed").and_then(|v| v.parse().ok()).unwrap_or(2026);
+    let eval_frac: f64 = flag(&args, "--eval-frac")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.15);
+    let seed: u64 = flag(&args, "--seed")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2026);
     let chat = args.iter().any(|a| a == "--chat");
 
     let mut all = Vec::new();
@@ -57,7 +68,11 @@ fn main() {
 
     let (train, eval) = split(&unique, eval_frac, seed);
     let render = |lines: &[String]| -> String {
-        if chat { to_chat_jsonl(lines) } else { lines.join("\n") + if lines.is_empty() { "" } else { "\n" } }
+        if chat {
+            to_chat_jsonl(lines)
+        } else {
+            lines.join("\n") + if lines.is_empty() { "" } else { "\n" }
+        }
     };
     let train_path = format!("{out}_train.jsonl");
     let eval_path = format!("{out}_eval.jsonl");
@@ -75,7 +90,11 @@ fn main() {
         train.len(),
         eval_path,
         eval.len(),
-        if chat { " [format chat]" } else { " [format prompt/completion]" }
+        if chat {
+            " [format chat]"
+        } else {
+            " [format prompt/completion]"
+        }
     );
     if !report.is_balanced(0.20) {
         eprintln!(

@@ -19,10 +19,16 @@ fn main() {
 
     println!("RSI — agent d'auto-amélioration (moteur réel scirust-rsi)");
     println!("meilleur candidat : {}", best.pretty());
-    println!("fraction de tests réussis : {:.0}%", task.pass_fraction(&best) * 100.0);
+    println!(
+        "fraction de tests réussis : {:.0}%",
+        task.pass_fraction(&best) * 100.0
+    );
     println!("fitness finale  : {:.4}", report.best_fitness);
     println!("gain total      : {:+.4}", report.total_gain());
-    println!("itérations      : {}  (révisions gardées : {})", report.iterations, report.accepted);
+    println!(
+        "itérations      : {}  (révisions gardées : {})",
+        report.iterations, report.accepted
+    );
     println!("non-régression (is_monotone) : {}", report.is_monotone());
 }
 

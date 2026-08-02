@@ -60,7 +60,10 @@ impl DatasetStats {
         if self.total == 0 {
             return false;
         }
-        let min = self.compile_pass.min(self.tests_fail).min(self.compile_fail);
+        let min = self
+            .compile_pass
+            .min(self.tests_fail)
+            .min(self.compile_fail);
         (min as f64 / self.total as f64) >= frac
     }
 
@@ -75,14 +78,22 @@ impl DatasetStats {
             self.tests_fail,
             self.compile_fail,
             self.unknown,
-            if self.is_balanced(0.20) { "oui" } else { "NON (accumuler des cibles variées)" },
+            if self.is_balanced(0.20) {
+                "oui"
+            } else {
+                "NON (accumuler des cibles variées)"
+            },
         )
     }
 }
 
 /// Bilan des classes sur des lignes déjà dédupliquées.
 pub fn stats(lines: &[String], duplicates_removed: usize) -> DatasetStats {
-    let mut s = DatasetStats { total: lines.len(), duplicates_removed, ..Default::default() };
+    let mut s = DatasetStats {
+        total: lines.len(),
+        duplicates_removed,
+        ..Default::default()
+    };
     for l in lines {
         match classify_line(l) {
             Verdict::CompilePass => s.compile_pass += 1,
@@ -188,15 +199,30 @@ mod tests {
 
     #[test]
     fn classify_covers_all_verdicts() {
-        assert_eq!(classify_line(&pair("SIMCAL_VERDICT: compile=oui; tests=pass")), Verdict::CompilePass);
-        assert_eq!(classify_line(&pair("SIMCAL_VERDICT: compile=oui; tests=fail")), Verdict::TestsFail);
-        assert_eq!(classify_line(&pair("SIMCAL_VERDICT: compile=non; tests=na")), Verdict::CompileFail);
+        assert_eq!(
+            classify_line(&pair("SIMCAL_VERDICT: compile=oui; tests=pass")),
+            Verdict::CompilePass
+        );
+        assert_eq!(
+            classify_line(&pair("SIMCAL_VERDICT: compile=oui; tests=fail")),
+            Verdict::TestsFail
+        );
+        assert_eq!(
+            classify_line(&pair("SIMCAL_VERDICT: compile=non; tests=na")),
+            Verdict::CompileFail
+        );
         assert_eq!(classify_line("{\"prompt\":\"x\"}"), Verdict::Unknown);
     }
 
     #[test]
     fn dedup_preserves_order_and_counts() {
-        let (uniq, removed) = dedup(vec!["a".into(), "b".into(), "a".into(), "".into(), "c".into()]);
+        let (uniq, removed) = dedup(vec![
+            "a".into(),
+            "b".into(),
+            "a".into(),
+            "".into(),
+            "c".into(),
+        ]);
         assert_eq!(uniq, vec!["a", "b", "c"]);
         assert_eq!(removed, 1);
     }
@@ -239,7 +265,8 @@ mod tests {
     fn chat_conversion_respects_escapes() {
         let line = "{\"prompt\":\"dis \\\"bonjour\\\"\",\"completion\":\"ok\\nSIMCAL_VERDICT: compile=oui; tests=pass\"}";
         let chat = to_chat_line(line).unwrap();
-        assert!(chat.starts_with("{\"messages\":[{\"role\":\"user\",\"content\":\"dis \\\"bonjour\\\"\"}"));
+        assert!(chat
+            .starts_with("{\"messages\":[{\"role\":\"user\",\"content\":\"dis \\\"bonjour\\\"\"}"));
         assert!(chat.contains("\"role\":\"assistant\""));
         assert!(chat.contains("SIMCAL_VERDICT: compile=oui; tests=pass"));
         assert!(chat.ends_with("}]}"));

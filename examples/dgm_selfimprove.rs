@@ -41,7 +41,11 @@ impl Proposer for Incrementer {
         let cur = read_level(ctx.workspace_root);
         let next = cur + 1;
         Ok(Some(Proposal {
-            patch: Patch::new("level.txt", format!("level = {cur}"), format!("level = {next}")),
+            patch: Patch::new(
+                "level.txt",
+                format!("level = {cur}"),
+                format!("level = {next}"),
+            ),
             rationale: format!("raise level to {next}"),
         }))
     }
@@ -87,7 +91,12 @@ fn main() {
     for (i, o) in outcomes.iter().enumerate() {
         match o {
             StepOutcome::NoProposal { .. } => println!("  step {i:2} · pas de proposition"),
-            StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => println!(
+            StepOutcome::Evaluated {
+                accepted,
+                fitness,
+                variant_id,
+                ..
+            } => println!(
                 "  step {i:2} · {} · score={:>4} · variant={}",
                 if *accepted { "ACCEPTÉ " } else { "rejeté  " },
                 fitness.score,

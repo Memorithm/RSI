@@ -63,7 +63,9 @@ impl HardwareSnapshot {
         let gpu = read_gpu();
         let gpu_load_frac = gpu.as_ref().map(|g| g.load);
         let gpu_mem_used_frac = gpu.as_ref().and_then(|g| g.mem_used_frac);
-        let gpu_source = gpu.map(|g| g.source).unwrap_or_else(|| "absent".to_string());
+        let gpu_source = gpu
+            .map(|g| g.source)
+            .unwrap_or_else(|| "absent".to_string());
 
         HardwareSnapshot {
             cpu_count,
@@ -124,9 +126,15 @@ fn read_mem_used_frac() -> Option<f64> {
     let mut avail = None;
     for line in s.lines() {
         if let Some(v) = line.strip_prefix("MemTotal:") {
-            total = v.split_whitespace().next().and_then(|x| x.parse::<f64>().ok());
+            total = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse::<f64>().ok());
         } else if let Some(v) = line.strip_prefix("MemAvailable:") {
-            avail = v.split_whitespace().next().and_then(|x| x.parse::<f64>().ok());
+            avail = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse::<f64>().ok());
         }
     }
     let (t, a) = (total?, avail?);
@@ -244,7 +252,11 @@ fn read_gpu_via_nvidia_smi() -> Option<GpuReading> {
     } else {
         Some(mem_fracs.iter().sum::<f64>() / mem_fracs.len() as f64)
     };
-    Some(GpuReading { load, mem_used_frac, source: "nvidia-smi".to_string() })
+    Some(GpuReading {
+        load,
+        mem_used_frac,
+        source: "nvidia-smi".to_string(),
+    })
 }
 
 #[cfg(test)]

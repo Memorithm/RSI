@@ -51,14 +51,49 @@ impl TaskCorpus {
         // (nom, [D,M,R,A,C,V], difficulté, poids)
         let rows: &[(&str, [f64; 6], f64, f64)] = &[
             ("rappel_factuel", [0.9, 0.3, 0.2, 0.1, 0.3, 0.1], 0.3, 1.0),
-            ("raisonnement_multi_etapes", [0.4, 0.7, 0.9, 0.2, 0.4, 0.2], 0.7, 1.0),
-            ("synthese_long_contexte", [0.5, 0.5, 0.5, 0.2, 0.9, 0.2], 0.6, 0.9),
-            ("planification_autonome", [0.4, 0.5, 0.6, 0.9, 0.5, 0.6], 0.8, 0.8),
-            ("alignement_decision", [0.3, 0.3, 0.5, 0.5, 0.3, 0.9], 0.6, 0.9),
+            (
+                "raisonnement_multi_etapes",
+                [0.4, 0.7, 0.9, 0.2, 0.4, 0.2],
+                0.7,
+                1.0,
+            ),
+            (
+                "synthese_long_contexte",
+                [0.5, 0.5, 0.5, 0.2, 0.9, 0.2],
+                0.6,
+                0.9,
+            ),
+            (
+                "planification_autonome",
+                [0.4, 0.5, 0.6, 0.9, 0.5, 0.6],
+                0.8,
+                0.8,
+            ),
+            (
+                "alignement_decision",
+                [0.3, 0.3, 0.5, 0.5, 0.3, 0.9],
+                0.6,
+                0.9,
+            ),
             ("generation_code", [0.6, 0.8, 0.8, 0.3, 0.5, 0.3], 0.75, 1.0),
-            ("apprentissage_nouveau_domaine", [0.8, 0.7, 0.6, 0.4, 0.6, 0.3], 0.7, 0.7),
-            ("dialogue_contextuel", [0.5, 0.4, 0.4, 0.3, 0.8, 0.4], 0.4, 0.8),
-            ("optimisation_outils", [0.5, 0.9, 0.6, 0.5, 0.4, 0.3], 0.7, 0.7),
+            (
+                "apprentissage_nouveau_domaine",
+                [0.8, 0.7, 0.6, 0.4, 0.6, 0.3],
+                0.7,
+                0.7,
+            ),
+            (
+                "dialogue_contextuel",
+                [0.5, 0.4, 0.4, 0.3, 0.8, 0.4],
+                0.4,
+                0.8,
+            ),
+            (
+                "optimisation_outils",
+                [0.5, 0.9, 0.6, 0.5, 0.4, 0.3],
+                0.7,
+                0.7,
+            ),
             ("auto_correction", [0.5, 0.6, 0.8, 0.6, 0.6, 0.6], 0.65, 0.8),
         ];
         let tasks = rows
@@ -106,7 +141,11 @@ impl TaskCorpus {
             .ok_or("clé 'tasks' (tableau) manquante")?;
         let mut tasks = Vec::with_capacity(arr.len());
         for (i, t) in arr.iter().enumerate() {
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("tâche").to_string();
+            let name = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tâche")
+                .to_string();
             let req_arr = t
                 .get("requirements")
                 .and_then(|v| v.as_array())
@@ -118,9 +157,22 @@ impl TaskCorpus {
             for (k, v) in req_arr.iter().enumerate() {
                 requirements[k] = v.as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
             }
-            let difficulty = t.get("difficulty").and_then(|v| v.as_f64()).unwrap_or(0.5).clamp(0.0, 1.0);
-            let weight = t.get("weight").and_then(|v| v.as_f64()).unwrap_or(1.0).max(0.0);
-            tasks.push(Task { name, requirements, difficulty, weight });
+            let difficulty = t
+                .get("difficulty")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.5)
+                .clamp(0.0, 1.0);
+            let weight = t
+                .get("weight")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0)
+                .max(0.0);
+            tasks.push(Task {
+                name,
+                requirements,
+                difficulty,
+                weight,
+            });
         }
         if tasks.is_empty() {
             return Err("corpus vide".into());
@@ -213,7 +265,13 @@ impl IntelligenceSurface {
         for w in weights.iter_mut() {
             *w /= sum_w;
         }
-        IntelligenceSurface { tasks, demand, weights, capability, ceiling }
+        IntelligenceSurface {
+            tasks,
+            demand,
+            weights,
+            capability,
+            ceiling,
+        }
     }
 }
 

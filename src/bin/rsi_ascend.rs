@@ -22,13 +22,33 @@ use rsi::synthesis::SymbolicSynthesis;
 use rsi::tuning::ConfigTuning;
 
 const VALUE_FLAGS: &[&str] = &[
-    "--model", "--ollama-host", "--ollama-port", "--iters", "--patience", "--k", "--target",
-    "--min-delta", "--max-calls", "--max-seconds", "--max-overfit", "--seed", "--timeout",
-    "--num-predict", "--temperature", "--top-p", "--fn", "--lo", "--hi", "--n",
+    "--model",
+    "--ollama-host",
+    "--ollama-port",
+    "--iters",
+    "--patience",
+    "--k",
+    "--target",
+    "--min-delta",
+    "--max-calls",
+    "--max-seconds",
+    "--max-overfit",
+    "--seed",
+    "--timeout",
+    "--num-predict",
+    "--temperature",
+    "--top-p",
+    "--fn",
+    "--lo",
+    "--hi",
+    "--n",
 ];
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn has_flag(args: &[String], flag: &str) -> bool {
@@ -36,7 +56,9 @@ fn has_flag(args: &[String], flag: &str) -> bool {
 }
 
 fn parse_or<T: FromStr>(args: &[String], flag: &str, default: T) -> T {
-    flag_value(args, flag).and_then(|v| v.parse().ok()).unwrap_or(default)
+    flag_value(args, flag)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Fonction cible pour le domaine `synthesis` (même vocabulaire que l'API MCP).
@@ -45,7 +67,9 @@ fn target_fn(name: &str) -> Result<fn(f64) -> f64, String> {
         "quadratic" => Ok(|x| x * x + 1.0),
         "linear" => Ok(|x| 2.0 * x - 1.0),
         "cubic" => Ok(|x| x * x * x - x),
-        other => Err(format!("cible inconnue : '{other}' (quadratic|linear|cubic)")),
+        other => Err(format!(
+            "cible inconnue : '{other}' (quadratic|linear|cubic)"
+        )),
     }
 }
 
@@ -99,7 +123,11 @@ fn main() {
     while i < args.len() {
         let a = &args[i];
         if a.starts_with("--") {
-            i += if VALUE_FLAGS.contains(&a.as_str()) { 2 } else { 1 };
+            i += if VALUE_FLAGS.contains(&a.as_str()) {
+                2
+            } else {
+                1
+            };
         } else {
             domain = Some(a.clone());
             break;
@@ -162,7 +190,9 @@ fn main() {
     println!("domaine = {domain}  |  modèle = {model}  |  endpoint = {host}:{port}");
     println!(
         "exploration : température = {}",
-        temperature.map(|t| format!("{t}")).unwrap_or_else(|| "défaut modèle".to_string())
+        temperature
+            .map(|t| format!("{t}"))
+            .unwrap_or_else(|| "défaut modèle".to_string())
     );
     println!(
         "garde-fous : iters≤{}  k={}  patience={}  budget={} appels  cible={}  min_delta={}",
@@ -170,7 +200,10 @@ fn main() {
         guard.k,
         guard.patience,
         guard.max_llm_calls,
-        guard.target.map(|t| format!("{t}")).unwrap_or_else(|| "—".to_string()),
+        guard
+            .target
+            .map(|t| format!("{t}"))
+            .unwrap_or_else(|| "—".to_string()),
         guard.min_delta,
     );
     println!("{}", "─".repeat(72));
@@ -223,7 +256,10 @@ fn main() {
     println!("{}", "─".repeat(72));
     println!("arrêt          : {:?}", report.stop);
     println!("itérations     : {}", report.iters);
-    println!("appels LLM     : {} / {}", report.llm_calls, guard.max_llm_calls);
+    println!(
+        "appels LLM     : {} / {}",
+        report.llm_calls, guard.max_llm_calls
+    );
     println!(
         "adoptés        : {}  (rejetés : {} pires, {} non-sûrs)",
         report.accepted, report.rejected_worse, report.rejected_unsafe

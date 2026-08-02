@@ -138,15 +138,15 @@ impl Json {
     /// côté serveur MCP).
     pub fn parse(input: &str) -> Result<Json, String> {
         let mut p = Parser {
-            chars: input.chars().collect(),
-            pos: 0,
+            input,
+            chars: input.chars(),
             depth: 0,
         };
         p.skip_ws();
         let v = p.parse_value()?;
         p.skip_ws();
-        if p.pos != p.chars.len() {
-            return Err(format!("caractères superflus à la position {}", p.pos));
+        if p.pos() != p.input.len() {
+            return Err(format!("caractères superflus à la position {}", p.pos()));
         }
         Ok(v)
     }
@@ -173,15 +173,19 @@ fn write_escaped(s: &str, out: &mut String) {
     out.push('"');
 }
 
-struct Parser {
-    chars: Vec<char>,
-    pos: usize,
+struct Parser<'a> {
+    input: &'a str,
+    chars: std::str::Chars<'a>,
     depth: usize,
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
+    fn pos(&self) -> usize {
+        self.input.len() - self.chars.as_str().len()
+    }
+
     fn peek(&self) -> Option<char> {
-        self.chars.get(self.pos).copied()
+        self.chars.clone().next()
     }
 
     fn enter(&mut self) -> Result<(), String> {
@@ -193,11 +197,7 @@ impl Parser {
     }
 
     fn next(&mut self) -> Option<char> {
-        let c = self.peek();
-        if c.is_some() {
-            self.pos += 1;
-        }
-        c
+        self.chars.next()
     }
 
     /// Lit exactement 4 chiffres hexadécimaux (corps d'un échappement `\u`).
@@ -213,7 +213,7 @@ impl Parser {
     fn skip_ws(&mut self) {
         while let Some(c) = self.peek() {
             if c.is_whitespace() {
-                self.pos += 1;
+                self.next();
             } else {
                 break;
             }
@@ -229,7 +229,10 @@ impl Parser {
             Some('t') | Some('f') => self.parse_bool(),
             Some('n') => self.parse_null(),
             Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number(),
-            Some(c) => Err(format!("token inattendu '{c}' à la position {}", self.pos)),
+            Some(c) => Err(format!(
+                "token inattendu '{c}' à la position {}",
+                self.pos()
+            )),
             None => Err("fin d'entrée inattendue".into()),
         }
     }
@@ -249,7 +252,7 @@ impl Parser {
             let key = self.parse_string()?;
             self.skip_ws();
             if self.next() != Some(':') {
-                return Err(format!("':' attendu à la position {}", self.pos));
+                return Err(format!("':' attendu à la position {}", self.pos()));
             }
             let val = self.parse_value()?;
             map.insert(key, val);
@@ -257,7 +260,7 @@ impl Parser {
             match self.next() {
                 Some(',') => continue,
                 Some('}') => break,
-                _ => return Err(format!("',' ou '}}' attendu à la position {}", self.pos)),
+                _ => return Err(format!("',' ou '}}' attendu à la position {}", self.pos())),
             }
         }
         self.depth -= 1;
@@ -281,7 +284,7 @@ impl Parser {
             match self.next() {
                 Some(',') => continue,
                 Some(']') => break,
-                _ => return Err(format!("',' ou ']' attendu à la position {}", self.pos)),
+                _ => return Err(format!("',' ou ']' attendu à la position {}", self.pos())),
             }
         }
         self.depth -= 1;
@@ -290,7 +293,7 @@ impl Parser {
 
     fn parse_string(&mut self) -> Result<String, String> {
         if self.next() != Some('"') {
-            return Err(format!("'\"' attendu à la position {}", self.pos));
+            return Err(format!("'\"' attendu à la position {}", self.pos()));
         }
         let mut s = String::new();
         while let Some(c) = self.next() {
@@ -320,8 +323,7 @@ impl Parser {
                                 if !(0xDC00..=0xDFFF).contains(&low) {
                                     return Err("surrogate bas invalide".into());
                                 }
-                                let combined =
-                                    0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                                let combined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                                 char::from_u32(combined).unwrap_or('\u{FFFD}')
                             } else if (0xDC00..=0xDFFF).contains(&code) {
                                 // surrogate bas isolé : séquence invalide.
@@ -346,7 +348,10 @@ impl Parser {
         } else if self.match_literal("false") {
             Ok(Json::Bool(false))
         } else {
-            Err(format!("littéral booléen invalide à la position {}", self.pos))
+            Err(format!(
+                "littéral booléen invalide à la position {}",
+                self.pos()
+            ))
         }
     }
 
@@ -354,14 +359,17 @@ impl Parser {
         if self.match_literal("null") {
             Ok(Json::Null)
         } else {
-            Err(format!("littéral null invalide à la position {}", self.pos))
+            Err(format!(
+                "littéral null invalide à la position {}",
+                self.pos()
+            ))
         }
     }
 
     fn match_literal(&mut self, lit: &str) -> bool {
-        let end = self.pos + lit.len();
-        if end <= self.chars.len() && self.chars[self.pos..end].iter().collect::<String>() == lit {
-            self.pos = end;
+        if self.chars.as_str().starts_with(lit) {
+            let remaining = &self.chars.as_str()[lit.len()..];
+            self.chars = remaining.chars();
             true
         } else {
             false
@@ -369,7 +377,7 @@ impl Parser {
     }
 
     fn parse_number(&mut self) -> Result<Json, String> {
-        let start = self.pos;
+        let start = self.pos();
         if self.peek() == Some('-') {
             self.next();
         }
@@ -380,7 +388,8 @@ impl Parser {
                 break;
             }
         }
-        let slice: &str = &self.chars[start..self.pos].iter().collect::<String>();
+        let end = self.pos();
+        let slice: &str = &self.input[start..end];
         slice
             .parse::<f64>()
             .map(Json::Num)
@@ -398,10 +407,7 @@ mod tests {
         let v = Json::parse(src).unwrap();
         assert_eq!(v.get("a").unwrap().as_f64(), Some(1.0));
         assert_eq!(v.get("b").unwrap().as_array().unwrap().len(), 3);
-        assert_eq!(
-            v.get("c").unwrap().get("d").unwrap().as_f64(),
-            Some(-2.5)
-        );
+        assert_eq!(v.get("c").unwrap().get("d").unwrap().as_f64(), Some(-2.5));
         // re-parse de la sérialisation
         let again = Json::parse(&v.to_string()).unwrap();
         assert_eq!(v, again);
@@ -454,8 +460,8 @@ mod tests {
         // un alphabet riche en caractères structurellement signifiants.
         use crate::rng::Rng;
         const ALPHABET: &[char] = &[
-            '{', '}', '[', ']', ':', ',', '"', '\\', '/', 'u', 'n', 't', 'f', 'e', 'E',
-            '+', '-', '.', '0', '1', '9', ' ', '\n', '\t', 'a', 'z', 'é', '😀', '\u{0}',
+            '{', '}', '[', ']', ':', ',', '"', '\\', '/', 'u', 'n', 't', 'f', 'e', 'E', '+', '-',
+            '.', '0', '1', '9', ' ', '\n', '\t', 'a', 'z', 'é', '😀', '\u{0}',
         ];
         let mut rng = Rng::new(0x5EED);
         for _ in 0..10_000 {
@@ -469,7 +475,14 @@ mod tests {
         // quelques motifs adversariaux ciblés
         let deep = "[".repeat(200);
         for pat in [
-            "\"\\u", "\"\\uD83D", deep.as_str(), "{\"a\":", "\"\\", "1e", "-", "1.e9",
+            "\"\\u",
+            "\"\\uD83D",
+            deep.as_str(),
+            "{\"a\":",
+            "\"\\",
+            "1e",
+            "-",
+            "1.e9",
             "\"\\uZZZZ\"",
         ] {
             let _ = Json::parse(pat);

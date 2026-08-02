@@ -131,10 +131,7 @@ substrat, méta-optimisation récursive sous garde-fous de stabilité)."
                     .into(),
             ),
         )
-        .set(
-            "transport",
-            Json::Str("stdio".into()),
-        );
+        .set("transport", Json::Str("stdio".into()));
     entry
 }
 
@@ -160,10 +157,7 @@ fn register_into(path: &Path, name: &str, bin: &str) -> Result<bool, String> {
     };
 
     // assure root.mcpServers (objet)
-    let existing_servers = root
-        .get("mcpServers")
-        .cloned()
-        .unwrap_or_else(Json::obj);
+    let existing_servers = root.get("mcpServers").cloned().unwrap_or_else(Json::obj);
     let mut servers_map: BTreeMap<String, Json> = match existing_servers {
         Json::Obj(m) => m,
         _ => BTreeMap::new(),
@@ -217,7 +211,11 @@ fn pretty_print(v: &Json, indent: usize) -> String {
                 if i > 0 {
                     s.push_str(",\n");
                 }
-                s.push_str(&format!("{pad1}{}: {}", Json::Str(k.clone()).to_string(), pretty_print(val, indent + 1)));
+                s.push_str(&format!(
+                    "{pad1}{}: {}",
+                    Json::Str(k.clone()).to_string(),
+                    pretty_print(val, indent + 1)
+                ));
             }
             s.push_str(&format!("\n{pad}}}"));
             s
@@ -257,7 +255,10 @@ fn main() {
         return;
     }
 
-    println!("rsi-connect : enregistrement du serveur MCP « {} »", opt.server_name);
+    println!(
+        "rsi-connect : enregistrement du serveur MCP « {} »",
+        opt.server_name
+    );
     println!("  binaire MCP : {bin}");
     if bin == "rsi-mcp" {
         eprintln!(
@@ -267,14 +268,29 @@ fn main() {
     }
 
     let mut targets: Vec<(String, PathBuf)> = vec![
-        ("openclaw".into(), target_path("OPENCLAW_CONFIG", &[".openclaw", "mcp.json"])),
+        (
+            "openclaw".into(),
+            target_path("OPENCLAW_CONFIG", &[".openclaw", "mcp.json"]),
+        ),
         (
             "hermes-agent".into(),
-            target_path("HERMES_AGENT_CONFIG", &[".config", "hermes-agent", "mcp.json"]),
+            target_path(
+                "HERMES_AGENT_CONFIG",
+                &[".config", "hermes-agent", "mcp.json"],
+            ),
         ),
-        ("soullink".into(), target_path("SOULLINK_CONFIG", &[".soullink", "mcp.json"])),
-        ("SoulSystem".into(), target_path("SOULSYSTEM_CONFIG", &[".soulsystem", "mcp.json"])),
-        ("mcp (générique)".into(), target_path("MCP_CONFIG", &[".config", "mcp", "servers.json"])),
+        (
+            "soullink".into(),
+            target_path("SOULLINK_CONFIG", &[".soullink", "mcp.json"]),
+        ),
+        (
+            "SoulSystem".into(),
+            target_path("SOULSYSTEM_CONFIG", &[".soulsystem", "mcp.json"]),
+        ),
+        (
+            "mcp (générique)".into(),
+            target_path("MCP_CONFIG", &[".config", "mcp", "servers.json"]),
+        ),
     ];
     // Cibles arbitraires : RSI_CONNECT_TARGETS="nom=chemin,nom2=chemin2" —
     // n'importe quel runtime à config `mcpServers` s'ajoute sans recompiler.
@@ -284,7 +300,9 @@ fn main() {
                 Some((name, path)) if !name.is_empty() && !path.is_empty() => {
                     targets.push((name.trim().to_string(), PathBuf::from(path.trim())));
                 }
-                _ => eprintln!("  ⚠ RSI_CONNECT_TARGETS : entrée ignorée « {pair} » (attendu nom=chemin)"),
+                _ => eprintln!(
+                    "  ⚠ RSI_CONNECT_TARGETS : entrée ignorée « {pair} » (attendu nom=chemin)"
+                ),
             }
         }
     }

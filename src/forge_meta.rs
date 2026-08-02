@@ -75,16 +75,22 @@ impl RsiDomain {
         if let Some(v) = self.si_cache.lock().unwrap().get(&id) {
             return *v;
         }
-        let si = MetaStrategy::decode(&cand.theta, self.n_software)
-            .projected_si(&self.state, &self.substrate, &self.surface);
+        let si = MetaStrategy::decode(&cand.theta, self.n_software).projected_si(
+            &self.state,
+            &self.substrate,
+            &self.surface,
+        );
         self.si_cache.lock().unwrap().insert(id, si);
         si
     }
 
     /// SI_global d'un θ brut (non mémoïsé — pour le centre/baseline).
     fn si_of(&self, theta: &[f64]) -> f64 {
-        MetaStrategy::decode(theta, self.n_software)
-            .projected_si(&self.state, &self.substrate, &self.surface)
+        MetaStrategy::decode(theta, self.n_software).projected_si(
+            &self.state,
+            &self.substrate,
+            &self.surface,
+        )
     }
 
     fn perturb(&self, rng: &mut StdRng, base: &[f64]) -> Vec<f64> {
@@ -118,7 +124,9 @@ impl Domain for RsiDomain {
             .first()
             .map(|p| p.theta.as_slice())
             .unwrap_or(&self.center);
-        Ok(StrategyCand { theta: self.perturb(rng, base) })
+        Ok(StrategyCand {
+            theta: self.perturb(rng, base),
+        })
     }
 
     fn verify(&self, cand: &StrategyCand, _trial: &Trial) -> ForgeResult<bool> {
@@ -229,7 +237,12 @@ impl MetaSearch for ForgeMetaSearch {
             Ok(report) => match report.best {
                 Some(ind) => {
                     // objectives[0] = −SI_global
-                    let si = ind.score.objectives.first().map(|o| -o).unwrap_or(baseline_si);
+                    let si = ind
+                        .score
+                        .objectives
+                        .first()
+                        .map(|o| -o)
+                        .unwrap_or(baseline_si);
                     if si >= baseline_si {
                         (MetaStrategy::decode(&ind.cand.theta, n_software), si)
                     } else {

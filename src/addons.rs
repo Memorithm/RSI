@@ -96,7 +96,10 @@ impl PapersAddon {
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok();
-        ok.then_some(PapersAddon { bin, timeout: Duration::from_secs(300) })
+        ok.then_some(PapersAddon {
+            bin,
+            timeout: Duration::from_secs(300),
+        })
     }
 
     /// Délai max par invocation (défaut 300 s — un PDF/arXiv peut être long).
@@ -118,7 +121,8 @@ impl PapersAddon {
         out_dir: &Path,
         llm_model: Option<&str>,
     ) -> Result<PaperAnalysis, String> {
-        std::fs::create_dir_all(out_dir).map_err(|e| format!("création {}: {e}", out_dir.display()))?;
+        std::fs::create_dir_all(out_dir)
+            .map_err(|e| format!("création {}: {e}", out_dir.display()))?;
         let mut args: Vec<String> = vec![
             "analyze".into(),
             "-s".into(),
@@ -149,7 +153,12 @@ impl PapersAddon {
             k.max(1).to_string(),
         ];
         let out = run_bounded(&self.bin, &args, self.timeout)?;
-        Ok(out.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect())
     }
 
     /// Convertit une analyse en **objectifs DGM directifs** (déterministe).
@@ -158,7 +167,11 @@ impl PapersAddon {
     /// comme la campagne Jetson l'a validé : technique nommée + cible + mêmes
     /// résultats + contrainte de format. Le pseudocode (tronqué) donne au
     /// modèle local la substance de la technique.
-    pub fn directive_goals(analysis: &PaperAnalysis, target_hint: &str, max_goals: usize) -> Vec<String> {
+    pub fn directive_goals(
+        analysis: &PaperAnalysis,
+        target_hint: &str,
+        max_goals: usize,
+    ) -> Vec<String> {
         const MAX_PSEUDO: usize = 400;
         analysis
             .algorithms
@@ -193,12 +206,17 @@ fn is_placeholder_algorithm(a: &PaperAlgorithm) -> bool {
     if name.contains("heuristique") || name.contains("heuristic") {
         return true;
     }
-    if a.pseudocode.as_deref().is_some_and(|p| p.contains("ProcessPaper")) {
+    if a.pseudocode
+        .as_deref()
+        .is_some_and(|p| p.contains("ProcessPaper"))
+    {
         return true;
     }
     // « complexité non disponible » seule ne disqualifie que s'il n'y a pas de
     // substance (pseudocode) à côté.
-    a.complexity.as_deref().is_some_and(|c| c.to_uppercase().contains("NON DISPONIBLE"))
+    a.complexity
+        .as_deref()
+        .is_some_and(|c| c.to_uppercase().contains("NON DISPONIBLE"))
         && a.pseudocode.as_deref().is_none_or(|p| p.trim().is_empty())
 }
 
@@ -207,9 +225,10 @@ pub(crate) fn parse_analysis_json(raw: &str) -> Result<PaperAnalysis, String> {
     let j = crate::json::Json::parse(raw).map_err(|e| format!("analysis.json invalide : {e}"))?;
     let strings = |key: &str| -> Vec<String> {
         match j.get(key) {
-            Some(crate::json::Json::Arr(a)) => {
-                a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-            }
+            Some(crate::json::Json::Arr(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
             _ => Vec::new(),
         }
     };
@@ -221,8 +240,14 @@ pub(crate) fn parse_analysis_json(raw: &str) -> Result<PaperAnalysis, String> {
                 let name = v.get("name").and_then(|n| n.as_str())?.to_string();
                 Some(PaperAlgorithm {
                     name,
-                    complexity: v.get("complexity").and_then(|c| c.as_str()).map(str::to_string),
-                    pseudocode: v.get("pseudocode").and_then(|p| p.as_str()).map(str::to_string),
+                    complexity: v
+                        .get("complexity")
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string),
+                    pseudocode: v
+                        .get("pseudocode")
+                        .and_then(|p| p.as_str())
+                        .map(str::to_string),
                 })
             })
             .collect(),
@@ -300,7 +325,10 @@ fn run_bounded(bin: &str, args: &[String], timeout: Duration) -> Result<String, 
                 if status.success() {
                     return Ok(out);
                 }
-                return Err(format!("{bin} {} a rendu {status}", args.first().cloned().unwrap_or_default()));
+                return Err(format!(
+                    "{bin} {} a rendu {status}",
+                    args.first().cloned().unwrap_or_default()
+                ));
             }
             Ok(None) => {
                 if start.elapsed() > timeout {
@@ -358,7 +386,11 @@ mod tests {
         }"#;
         let a = parse_analysis_json(raw).unwrap();
         let goals = PapersAddon::directive_goals(&a, "src/kernels.rs", 3);
-        assert_eq!(goals.len(), 1, "placeholder filtré, pseudo_code retenu : {goals:?}");
+        assert_eq!(
+            goals.len(),
+            1,
+            "placeholder filtré, pseudo_code retenu : {goals:?}"
+        );
         assert!(goals[0].contains("Ansor"));
         assert!(goals[0].contains("derouler et vectoriser"));
         assert!(goals[0].contains("O(n^3)"));
@@ -396,7 +428,10 @@ mod tests {
         assert!(goals[0].ends_with("FIND court obligatoire."));
         assert!(goals[1].contains("Loop Unrolling"));
         // déterminisme
-        assert_eq!(goals, PapersAddon::directive_goals(&a, "kernels::matmul (src/kernels.rs)", 2));
+        assert_eq!(
+            goals,
+            PapersAddon::directive_goals(&a, "kernels::matmul (src/kernels.rs)", 2)
+        );
     }
 
     #[test]

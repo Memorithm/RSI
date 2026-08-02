@@ -25,7 +25,9 @@ pub struct CcosAudit {
 impl CcosAudit {
     /// Crée un journal CCOS pour la session donnée.
     pub fn new(session_id: impl Into<String>) -> Self {
-        CcosAudit { log: EventLog::new(session_id.into()) }
+        CcosAudit {
+            log: EventLog::new(session_id.into()),
+        }
     }
 
     /// Accès en lecture à l'`EventLog` CCOS sous-jacent (replay, export, …).
@@ -65,8 +67,7 @@ mod tests {
 
     #[test]
     fn ccos_audit_traces_and_verifies() {
-        let mut agent =
-            RSIAgent::demo(5).with_audit(Box::new(CcosAudit::new("rsi-session")));
+        let mut agent = RSIAgent::demo(5).with_audit(Box::new(CcosAudit::new("rsi-session")));
         agent.run(15);
         assert_eq!(agent.audit_len(), 15);
         assert!(agent.audit_verify()); // chaîne CCOS intègre

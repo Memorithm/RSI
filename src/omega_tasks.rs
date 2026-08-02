@@ -33,7 +33,12 @@ pub struct NamedTask {
 
 /// Profil brut → normalisé (∑ = 1) pour rester comparable aux tirages Dirichlet.
 const fn raw(name: &'static str, p: [f64; 6], demand: f64, weight: f64) -> NamedTask {
-    NamedTask { name, profile: p, demand, weight }
+    NamedTask {
+        name,
+        profile: p,
+        demand,
+        weight,
+    }
 }
 
 /// Banc de tâches standard : sept contextes typiques d'un agent (style
@@ -44,13 +49,48 @@ const fn raw(name: &'static str, p: [f64; 6], demand: f64, weight: f64) -> Named
 pub fn standard_suite() -> Vec<NamedTask> {
     vec![
         // D    M    R    A    C    V        demand weight
-        raw("analyse_donnees",      [0.30, 0.10, 0.30, 0.05, 0.20, 0.05], 0.70, 1.0),
-        raw("synthese_code",        [0.10, 0.30, 0.35, 0.15, 0.05, 0.05], 0.85, 1.0),
-        raw("raisonnement_long",    [0.10, 0.10, 0.35, 0.05, 0.35, 0.05], 0.95, 0.9),
-        raw("planification",        [0.05, 0.10, 0.35, 0.25, 0.10, 0.15], 0.55, 0.8),
-        raw("perception_ingest",    [0.35, 0.30, 0.10, 0.05, 0.15, 0.05], 0.90, 0.7),
-        raw("usage_outils",         [0.10, 0.10, 0.25, 0.35, 0.05, 0.15], 0.45, 0.6),
-        raw("revue_alignement",     [0.10, 0.05, 0.30, 0.10, 0.05, 0.40], 0.25, 0.5),
+        raw(
+            "analyse_donnees",
+            [0.30, 0.10, 0.30, 0.05, 0.20, 0.05],
+            0.70,
+            1.0,
+        ),
+        raw(
+            "synthese_code",
+            [0.10, 0.30, 0.35, 0.15, 0.05, 0.05],
+            0.85,
+            1.0,
+        ),
+        raw(
+            "raisonnement_long",
+            [0.10, 0.10, 0.35, 0.05, 0.35, 0.05],
+            0.95,
+            0.9,
+        ),
+        raw(
+            "planification",
+            [0.05, 0.10, 0.35, 0.25, 0.10, 0.15],
+            0.55,
+            0.8,
+        ),
+        raw(
+            "perception_ingest",
+            [0.35, 0.30, 0.10, 0.05, 0.15, 0.05],
+            0.90,
+            0.7,
+        ),
+        raw(
+            "usage_outils",
+            [0.10, 0.10, 0.25, 0.35, 0.05, 0.15],
+            0.45,
+            0.6,
+        ),
+        raw(
+            "revue_alignement",
+            [0.10, 0.05, 0.30, 0.10, 0.05, 0.40],
+            0.25,
+            0.5,
+        ),
     ]
 }
 
@@ -112,7 +152,11 @@ pub fn report(
             phi,
             g,
             c_real,
-            limiter: if g < phi { Limiter::Substrate } else { Limiter::Cognition },
+            limiter: if g < phi {
+                Limiter::Substrate
+            } else {
+                Limiter::Cognition
+            },
         })
         .collect()
 }

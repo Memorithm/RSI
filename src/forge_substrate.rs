@@ -263,7 +263,9 @@ impl SubstrateImprover for ForgeSubstrate {
         };
 
         // ancre l'efficience analytique de départ au premier appel
-        let anchor = *self.anchor.get_or_insert_with(|| substrate.software_efficiency());
+        let anchor = *self
+            .anchor
+            .get_or_insert_with(|| substrate.software_efficiency());
 
         if let Ok(report) = Engine::new(domain, config).run() {
             if let (Some(best), Some(baseline)) = (report.best, report.final_baseline) {
@@ -301,7 +303,10 @@ mod tests {
         let (mut c1, mut c2) = (vec![0.0f32; n * n], vec![0.0f32; n * n]);
         matmul_naive(&a, &b, &mut c1, n);
         matmul_tiled(&a, &b, &mut c2, n, 16, 16, 8);
-        assert!(c1.iter().zip(&c2).all(|(x, y)| (x - y).abs() <= 1e-2 * (1.0 + y.abs())));
+        assert!(c1
+            .iter()
+            .zip(&c2)
+            .all(|(x, y)| (x - y).abs() <= 1e-2 * (1.0 + y.abs())));
     }
 
     #[test]

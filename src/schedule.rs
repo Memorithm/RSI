@@ -24,13 +24,19 @@ pub struct LoopSchedule {
 
 impl Default for LoopSchedule {
     fn default() -> Self {
-        LoopSchedule { meta_every: 1, substrate_every: 1 }
+        LoopSchedule {
+            meta_every: 1,
+            substrate_every: 1,
+        }
     }
 }
 
 impl LoopSchedule {
     pub fn new(meta_every: usize, substrate_every: usize) -> Self {
-        LoopSchedule { meta_every: meta_every.max(1), substrate_every: substrate_every.max(1) }
+        LoopSchedule {
+            meta_every: meta_every.max(1),
+            substrate_every: substrate_every.max(1),
+        }
     }
 
     /// Applique les cadences à l'agent.
@@ -57,7 +63,10 @@ pub struct MetaMeta {
 
 impl Default for MetaMeta {
     fn default() -> Self {
-        MetaMeta { min_meta: 1, max_meta: 16 }
+        MetaMeta {
+            min_meta: 1,
+            max_meta: 16,
+        }
     }
 }
 
@@ -72,7 +81,10 @@ impl MetaMeta {
             Trend::Improving => (schedule.meta_every / 2).max(self.min_meta),
             Trend::Diverging => self.min_meta,
         };
-        LoopSchedule { meta_every, substrate_every: schedule.substrate_every }
+        LoopSchedule {
+            meta_every,
+            substrate_every: schedule.substrate_every,
+        }
     }
 }
 

@@ -51,7 +51,12 @@ fn knowledge_docs() -> Vec<String> {
         .collect()
 }
 
-fn integrated(seed: u64, s: &CognitiveState, sub: &Substrate, surf: &IntelligenceSurface) -> RSIAgent {
+fn integrated(
+    seed: u64,
+    s: &CognitiveState,
+    sub: &Substrate,
+    surf: &IntelligenceSurface,
+) -> RSIAgent {
     let dim = s.size();
     let mut agent = RSIAgent::new(
         s.clone(),
@@ -63,9 +68,14 @@ fn integrated(seed: u64, s: &CognitiveState, sub: &Substrate, surf: &Intelligenc
     .with_substrate_improver(Box::new(ForgeSubstrate::new(96, 2, 6, seed ^ 0x5B)))
     .with_memory(Box::new(rsi::OctaSomaMemory::new(dim, seed)))
     .with_audit(Box::new(CcosAudit::new(format!("rsi-{seed}"))))
-    .with_knowledge(Box::new(rsi::CorpusKnowledge::from_texts(knowledge_docs()).with_scale(12.0)))
+    .with_knowledge(Box::new(
+        rsi::CorpusKnowledge::from_texts(knowledge_docs()).with_scale(12.0),
+    ))
     // seuil de criticité plus strict pour que les réponses actives s'engagent
-    .with_risk_config(RiskConfig { rpn_max: 0.3, ..RiskConfig::default() });
+    .with_risk_config(RiskConfig {
+        rpn_max: 0.3,
+        ..RiskConfig::default()
+    });
     // ε adaptatif au bruit Monte-Carlo (corpus = petit Ω, donc estimateur bruité)
     agent.dynamics_cfg.adaptive_epsilon = true;
     agent
@@ -87,13 +97,23 @@ fn main() {
     }
 }
 
-fn run_single(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, surf: &IntelligenceSurface) {
+fn run_single(
+    steps: usize,
+    seed: u64,
+    s: &CognitiveState,
+    sub: &Substrate,
+    surf: &IntelligenceSurface,
+) {
     let mut agent = integrated(seed, s, sub, surf);
 
     println!("╔════════════════════════════════════════════════════════════════════════════╗");
     println!("║   RSI — AGENT TOUT INTÉGRÉ   (Forge ℳ + Forge P_eff + OctaSoma C + CCOS audit)║");
     println!("╚════════════════════════════════════════════════════════════════════════════╝");
-    println!("seed={seed}  pas={steps}  |Ω|={}  dim(S)={}", agent.surface.tasks.len(), s.size());
+    println!(
+        "seed={seed}  pas={steps}  |Ω|={}  dim(S)={}",
+        agent.surface.tasks.len(),
+        s.size()
+    );
     println!();
     println!(
         "{:>3} │ {:>7} │ {:>7} │ {:>6} │ {:>6} │ {:>6} │ {:>10} │ {:>9} │ {:>4}",
@@ -112,8 +132,15 @@ fn run_single(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, surf
         }
         println!(
             "{:>3} │ {:>7.4} │ {:>7.4} │ {:>6.4} │ {:>6.4} │ {:>6.4} │ {:>10} │ {:>9} │ {:>3.0}%",
-            r.t, r.si_global, r.si_safe, r.p_eff, r.risk_global, r.max_rpn,
-            short(r.most_critical), r.mitigation, r.frac_limited_by_substrate * 100.0,
+            r.t,
+            r.si_global,
+            r.si_safe,
+            r.p_eff,
+            r.risk_global,
+            r.max_rpn,
+            short(r.most_critical),
+            r.mitigation,
+            r.frac_limited_by_substrate * 100.0,
         );
     }
     let end = reports.last().unwrap();
@@ -123,8 +150,15 @@ fn run_single(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, surf
         end.si_global, (end.si_global - start_si) / start_si * 100.0, end.si_safe, end.p_eff,
     );
 
-    println!("\n▸ Audit CCOS : {} événements — intégrité {}",
-        agent.audit_len(), if agent.audit_verify() { "✓ valide" } else { "✗ ALTÉRÉE" });
+    println!(
+        "\n▸ Audit CCOS : {} événements — intégrité {}",
+        agent.audit_len(),
+        if agent.audit_verify() {
+            "✓ valide"
+        } else {
+            "✗ ALTÉRÉE"
+        }
+    );
     if let Some(h) = agent.audit_head() {
         println!("  hash de tête : {}…", &h[..h.len().min(32)]);
     }
@@ -132,18 +166,30 @@ fn run_single(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, surf
     println!("\n▸ Mémoire OctaSoma : rappel du contexte le plus proche de l'état final");
     if let Some(p) = agent.recall_similar(1).first() {
         if let Some((si, strat)) = rsi::meta::decode_strategy_payload(p) {
-            println!("  SI={si:.4}, gain ℳ={:.3}, focus={:?}", strat.gain,
-                strat.focus.map(|x| (x * 100.0).round() / 100.0));
+            println!(
+                "  SI={si:.4}, gain ℳ={:.3}, focus={:?}",
+                strat.gain,
+                strat.focus.map(|x| (x * 100.0).round() / 100.0)
+            );
         }
     }
 
     export(&reports);
 }
 
-fn run_compare(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, surf: &IntelligenceSurface) {
+fn run_compare(
+    steps: usize,
+    seed: u64,
+    s: &CognitiveState,
+    sub: &Substrate,
+    surf: &IntelligenceSurface,
+) {
     // agent « nu » : cœur seul, méta aléatoire, aucune intégration
     let mut naked = RSIAgent::new(
-        s.clone(), sub.clone(), surf.clone(), StabilityConfig::default(),
+        s.clone(),
+        sub.clone(),
+        surf.clone(),
+        StabilityConfig::default(),
         Box::new(MetaOptimizer::new(48, 0.12, seed ^ 1)),
     );
     let mut full = integrated(seed, s, sub, surf);
@@ -158,10 +204,7 @@ fn run_compare(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, sur
     let rn = naked.run(steps);
     let rf = full.run(steps);
 
-    println!(
-        "{:>3} │ {:^21} │ {:^29}",
-        "", "NU (cœur)", "TOUT INTÉGRÉ"
-    );
+    println!("{:>3} │ {:^21} │ {:^29}", "", "NU (cœur)", "TOUT INTÉGRÉ");
     println!(
         "{:>3} │ {:>6} {:>6} {:>6} │ {:>6} {:>6} {:>6} {:>9}",
         "t", "SI", "P_eff", "risk", "SI", "P_eff", "risk", "réponse"
@@ -173,17 +216,35 @@ fn run_compare(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, sur
         let b = &rf[i];
         println!(
             "{:>3} │ {:>6.4} {:>6.4} {:>6.4} │ {:>6.4} {:>6.4} {:>6.4} {:>9}",
-            i + 1, a.si_global, a.p_eff, a.risk_global,
-            b.si_global, b.p_eff, b.risk_global, b.mitigation,
+            i + 1,
+            a.si_global,
+            a.p_eff,
+            a.risk_global,
+            b.si_global,
+            b.p_eff,
+            b.risk_global,
+            b.mitigation,
         );
     }
     println!("{}", "─".repeat(78));
     let en = rn.last().unwrap();
     let ef = rf.last().unwrap();
-    println!("Final NU         : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
-        en.si_global, (en.si_global - n0) / n0 * 100.0, en.p_eff, en.risk_global, en.si_safe);
-    println!("Final INTÉGRÉ     : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
-        ef.si_global, (ef.si_global - f0) / f0 * 100.0, ef.p_eff, ef.risk_global, ef.si_safe);
+    println!(
+        "Final NU         : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
+        en.si_global,
+        (en.si_global - n0) / n0 * 100.0,
+        en.p_eff,
+        en.risk_global,
+        en.si_safe
+    );
+    println!(
+        "Final INTÉGRÉ     : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
+        ef.si_global,
+        (ef.si_global - f0) / f0 * 100.0,
+        ef.p_eff,
+        ef.risk_global,
+        ef.si_safe
+    );
     println!("\nApport des intégrations : P_eff {:.4} → {:.4} (substrat réel mesuré), audit CCOS {} événements,",
         en.p_eff, ef.p_eff, full.audit_len());
     println!("réponses de sûreté actives (réalignement V / plancher anti-wireheading) absentes du run nu.");
@@ -194,11 +255,20 @@ fn run_compare(steps: usize, seed: u64, s: &CognitiveState, sub: &Substrate, sur
 fn export(reports: &[StepReport]) {
     println!("\n▸ Export de la trajectoire");
     for (label, res) in [
-        ("CSV ", report::write_csv(reports, "rsi_full_trajectory.csv")),
-        ("JSON", report::write_json(reports, "rsi_full_trajectory.json")),
+        (
+            "CSV ",
+            report::write_csv(reports, "rsi_full_trajectory.csv"),
+        ),
+        (
+            "JSON",
+            report::write_json(reports, "rsi_full_trajectory.json"),
+        ),
     ] {
         match res {
-            Ok(()) => println!("  ✓ {label} : rsi_full_trajectory.{}", label.trim().to_lowercase()),
+            Ok(()) => println!(
+                "  ✓ {label} : rsi_full_trajectory.{}",
+                label.trim().to_lowercase()
+            ),
             Err(e) => println!("  ✗ {label} : {e}"),
         }
     }

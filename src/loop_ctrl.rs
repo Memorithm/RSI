@@ -184,7 +184,12 @@ impl RSIAgent {
         }
 
         observer.on_stop(reason, reports.len());
-        LoopOutcome { steps: reports.len(), final_slope: det.slope(), reports, reason }
+        LoopOutcome {
+            steps: reports.len(),
+            final_slope: det.slope(),
+            reports,
+            reason,
+        }
     }
 }
 
@@ -253,7 +258,11 @@ mod tests {
         }
         let mut agent = RSIAgent::demo(1);
         let mut obs = Veto { seen: 0 };
-        let cfg = LoopConfig { max_steps: 1000, plateau_window: 9999, ..LoopConfig::default() };
+        let cfg = LoopConfig {
+            max_steps: 1000,
+            plateau_window: 9999,
+            ..LoopConfig::default()
+        };
         let out = agent.run_until_observed(&cfg, &mut obs);
         assert_eq!(out.reason, StopReason::Vetoed);
         assert_eq!(out.steps, 5);
@@ -264,7 +273,11 @@ mod tests {
     fn meta_meta_adapts_cadence_instead_of_stopping() {
         // Référence : sans méta-méta, l'agent convergent s'arrête au plateau.
         let mut base = RSIAgent::demo(7);
-        let base_cfg = LoopConfig { max_steps: 2000, plateau_window: 15, ..LoopConfig::default() };
+        let base_cfg = LoopConfig {
+            max_steps: 2000,
+            plateau_window: 15,
+            ..LoopConfig::default()
+        };
         assert_eq!(base.run_until(&base_cfg).reason, StopReason::Plateau);
 
         // Avec méta-méta : même scénario, mais on ADAPTE les cadences au lieu de
@@ -279,7 +292,11 @@ mod tests {
             ..LoopConfig::default()
         };
         let out = agent.run_until(&cfg);
-        assert_ne!(out.reason, StopReason::Plateau, "méta-méta ne doit pas s'arrêter au plateau");
+        assert_ne!(
+            out.reason,
+            StopReason::Plateau,
+            "méta-méta ne doit pas s'arrêter au plateau"
+        );
         assert!(
             agent.meta_interval > 1,
             "la cadence méta doit être ralentie sur plateau (interval={})",

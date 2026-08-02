@@ -43,6 +43,9 @@ fn main() {
     let median = times[times.len() / 2].max(1e-12);
 
     let score = iters as f64 / median; // réductions/seconde
-    println!("kernels::sum: n=2^20, mediane {:.2} ms / {iters} appels", median * 1e3);
+    println!(
+        "kernels::sum: n=2^20, mediane {:.2} ms / {iters} appels",
+        median * 1e3
+    );
     println!("RSI_BENCH_SCORE={score}");
 }

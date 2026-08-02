@@ -41,8 +41,8 @@ pub struct RiskSignals {
     pub epsilon: f64,
     pub p_eff: f64,
     pub frac_limited_by_substrate: f64,
-    pub autonomy: f64,   // moyenne de A
-    pub alignment: f64,  // moyenne de V
+    pub autonomy: f64,  // moyenne de A
+    pub alignment: f64, // moyenne de V
     pub backtracks: u32,
     /// écart |mesuré − analytique| de l'efficience logicielle (proxy wireheading).
     pub wireheading: f64,
@@ -162,7 +162,10 @@ impl RiskModel {
                 occurrence: |s| clamp01(s.wireheading),
             },
         ];
-        RiskModel { defs, memory_base: 0.05 }
+        RiskModel {
+            defs,
+            memory_base: 0.05,
+        }
     }
 
     /// Évalue la criticité pour les signaux donnés.
@@ -191,7 +194,12 @@ impl RiskModel {
             });
         }
         let risk_global = sum / self.defs.len() as f64;
-        RiskReport { modes, risk_global, max_rpn, most_critical }
+        RiskReport {
+            modes,
+            risk_global,
+            max_rpn,
+            most_critical,
+        }
     }
 
     /// SI_safe = SI_global − κ · Risk_global.
@@ -216,7 +224,12 @@ pub struct RiskConfig {
 
 impl Default for RiskConfig {
     fn default() -> Self {
-        RiskConfig { kappa: 0.5, rpn_max: 0.4, risk_delta: 0.1, active_response: true }
+        RiskConfig {
+            kappa: 0.5,
+            rpn_max: 0.4,
+            risk_delta: 0.1,
+            active_response: true,
+        }
     }
 }
 
@@ -228,7 +241,11 @@ mod tests {
     fn rpn_in_unit_interval_and_argmax() {
         let model = RiskModel::new();
         // ‖ΔS‖ = λ → instabilité max
-        let s = RiskSignals { delta_norm: 0.5, lambda: 0.5, ..Default::default() };
+        let s = RiskSignals {
+            delta_norm: 0.5,
+            lambda: 0.5,
+            ..Default::default()
+        };
         let r = model.assess(&s);
         assert!(r.modes.iter().all(|m| (0.0..=1.0).contains(&m.rpn)));
         assert!((0.0..=1.0).contains(&r.risk_global));
@@ -241,7 +258,11 @@ mod tests {
     fn value_drift_dominates_when_unaligned() {
         let model = RiskModel::new();
         // forte autonomie, faible alignement
-        let s = RiskSignals { autonomy: 0.9, alignment: 0.1, ..Default::default() };
+        let s = RiskSignals {
+            autonomy: 0.9,
+            alignment: 0.1,
+            ..Default::default()
+        };
         let r = model.assess(&s);
         assert_eq!(r.most_critical, modes::VALUE_DRIFT);
     }
@@ -249,7 +270,11 @@ mod tests {
     #[test]
     fn si_safe_penalizes_risk() {
         let model = RiskModel::new();
-        let s = RiskSignals { autonomy: 0.9, alignment: 0.0, ..Default::default() };
+        let s = RiskSignals {
+            autonomy: 0.9,
+            alignment: 0.0,
+            ..Default::default()
+        };
         let r = model.assess(&s);
         let safe = model.si_safe(0.5, &r, 1.0);
         assert!(safe < 0.5, "SI_safe doit être pénalisé : {safe}");
@@ -258,7 +283,11 @@ mod tests {
     #[test]
     fn substrate_collapse_when_low_peff_and_bound() {
         let model = RiskModel::new();
-        let s = RiskSignals { p_eff: 0.05, frac_limited_by_substrate: 1.0, ..Default::default() };
+        let s = RiskSignals {
+            p_eff: 0.05,
+            frac_limited_by_substrate: 1.0,
+            ..Default::default()
+        };
         let r = model.assess(&s);
         let sub = r
             .modes

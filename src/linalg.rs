@@ -2,7 +2,7 @@
 //! denses, formes quadratiques xᵀMx, et la sigmoïde σ utilisée partout.
 //
 // Boucles indexées intentionnelles (produits matrice/vecteur), lint désactivé.
-#![allow(clippy::needless_range_loop)]
+#![allow(clippy::needless_range_loop, clippy::items_after_test_module)]
 
 /// σ(x) = 1 / (1 + e⁻ˣ), implémentation numériquement stable.
 #[inline]

@@ -12,8 +12,8 @@ use rsi::synthesis::SymbolicSynthesis;
 
 fn main() {
     // Cible à reconstruire : f(x) = x^2 + 1 sur [-2, 2] (21 cas de test).
-    let mut task = SymbolicSynthesis::from_target(|x| x * x + 1.0, -2.0, 2.0, 21, 0)
-        .with_lambda(24);
+    let mut task =
+        SymbolicSynthesis::from_target(|x| x * x + 1.0, -2.0, 2.0, 21, 0).with_lambda(24);
 
     let init = task.seed_candidate();
     let init_fit = task.score(&init);
@@ -50,9 +50,15 @@ fn main() {
     println!("  monotone (non-régression) : {}", report.is_monotone());
     println!("  fitness finale  : {:.4}", report.best());
     println!("\nmeilleur candidat : {}", best.pretty());
-    println!("  fraction de tests réussis : {:.0}%", task.pass_fraction(&best) * 100.0);
+    println!(
+        "  fraction de tests réussis : {:.0}%",
+        task.pass_fraction(&best) * 100.0
+    );
 
-    println!("\nContrat de sûreté : boucle bornée (≤ {} it.), élitiste (aucune", 50);
+    println!(
+        "\nContrat de sûreté : boucle bornée (≤ {} it.), élitiste (aucune",
+        50
+    );
     println!("régression adoptée ⇒ is_monotone), déterministe (graine), candidat");
     println!("évalué dans le sandbox d'AST de RSI — jamais exécuté comme du code.");
 }

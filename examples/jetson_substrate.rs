@@ -39,11 +39,22 @@ fn main() {
                 .gpu_mem_used_frac
                 .map(|m| format!(", VRAM {:.0}% utilisée", 100.0 * m))
                 .unwrap_or_else(|| ", VRAM n/d (mémoire unifiée)".to_string());
-            println!("  GPU   : {:.0}% calcul{} ({})", 100.0 * g, vram, snap.gpu_source);
+            println!(
+                "  GPU   : {:.0}% calcul{} ({})",
+                100.0 * g,
+                vram,
+                snap.gpu_source
+            );
         }
-        None => println!("  GPU   : absent/non lisible ({}) → H[2] neutre", snap.gpu_source),
+        None => println!(
+            "  GPU   : absent/non lisible ({}) → H[2] neutre",
+            snap.gpu_source
+        ),
     }
-    println!("  vecteur matériel H (capacité dispo) = {:?}", snap.hardware_vector());
+    println!(
+        "  vecteur matériel H (capacité dispo) = {:?}",
+        snap.hardware_vector()
+    );
 
     // 2. Substrat ancré matériel, puis efficience logicielle mesurée (SIMD).
     let mut sub = measured_hardware_substrate(&snap, 6, &mut rng);
@@ -62,7 +73,10 @@ fn main() {
     let suite = standard_suite();
     let state = CognitiveState::random(Dims::uniform(6), &mut rng, 0.55);
     println!();
-    println!("  {:<20} {:>8} {:>8} {:>8}   goulot", "tâche", "Φ_x", "g_x", "C_réel");
+    println!(
+        "  {:<20} {:>8} {:>8} {:>8}   goulot",
+        "tâche", "Φ_x", "g_x", "C_réel"
+    );
     println!("  {}", "─".repeat(62));
     for tr in report(&suite, &state, &sub) {
         let tag = match tr.limiter {

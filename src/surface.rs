@@ -74,7 +74,10 @@ pub struct SigmoidCapability {
 
 impl Default for SigmoidCapability {
     fn default() -> Self {
-        SigmoidCapability { slope: 4.0, bias: 0.5 }
+        SigmoidCapability {
+            slope: 4.0,
+            bias: 0.5,
+        }
     }
 }
 
@@ -159,7 +162,11 @@ impl IntelligenceSurface {
         }
 
         // normalise la demande dans [0,1]
-        let max_d = raw_demand.iter().cloned().fold(f64::MIN, f64::max).max(1e-9);
+        let max_d = raw_demand
+            .iter()
+            .cloned()
+            .fold(f64::MIN, f64::max)
+            .max(1e-9);
         let demand: Vec<f64> = raw_demand.iter().map(|r| r / max_d).collect();
 
         // normalise μ
@@ -168,7 +175,13 @@ impl IntelligenceSurface {
             *w /= sum_w;
         }
 
-        IntelligenceSurface { tasks, demand, weights, capability, ceiling }
+        IntelligenceSurface {
+            tasks,
+            demand,
+            weights,
+            capability,
+            ceiling,
+        }
     }
 
     /// Construit une surface à partir de tâches **explicites** (Ω *curé*, pas
@@ -192,7 +205,13 @@ impl IntelligenceSurface {
         let sum_w: f64 = weights.iter().sum::<f64>().max(1e-12);
         let weights: Vec<f64> = weights.iter().map(|w| w / sum_w).collect();
 
-        IntelligenceSurface { tasks, demand, weights, capability, ceiling }
+        IntelligenceSurface {
+            tasks,
+            demand,
+            weights,
+            capability,
+            ceiling,
+        }
     }
 
     /// Décomposition **par tâche** : `(Φ_x, g_x, C_réel = min(Φ,g))`.
@@ -225,7 +244,9 @@ impl IntelligenceSurface {
             .iter()
             .zip(&self.demand)
             .map(|(task, &dem)| {
-                self.capability.phi(task, &caps).min(self.ceiling.g(p_eff, dem))
+                self.capability
+                    .phi(task, &caps)
+                    .min(self.ceiling.g(p_eff, dem))
             })
             .collect()
     }

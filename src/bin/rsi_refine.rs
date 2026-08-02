@@ -21,7 +21,9 @@ use rsi::json::Json;
 const DEFAULT_STATE: &str = ".rsi-refine.json";
 const SESSION_ID: &str = "cli";
 /// Drapeaux qui consomment la valeur suivante (pour isoler les positionnels).
-const VALUE_FLAGS: &[&str] = &["--state", "--domain", "--target", "--n", "--lo", "--hi", "--seed"];
+const VALUE_FLAGS: &[&str] = &[
+    "--state", "--domain", "--target", "--n", "--lo", "--hi", "--seed",
+];
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -70,7 +72,12 @@ fn cmd_new(args: &[String], state_path: &str) {
     if let Some(t) = flag_value(args, "--target") {
         params.set("target", Json::Str(t));
     }
-    for (flag, key) in [("--n", "n"), ("--lo", "lo"), ("--hi", "hi"), ("--seed", "seed")] {
+    for (flag, key) in [
+        ("--n", "n"),
+        ("--lo", "lo"),
+        ("--hi", "hi"),
+        ("--seed", "seed"),
+    ] {
         if let Some(v) = flag_value(args, flag).and_then(|s| s.parse::<f64>().ok()) {
             params.set(key, Json::Num(v));
         }
@@ -112,11 +119,17 @@ fn cmd_propose(args: &[String], state_path: &str) {
     }
     let mut api = load_state(state_path);
     let mut p = id_params();
-    p.set("proposals", Json::Arr(cands.into_iter().map(Json::Str).collect()));
+    p.set(
+        "proposals",
+        Json::Arr(cands.into_iter().map(Json::Str).collect()),
+    );
     let res = unwrap_or_die(api.handle("propose", &p));
     save_state(&mut api, state_path);
 
-    let adopted = res.get("adopted").and_then(|v| v.as_bool()).unwrap_or(false);
+    let adopted = res
+        .get("adopted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if let Some(items) = res.get("results").and_then(|v| v.as_array()) {
         for it in items {
             let status = it.get("status").and_then(|v| v.as_str()).unwrap_or("?");
@@ -171,7 +184,9 @@ fn id_params() -> Json {
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1).cloned())
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1).cloned())
 }
 
 /// Arguments positionnels (hors sous-commande, drapeaux et leurs valeurs).
@@ -196,8 +211,14 @@ fn positionals(args: &[String]) -> Vec<String> {
 
 fn print_incumbent(inc: &Json) {
     let pretty = inc.get("pretty").and_then(|v| v.as_str()).unwrap_or("?");
-    let score = inc.get("score").and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
-    let heldout = inc.get("heldout").and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+    let score = inc
+        .get("score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
+    let heldout = inc
+        .get("heldout")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(f64::NAN);
     let domain = inc.get("domain").and_then(|v| v.as_str()).unwrap_or("?");
     println!("incumbent [{domain}] : {pretty}");
     println!("  score(train)={score:.3}  score(held-out)={heldout:.3}");
@@ -220,7 +241,14 @@ mod tests {
 
     #[test]
     fn flag_value_reads_value_after_flag() {
-        let a = argv(&["rsi-refine", "new", "--domain", "prompt", "--state", "s.json"]);
+        let a = argv(&[
+            "rsi-refine",
+            "new",
+            "--domain",
+            "prompt",
+            "--state",
+            "s.json",
+        ]);
         assert_eq!(flag_value(&a, "--domain"), Some("prompt".into()));
         assert_eq!(flag_value(&a, "--state"), Some("s.json".into()));
         assert_eq!(flag_value(&a, "--target"), None);
@@ -230,8 +258,18 @@ mod tests {
     fn positionals_skip_flags_and_their_values() {
         // sous-commande + 2 drapeaux à valeur + 2 candidats positionnels
         let a = argv(&[
-            "rsi-refine", "propose", "--state", "s.json", "x*x + 1", "--domain", "synthesis", "x + 2",
+            "rsi-refine",
+            "propose",
+            "--state",
+            "s.json",
+            "x*x + 1",
+            "--domain",
+            "synthesis",
+            "x + 2",
         ]);
-        assert_eq!(positionals(&a), vec!["x*x + 1".to_string(), "x + 2".to_string()]);
+        assert_eq!(
+            positionals(&a),
+            vec!["x*x + 1".to_string(), "x + 2".to_string()]
+        );
     }
 }

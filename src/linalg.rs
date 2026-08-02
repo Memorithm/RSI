@@ -173,4 +173,105 @@ mod tests {
         let x = [1.0, 2.0, 2.0];
         assert!((m.quadratic(&x) - 9.0).abs() < 1e-12);
     }
+
+    #[test]
+    fn test_neon_matmul_correctness() {
+        let n = 8;
+        let a = vec![1.0f32; n * n];
+        let b = vec![2.0f32; n * n];
+        let mut c = vec![0.0f32; n * n];
+        unsafe {
+            neon_matmul(&a, &b, &mut c, n);
+        }
+        // Pour n=8, chaque cellule de C doit valoir 8 * 1.0 * 2.0 = 16.0
+        for &val in &c {
+            assert!((val - 16.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_neon_matmul_non_multiple_of_4() {
+        let n = 7; // Non multiple de 4, pour valider la boucle de reste
+        let a = vec![1.5f32; n * n];
+        let b = vec![3.0f32; n * n];
+        let mut c = vec![0.0f32; n * n];
+        unsafe {
+            neon_matmul(&a, &b, &mut c, n);
+        }
+        // Pour n=7, chaque cellule de C doit valoir 7 * 1.5 * 3.0 = 31.5
+        for &val in &c {
+            assert!((val - 31.5).abs() < 1e-5);
+        }
+    }
+}
+
+// ===================== OPTIMISATION SCIRUST (ARM Neon) =================== //
+
+/// Multiplication matricielle de poids cognitifs optimisée par les instructions intrinsèques ARM Neon.
+/// Calcule C = A·B (row-major, matrices carrées N×N).
+///
+/// # Safety
+/// - Les tranches `a`, `b` et `c` doivent posséder au moins `n * n` éléments de type `f32`.
+/// - `c` ne doit pas chevaucher `a` ni `b` en mémoire.
+/// - Si compilé pour `aarch64`, s'exécute avec les intrinsèques matériels Neon.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn neon_matmul(a: &[f32], b: &[f32], c: &mut [f32], n: usize) {
+    use core::arch::aarch64::*;
+
+    // Invariants de Sûreté :
+    // - Les pointeurs d'adresses de tranches doivent être valides, non nuls et alignés.
+    // - L'index j doit être incrémenté par pas de 4 (largeur du registre vectoriel float32x4_t).
+    // - La boucle de reste scalaire assure la correction pour toutes les dimensions de matrice non multiples de 4.
+
+    // Écrasement initial : c est vidé
+    c[..n * n].fill(0.0f32);
+
+    for i in 0..n {
+        for k in 0..n {
+            let aik = *a.get_unchecked(i * n + k);
+            let va = vdupq_n_f32(aik);
+
+            let mut j = 0;
+            while j + 3 < n {
+                let offset = k * n + j;
+                let out_offset = i * n + j;
+
+                let vb = vld1q_f32(b.as_ptr().add(offset));
+                let vc = vld1q_f32(c.as_ptr().add(out_offset));
+                let vr = vfmaq_f32(vc, va, vb);
+                vst1q_f32(c.as_mut_ptr().add(out_offset), vr);
+
+                j += 4;
+            }
+
+            while j < n {
+                let out_offset = i * n + j;
+                *c.get_unchecked_mut(out_offset) += aik * *b.get_unchecked(k * n + j);
+                j += 1;
+            }
+        }
+    }
+}
+
+/// Fallback scalaire portable pour les architectures non-ARM64 (comme x86_64 de développement).
+///
+/// # Safety
+/// - Les tranches `a`, `b` et `c` doivent posséder au moins `n * n` éléments.
+#[cfg(not(target_arch = "aarch64"))]
+pub unsafe fn neon_matmul(a: &[f32], b: &[f32], c: &mut [f32], n: usize) {
+    // Invariants de Sûreté :
+    // - Les tranches doivent être valides pour au moins n * n éléments.
+    // - L'utilisation de get_unchecked/get_unchecked_mut évite la vérification des bornes
+    //   et maximise la bande passante CPU sur l'architecture de repli.
+    c[..n * n].fill(0.0f32);
+
+    for i in 0..n {
+        for k in 0..n {
+            let aik = *a.get_unchecked(i * n + k);
+            for j in 0..n {
+                let out_offset = i * n + j;
+                *c.get_unchecked_mut(out_offset) += aik * *b.get_unchecked(k * n + j);
+            }
+        }
+    }
 }

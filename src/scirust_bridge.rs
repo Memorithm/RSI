@@ -61,7 +61,12 @@ impl SymbolicSynthesis {
                 (x, target(x))
             })
             .collect();
-        SymbolicSynthesis { cases, tol: 0.25, complexity_penalty: 0.01, lambda: 16 }
+        SymbolicSynthesis {
+            cases,
+            tol: 0.25,
+            complexity_penalty: 0.01,
+            lambda: 16,
+        }
     }
 
     pub fn with_lambda(mut self, lambda: usize) -> Self {

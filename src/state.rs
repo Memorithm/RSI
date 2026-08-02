@@ -27,7 +27,14 @@ pub struct Dims {
 
 impl Dims {
     pub fn uniform(n: usize) -> Self {
-        Dims { d: n, m: n, r: n, a: n, c: n, v: n }
+        Dims {
+            d: n,
+            m: n,
+            r: n,
+            a: n,
+            c: n,
+            v: n,
+        }
     }
 
     pub fn total(&self) -> usize {

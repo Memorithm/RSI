@@ -47,6 +47,9 @@ fn main() {
 
     // Débit = appels `dot` par seconde (plus grand = mieux).
     let score = iters as f64 / median;
-    println!("dot: n={n}, médiane {:.3} ms / {iters} appels", median * 1e3);
+    println!(
+        "dot: n={n}, médiane {:.3} ms / {iters} appels",
+        median * 1e3
+    );
     println!("RSI_BENCH_SCORE={score}");
 }

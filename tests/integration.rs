@@ -49,8 +49,7 @@ fn better_substrate_yields_higher_ceiling() {
         }
         let surface = IntelligenceSurface::sample(1024, &mut rng);
         let meta = Box::new(rsi::MetaOptimizer::new(48, 0.12, 999));
-        let mut agent =
-            RSIAgent::new(state, substrate, surface, StabilityConfig::default(), meta);
+        let mut agent = RSIAgent::new(state, substrate, surface, StabilityConfig::default(), meta);
         agent.run(150);
         agent.si_global()
     };

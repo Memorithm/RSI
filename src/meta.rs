@@ -65,7 +65,11 @@ impl MetaStrategy {
             .map(|&w| w + rng.normal(0.0, scale))
             .collect();
         let gain = (self.gain + rng.normal(0.0, scale * 0.2)).clamp(GAIN_LO, GAIN_HI);
-        MetaStrategy { focus, software_edit, gain }
+        MetaStrategy {
+            focus,
+            software_edit,
+            gain,
+        }
     }
 
     /// ℳ(S_t, V_t, H, O) — proposition d'auto-modification.
@@ -142,7 +146,11 @@ impl MetaStrategy {
         let gain = (GAIN_LO + (GAIN_HI - GAIN_LO) * sigmoid(theta[6]))
             .clamp(GAIN_LO + 1e-6, GAIN_HI - 1e-6);
         let software_edit = theta[7..7 + n_software].to_vec();
-        MetaStrategy { focus, software_edit, gain }
+        MetaStrategy {
+            focus,
+            software_edit,
+            gain,
+        }
     }
 }
 
@@ -214,7 +222,12 @@ pub struct MetaOptimizer {
 
 impl MetaOptimizer {
     pub fn new(candidates: usize, explore_scale: f64, seed: u64) -> Self {
-        MetaOptimizer { candidates, explore_scale, rng: Rng::new(seed), seeds: Vec::new() }
+        MetaOptimizer {
+            candidates,
+            explore_scale,
+            rng: Rng::new(seed),
+            seeds: Vec::new(),
+        }
     }
 }
 
@@ -237,9 +250,14 @@ fn eval_projected_si(
     if n == 0 {
         return Vec::new();
     }
-    let threads = std::thread::available_parallelism().map(|t| t.get()).unwrap_or(1);
+    let threads = std::thread::available_parallelism()
+        .map(|t| t.get())
+        .unwrap_or(1);
     if threads <= 1 || n < PAR_MIN {
-        return items.iter().map(|s| s.projected_si(state, substrate, surface)).collect();
+        return items
+            .iter()
+            .map(|s| s.projected_si(state, substrate, surface))
+            .collect();
     }
     let chunk = n.div_ceil(threads);
     let mut out = vec![0.0_f64; n];
@@ -297,7 +315,7 @@ impl MetaSearch for MetaOptimizer {
 /// espace non contraint), et retient la meilleure stratégie trouvée — sans
 /// jamais régresser sous `current`.
 pub struct CmaEsMeta {
-    pub population: usize,  // 0 ⇒ défaut 4 + ⌊3 ln N⌋
+    pub population: usize, // 0 ⇒ défaut 4 + ⌊3 ln N⌋
     pub generations: usize,
     pub sigma0: f64,
     seed: u64,
@@ -308,7 +326,14 @@ pub struct CmaEsMeta {
 
 impl CmaEsMeta {
     pub fn new(population: usize, generations: usize, sigma0: f64, seed: u64) -> Self {
-        CmaEsMeta { population, generations, sigma0, seed, counter: 0, seeds: Vec::new() }
+        CmaEsMeta {
+            population,
+            generations,
+            sigma0,
+            seed,
+            counter: 0,
+            seeds: Vec::new(),
+        }
     }
 }
 
@@ -345,12 +370,15 @@ impl MetaSearch for CmaEsMeta {
         let objective = |theta: &[f64]| -> f64 {
             MetaStrategy::decode(theta, n_sw).projected_si(state, substrate, surface)
         };
-        let (best_theta, best_si) =
-            cma.optimize(&mean0, self.sigma0, self.generations, objective);
+        let (best_theta, best_si) = cma.optimize(&mean0, self.sigma0, self.generations, objective);
 
         // garde-fou : ne jamais faire pire que la stratégie courante / la graine
         let baseline_si = cur_si.max(center_si);
-        let baseline = if center_si > cur_si { center } else { current.clone() };
+        let baseline = if center_si > cur_si {
+            center
+        } else {
+            current.clone()
+        };
         if best_si >= baseline_si {
             (MetaStrategy::decode(&best_theta, n_sw), best_si)
         } else {
@@ -431,10 +459,19 @@ mod tests {
             let theta = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, theta6, 0.0];
             let d = MetaStrategy::decode(&theta, 1);
             assert!(d.gain >= GAIN_LO + 1e-6, "gain {} sous la borne", d.gain);
-            assert!(d.gain <= GAIN_HI - 1e-6, "gain {} au-dessus de la borne", d.gain);
+            assert!(
+                d.gain <= GAIN_HI - 1e-6,
+                "gain {} au-dessus de la borne",
+                d.gain
+            );
             // idempotence : re-encoder puis re-décoder ne bouge plus le gain.
             let d2 = MetaStrategy::decode(&d.encode(), 1);
-            assert!((d.gain - d2.gain).abs() < 1e-9, "roundtrip {} vs {}", d.gain, d2.gain);
+            assert!(
+                (d.gain - d2.gain).abs() < 1e-9,
+                "roundtrip {} vs {}",
+                d.gain,
+                d2.gain
+            );
         }
     }
 
@@ -446,12 +483,13 @@ mod tests {
         let state = CognitiveState::random(Dims::uniform(6), &mut rng, 0.3);
         let sub = Substrate::default_with(4, 4, &mut rng);
         let base = MetaStrategy::neutral(sub.o.len());
-        let items: Vec<MetaStrategy> =
-            (0..32).map(|_| base.perturb(&mut rng, 0.2)).collect();
+        let items: Vec<MetaStrategy> = (0..32).map(|_| base.perturb(&mut rng, 0.2)).collect();
 
         let par = eval_projected_si(&items, &state, &sub, &surf);
-        let seq: Vec<f64> =
-            items.iter().map(|s| s.projected_si(&state, &sub, &surf)).collect();
+        let seq: Vec<f64> = items
+            .iter()
+            .map(|s| s.projected_si(&state, &sub, &surf))
+            .collect();
 
         assert_eq!(par.len(), seq.len());
         for (a, b) in par.iter().zip(&seq) {

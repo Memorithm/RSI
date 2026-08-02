@@ -41,7 +41,12 @@ pub struct Guard {
 
 impl Default for Guard {
     fn default() -> Self {
-        Guard { max_iters: 50, patience: 0, target: None, min_delta: 0.0 }
+        Guard {
+            max_iters: 50,
+            patience: 0,
+            target: None,
+            min_delta: 0.0,
+        }
     }
 }
 
@@ -139,7 +144,15 @@ pub fn ascend<T: RefineTask>(task: &mut T, init: T::Cand, guard: &Guard) -> (T::
         }
     }
 
-    (best, Report { history, iters, accepted, stop })
+    (
+        best,
+        Report {
+            history,
+            iters,
+            accepted,
+            stop,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -171,7 +184,10 @@ mod tests {
         let mut task = Toy { target: 20 };
         let guard = Guard::new().max_iters(50);
         let (best, report) = ascend(&mut task, 0, &guard);
-        assert!(report.is_monotone(), "aucune régression ne doit être adoptée");
+        assert!(
+            report.is_monotone(),
+            "aucune régression ne doit être adoptée"
+        );
         assert!(report.iters <= 50, "terminaison bornée");
         assert_eq!(report.history.len(), report.iters + 1);
         // les propositions « pires » (-3) n'ont jamais été adoptées

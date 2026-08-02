@@ -39,7 +39,10 @@ fn main() {
         simd.best_speedup(),
     );
     println!();
-    println!("  {:<20} {:>8} {:>8} {:>8}   goulot", "tâche", "Φ_x", "g_x", "C_réel");
+    println!(
+        "  {:<20} {:>8} {:>8} {:>8}   goulot",
+        "tâche", "Φ_x", "g_x", "C_réel"
+    );
     println!("  {}", "─".repeat(62));
 
     for tr in report(&suite, &state, &measured_sub) {

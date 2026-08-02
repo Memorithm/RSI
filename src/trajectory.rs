@@ -152,9 +152,15 @@ mod tests {
 
     #[test]
     fn verdict_line_covers_the_three_cases() {
-        assert!(traj(true, 10, 0).verdict_line().contains("compile=oui; tests=pass"));
-        assert!(traj(true, 8, 2).verdict_line().contains("compile=oui; tests=fail"));
-        assert!(traj(false, 0, 0).verdict_line().contains("compile=non; tests=na"));
+        assert!(traj(true, 10, 0)
+            .verdict_line()
+            .contains("compile=oui; tests=pass"));
+        assert!(traj(true, 8, 2)
+            .verdict_line()
+            .contains("compile=oui; tests=fail"));
+        assert!(traj(false, 0, 0)
+            .verdict_line()
+            .contains("compile=non; tests=na"));
     }
 
     #[test]
@@ -162,7 +168,11 @@ mod tests {
         for t in [traj(true, 12, 0), traj(true, 9, 3), traj(false, 0, 0)] {
             let v = parse_sim_verdict(&t.completion());
             assert_eq!(v.compiles, Some(t.compiles), "compile: {}", t.completion());
-            let want_tests = if !t.compiles { Some(false) } else { Some(t.tests_failed == 0) };
+            let want_tests = if !t.compiles {
+                Some(false)
+            } else {
+                Some(t.tests_failed == 0)
+            };
             assert_eq!(v.tests_pass, want_tests, "tests: {}", t.completion());
         }
     }
@@ -171,9 +181,14 @@ mod tests {
     fn real_output_enriches_completion_and_still_roundtrips() {
         // Échec de compilation avec vraie sortie cargo capturée.
         let mut t = traj(false, 0, 0);
-        t.output = Some("Compiling rsi v0.10.0\nerror[E0412]: cannot find type `Foo` in this scope".into());
+        t.output = Some(
+            "Compiling rsi v0.10.0\nerror[E0412]: cannot find type `Foo` in this scope".into(),
+        );
         let c = t.completion();
-        assert!(c.contains("error[E0412]"), "la vraie sortie doit apparaître : {c}");
+        assert!(
+            c.contains("error[E0412]"),
+            "la vraie sortie doit apparaître : {c}"
+        );
         // le verdict machine reste faisant autorité → round-trip intact
         let v = parse_sim_verdict(&c);
         assert_eq!(v.compiles, Some(false));
@@ -181,9 +196,13 @@ mod tests {
 
         // Test échoué avec détail réel.
         let mut t = traj(true, 40, 2);
-        t.output = Some("test result: FAILED. 40 passed; 2 failed\n---- json::deep panicked ----".into());
+        t.output =
+            Some("test result: FAILED. 40 passed; 2 failed\n---- json::deep panicked ----".into());
         let c = t.completion();
-        assert!(c.contains("panicked"), "le détail réel doit apparaître : {c}");
+        assert!(
+            c.contains("panicked"),
+            "le détail réel doit apparaître : {c}"
+        );
         let v = parse_sim_verdict(&c);
         assert_eq!(v.compiles, Some(true));
         assert_eq!(v.tests_pass, Some(false));
@@ -195,7 +214,10 @@ mod tests {
         t.file_content = "ligne1\n\"guillemets\"\tet tab".into();
         let line = t.to_jsonl();
         assert_eq!(line.matches('\n').count(), 0, "une trajectoire = une ligne");
-        assert!(line.contains("\\n") && line.contains("\\\""), "échappement présent");
+        assert!(
+            line.contains("\\n") && line.contains("\\\""),
+            "échappement présent"
+        );
         assert!(line.starts_with("{\"prompt\":\"") && line.ends_with('}'));
         // JSON valide de bout en bout, avec le champ score exporté.
         let j = crate::json::Json::parse(&line).expect("JSONL valide");

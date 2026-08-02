@@ -40,7 +40,11 @@ impl SimVerdict {
 pub fn build_sim_prompt(file_label: &str, file_content: &str, find: &str, replace: &str) -> String {
     const MAX_FILE_CHARS: usize = 12_000;
     let shown: String = file_content.chars().take(MAX_FILE_CHARS).collect();
-    let truncated = if file_content.len() > shown.len() { "\n// … (tronqué) …" } else { "" };
+    let truncated = if file_content.len() > shown.len() {
+        "\n// … (tronqué) …"
+    } else {
+        ""
+    };
     format!(
         "Tu es un world model qui simule l'exécution d'un dépôt Rust. Voici le \
          fichier `{file_label}` :\n\
@@ -66,7 +70,8 @@ pub fn parse_sim_verdict(text: &str) -> SimVerdict {
     let low = text.to_lowercase();
 
     // A-t-on atteint l'exécution des tests ? (⇒ ça a compilé)
-    let ran_tests = low.contains("test result:") || low.contains("running ") && low.contains(" test");
+    let ran_tests =
+        low.contains("test result:") || low.contains("running ") && low.contains(" test");
     // Marqueurs d'échec de compilation.
     let compile_fail = low.contains("error[e")
         || low.contains("cannot find")
@@ -102,17 +107,29 @@ pub fn parse_sim_verdict(text: &str) -> SimVerdict {
         None
     };
 
-    SimVerdict { compiles, tests_pass }
+    SimVerdict {
+        compiles,
+        tests_pass,
+    }
 }
 
 /// Lit la ligne `SIMCAL_VERDICT: compile=…; tests=…` si présente.
 fn parse_structured_line(text: &str) -> Option<SimVerdict> {
-    let line = text.lines().rev().find(|l| l.to_uppercase().contains("SIMCAL_VERDICT"))?;
+    let line = text
+        .lines()
+        .rev()
+        .find(|l| l.to_uppercase().contains("SIMCAL_VERDICT"))?;
     let low = line.to_lowercase();
     let after = low.split("simcal_verdict").nth(1)?;
     let field = |key: &str| -> Option<&str> {
         let seg = after.split(key).nth(1)?;
-        Some(seg.trim_start_matches(['=', ' ']).split([';', ' ', ',']).next().unwrap_or("").trim())
+        Some(
+            seg.trim_start_matches(['=', ' '])
+                .split([';', ' ', ','])
+                .next()
+                .unwrap_or("")
+                .trim(),
+        )
     };
     let compiles = field("compile").and_then(|v| match v {
         "oui" | "yes" | "true" => Some(true),
@@ -126,8 +143,15 @@ fn parse_structured_line(text: &str) -> Option<SimVerdict> {
         _ => None,
     });
     // Cohérence : ne pas compiler ⇒ tests non passants.
-    let tests_pass = if compiles == Some(false) { Some(false) } else { tests_pass };
-    Some(SimVerdict { compiles, tests_pass })
+    let tests_pass = if compiles == Some(false) {
+        Some(false)
+    } else {
+        tests_pass
+    };
+    Some(SimVerdict {
+        compiles,
+        tests_pass,
+    })
 }
 
 // ═══════════════════════════ Statistiques ════════════════════════════════ //
@@ -201,7 +225,9 @@ impl CalibrationStats {
                 c.fp,
                 c.fn_,
                 c.undecided,
-                c.accuracy().map(|a| format!("{:.0}%", a * 100.0)).unwrap_or_else(|| "—".into()),
+                c.accuracy()
+                    .map(|a| format!("{:.0}%", a * 100.0))
+                    .unwrap_or_else(|| "—".into()),
             )
         };
         format!(
@@ -293,11 +319,20 @@ error: test failed, to rerun pass `--lib`";
     fn confusion_and_calibration_math() {
         let mut s = CalibrationStats::default();
         // prédit bon / réel bon (tp compile+tests)
-        s.record(SimVerdict::from_real(true, 0), SimVerdict::from_real(true, 0));
+        s.record(
+            SimVerdict::from_real(true, 0),
+            SimVerdict::from_real(true, 0),
+        );
         // prédit casse tests / réel casse tests (tn tests, tp compile)
-        s.record(SimVerdict::from_real(true, 1), SimVerdict::from_real(true, 1));
+        s.record(
+            SimVerdict::from_real(true, 1),
+            SimVerdict::from_real(true, 1),
+        );
         // prédit bon MAIS réel casse tests (fp sur l'axe tests)
-        s.record(SimVerdict::from_real(true, 0), SimVerdict::from_real(true, 2));
+        s.record(
+            SimVerdict::from_real(true, 0),
+            SimVerdict::from_real(true, 2),
+        );
         assert_eq!(s.samples, 3);
         assert_eq!(s.compiles.tp, 3); // 3× compile prédit vrai & réel vrai
         assert_eq!(s.tests.tp, 1);

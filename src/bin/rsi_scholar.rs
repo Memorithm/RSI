@@ -41,8 +41,18 @@ use rsi::dgm::{
 };
 
 const VALUE_FLAGS: &[&str] = &[
-    "--paper", "--allow", "--target", "--bench", "--max-goals", "--steps", "--min-gain",
-    "--model", "--seed", "--timeout", "--out", "--paper-model",
+    "--paper",
+    "--allow",
+    "--target",
+    "--bench",
+    "--max-goals",
+    "--steps",
+    "--min-gain",
+    "--model",
+    "--seed",
+    "--timeout",
+    "--out",
+    "--paper-model",
 ];
 
 fn main() {
@@ -65,21 +75,33 @@ fn main() {
     }
     let paper = required(&args, "--paper");
     let allow_raw = required(&args, "--allow");
-    let allowed: Vec<String> =
-        allow_raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let allowed: Vec<String> = allow_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     if allowed.is_empty() {
         eprintln!("erreur : --allow doit lister au moins un fichier.");
         exit(2);
     }
     let target = flag_value(&args, "--target").unwrap_or_else(|| allowed.join(", "));
-    let max_goals: usize =
-        flag_value(&args, "--max-goals").and_then(|v| v.parse().ok()).unwrap_or(3).clamp(1, 10);
-    let steps: usize =
-        flag_value(&args, "--steps").and_then(|v| v.parse().ok()).unwrap_or(6).clamp(1, 64);
-    let min_gain: f64 = flag_value(&args, "--min-gain").and_then(|v| v.parse().ok()).unwrap_or(0.05);
-    let seed: u64 = flag_value(&args, "--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
-    let timeout_secs: u64 =
-        flag_value(&args, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(300);
+    let max_goals: usize = flag_value(&args, "--max-goals")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+        .clamp(1, 10);
+    let steps: usize = flag_value(&args, "--steps")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6)
+        .clamp(1, 64);
+    let min_gain: f64 = flag_value(&args, "--min-gain")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.05);
+    let seed: u64 = flag_value(&args, "--seed")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(42);
+    let timeout_secs: u64 = flag_value(&args, "--timeout")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
     let bench: Vec<String> = flag_value(&args, "--bench")
         .map(|s| s.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
@@ -110,10 +132,18 @@ fn main() {
              (--no-llm) n'utilise aucun modèle."
         );
     }
-    let llm_model: Option<String> = if paper_llm { Some(paper_model.unwrap_or_default()) } else { None };
+    let llm_model: Option<String> = if paper_llm {
+        Some(paper_model.unwrap_or_default())
+    } else {
+        None
+    };
     println!(
         "• analyse du papier « {paper} » (papers analyze{})…",
-        if paper_llm { ", LLM — peut prendre plusieurs minutes" } else { " --no-llm" }
+        if paper_llm {
+            ", LLM — peut prendre plusieurs minutes"
+        } else {
+            " --no-llm"
+        }
     );
     let out_dir = ws.join(".rsi_scholar");
     let analysis: PaperAnalysis = match papers.analyze(&paper, &out_dir, llm_model.as_deref()) {
@@ -142,12 +172,17 @@ fn main() {
         );
         return;
     }
-    println!("  {} objectif(s) directif(s) tiré(s) du papier\n", goals.len());
+    println!(
+        "  {} objectif(s) directif(s) tiré(s) du papier\n",
+        goals.len()
+    );
 
     // --- 3. LLM : connexion automatique. ------------------------------------ //
     let host = std::env::var("RSI_OLLAMA_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port: u16 =
-        std::env::var("RSI_OLLAMA_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(11434);
+    let port: u16 = std::env::var("RSI_OLLAMA_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(11434);
     let pref = flag_value(&args, "--model").or_else(|| std::env::var("RSI_LLM_MODEL").ok());
     let installed = match rsi::llm::ollama_installed_models(&host, port, Duration::from_secs(10)) {
         Ok(m) => m,
@@ -163,7 +198,10 @@ fn main() {
             exit(2);
         }
     };
-    println!("• backend ollama : modèle « {model} » ({} installé(s))", installed.len());
+    println!(
+        "• backend ollama : modèle « {model} » ({} installé(s))",
+        installed.len()
+    );
 
     // --- 4. Référence unique (l'arbre vivant ne change pas entre objectifs). - //
     let evaluator = || CargoEvaluator {
@@ -224,7 +262,12 @@ fn main() {
                     Some(r) => println!("  step {i:2} · pas de proposition ({r})"),
                     None => println!("  step {i:2} · pas de proposition"),
                 },
-                StepOutcome::Evaluated { accepted: acc, fitness, variant_id, .. } => {
+                StepOutcome::Evaluated {
+                    accepted: acc,
+                    fitness,
+                    variant_id,
+                    ..
+                } => {
                     if *acc {
                         accepted += 1;
                     }
@@ -270,8 +313,13 @@ fn main() {
             i + 1,
             one_line(&r.goal, 90),
             r.accepted,
-            r.best_score.map(|s| format!("{s:.4}")).unwrap_or_else(|| "—".into()),
-            r.best_variant.as_deref().map(|v| &v[..8.min(v.len())]).unwrap_or("—"),
+            r.best_score
+                .map(|s| format!("{s:.4}"))
+                .unwrap_or_else(|| "—".into()),
+            r.best_variant
+                .as_deref()
+                .map(|v| &v[..8.min(v.len())])
+                .unwrap_or("—"),
         ));
     }
     md.push_str(&format!(
@@ -281,19 +329,28 @@ fn main() {
          la revue garde le contrat).\n",
         ws.display(),
         allowed.join(","),
-        if bench.is_empty() { String::new() } else { format!("--bench \"{}\" ", bench.join(" ")) },
+        if bench.is_empty() {
+            String::new()
+        } else {
+            format!("--bench \"{}\" ", bench.join(" "))
+        },
         min_gain,
     ));
     let out_path = flag_value(&args, "--out")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| out_dir.join("rapport.md"));
     if let Err(e) = std::fs::write(&out_path, &md) {
-        eprintln!("avertissement : écriture du rapport {} : {e}", out_path.display());
+        eprintln!(
+            "avertissement : écriture du rapport {} : {e}",
+            out_path.display()
+        );
     } else {
         println!("• rapport : {}", out_path.display());
     }
     if any {
-        println!("✓ le papier a produit au moins une amélioration PROUVÉE (dry-run) — voir le rapport.");
+        println!(
+            "✓ le papier a produit au moins une amélioration PROUVÉE (dry-run) — voir le rapport."
+        );
     } else {
         println!("∅ aucune amélioration au-dessus du seuil — verdict honnête, le papier n'a rien apporté ici.");
     }
@@ -312,7 +369,10 @@ fn one_line(s: &str, max: usize) -> String {
 // ----------------------------- parsing args ------------------------------- //
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn required(args: &[String], flag: &str) -> String {

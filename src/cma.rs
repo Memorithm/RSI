@@ -55,9 +55,7 @@ impl SepCmaEs {
         let mu_eff = 1.0 / weights.iter().map(|w| w * w).sum::<f64>();
 
         let c_sigma = (mu_eff + 2.0) / (nf + mu_eff + 5.0);
-        let d_sigma = 1.0
-            + 2.0 * (((mu_eff - 1.0) / (nf + 1.0)).sqrt() - 1.0).max(0.0)
-            + c_sigma;
+        let d_sigma = 1.0 + 2.0 * (((mu_eff - 1.0) / (nf + 1.0)).sqrt() - 1.0).max(0.0) + c_sigma;
         let c_c = (4.0 + mu_eff / nf) / (nf + 4.0 + 2.0 * mu_eff / nf);
 
         let mut c_1 = 2.0 / ((nf + 1.3).powi(2) + mu_eff);
@@ -166,9 +164,7 @@ impl SepCmaEs {
             // indicateur h_σ (freine la mise à jour si σ croît trop vite)
             let g1 = (gen + 1) as f64;
             let denom = (1.0 - (1.0 - cs).powf(2.0 * g1)).sqrt();
-            let h_sigma = if ps_norm / denom / self.chi_n
-                < 1.4 + 2.0 / (n as f64 + 1.0)
-            {
+            let h_sigma = if ps_norm / denom / self.chi_n < 1.4 + 2.0 / (n as f64 + 1.0) {
                 1.0
             } else {
                 0.0
@@ -220,7 +216,9 @@ fn eval_population<F: Fn(&[f64]) -> f64 + Sync>(xs: &[Vec<f64>], f: &F) -> Vec<f
     if n == 0 {
         return Vec::new();
     }
-    let threads = std::thread::available_parallelism().map(|t| t.get()).unwrap_or(1);
+    let threads = std::thread::available_parallelism()
+        .map(|t| t.get())
+        .unwrap_or(1);
     if threads <= 1 || n < PAR_MIN {
         return xs.iter().map(|x| f(x)).collect();
     }

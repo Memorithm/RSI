@@ -56,15 +56,15 @@ pub mod criticality;
 // Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP) — port std-only de
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
-pub mod loop_ctrl;
+pub mod dynamics;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
 pub mod forge_substrate;
-pub mod dynamics;
+pub mod loop_ctrl;
 // Sonde matérielle réelle (CPU/mém/GPU) pour ancrer le substrat — utile sur Jetson.
-pub mod hw_probe;
 pub mod flywheel;
+pub mod hw_probe;
 pub mod json;
 pub mod kernels;
 pub mod knowledge;
@@ -75,12 +75,11 @@ pub mod memory;
 pub mod meta;
 pub mod obs;
 // Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
+#[cfg(feature = "octasoma")]
+pub mod octasoma_memory;
 pub mod omega_tasks;
 pub mod plot;
 pub mod prompt;
-pub mod tasks;
-#[cfg(feature = "octasoma")]
-pub mod octasoma_memory;
 pub mod report;
 pub mod rng;
 pub mod schedule;
@@ -89,11 +88,12 @@ pub mod scirust_bridge;
 pub mod sha256;
 pub mod simulation;
 pub mod state;
-pub mod trajectory;
 pub mod substrate;
 pub mod surface;
 pub mod swarm;
 pub mod synthesis;
+pub mod tasks;
+pub mod trajectory;
 pub mod tuning;
 #[cfg(feature = "wasm")]
 pub mod wasm_domain;
@@ -102,33 +102,32 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
-pub use synthesis::{Expr, SymbolicSynthesis};
 #[cfg(feature = "ccos")]
 pub use ccos_audit::CcosAudit;
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
-pub use loop_ctrl::{LoopConfig, LoopObserver, LoopOutcome, StopReason};
-pub use schedule::{LoopSchedule, MetaMeta};
-pub use swarm::{run_swarm, run_swarm_demo, SwarmMember, SwarmResult};
+pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;
 #[cfg(feature = "forge")]
 pub use forge_substrate::ForgeSubstrate;
-pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
 pub use json::Json;
 pub use knowledge::{CorpusKnowledge, KnowledgeSource, PapersKnowledge};
+pub use loop_ctrl::{LoopConfig, LoopObserver, LoopOutcome, StopReason};
 pub use measured_substrate::MeasuredSubstrate;
-pub use tasks::{GroundedCapability, Task, TaskCorpus};
 pub use memory::{ContextMemory, LinearContextMemory};
+pub use meta::{CmaEsMeta, MetaOptimizer, MetaSearch, MetaStrategy};
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
-pub use meta::{CmaEsMeta, MetaOptimizer, MetaSearch, MetaStrategy};
 pub use rng::Rng;
+pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};
 pub use substrate::Substrate;
 pub use surface::{
-    Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling,
-    SigmoidCapability,
+    Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
 };
+pub use swarm::{run_swarm, run_swarm_demo, SwarmMember, SwarmResult};
+pub use synthesis::{Expr, SymbolicSynthesis};
+pub use tasks::{GroundedCapability, Task, TaskCorpus};

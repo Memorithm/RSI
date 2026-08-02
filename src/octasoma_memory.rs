@@ -18,7 +18,10 @@ pub struct OctaSomaMemory {
 impl OctaSomaMemory {
     /// `high_dim` = dimension des embeddings (p. ex. la taille du vecteur d'état).
     pub fn new(high_dim: usize, seed: u64) -> Self {
-        OctaSomaMemory { mem: FractalMemory3D::new(high_dim, seed), count: 0 }
+        OctaSomaMemory {
+            mem: FractalMemory3D::new(high_dim, seed),
+            count: 0,
+        }
     }
 }
 

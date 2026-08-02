@@ -40,7 +40,10 @@ fn main() {
         buf.clear();
         // Lecture *bornée* d'une ligne : `take` plafonne CETTE lecture à
         // MAX_LINE_BYTES octets (anti-OOM sur ligne géante).
-        let n = match (&mut reader).take(MAX_LINE_BYTES as u64).read_until(b'\n', &mut buf) {
+        let n = match (&mut reader)
+            .take(MAX_LINE_BYTES as u64)
+            .read_until(b'\n', &mut buf)
+        {
             Ok(0) => break, // EOF
             Ok(n) => n,
             Err(_) => break,
@@ -62,7 +65,11 @@ fn main() {
 
         let response = match Json::parse(line) {
             Ok(req) => handle_request(&mut api, &dgm, &req),
-            Err(e) => Some(error_response(&Json::Null, -32700, &format!("parse error: {e}"))),
+            Err(e) => Some(error_response(
+                &Json::Null,
+                -32700,
+                &format!("parse error: {e}"),
+            )),
         };
 
         if let Some(resp) = response {
@@ -126,7 +133,9 @@ trajectoire. 'rsi_describe' documente le modèle mathématique."
 /// Description d'un outil MCP (name, description, inputSchema JSON Schema).
 fn tool(name: &str, description: &str, properties: Json, required: &[&str]) -> Json {
     let mut schema = Json::obj();
-    schema.set("type", Json::Str("object".into())).set("properties", properties);
+    schema
+        .set("type", Json::Str("object".into()))
+        .set("properties", properties);
     if !required.is_empty() {
         let req: Vec<Json> = required.iter().map(|s| Json::Str((*s).into())).collect();
         schema.set("required", Json::Arr(req));
@@ -140,7 +149,8 @@ fn tool(name: &str, description: &str, properties: Json, required: &[&str]) -> J
 
 fn prop(ty: &str, desc: &str) -> Json {
     let mut p = Json::obj();
-    p.set("type", Json::Str(ty.into())).set("description", Json::Str(desc.into()));
+    p.set("type", Json::Str(ty.into()))
+        .set("description", Json::Str(desc.into()));
     p
 }
 
@@ -153,7 +163,12 @@ fn props(pairs: &[(&str, Json)]) -> Json {
 }
 
 fn tools_list() -> Json {
-    let id = || ("id", prop("string", "Identifiant de session (défaut: 'default')."));
+    let id = || {
+        (
+            "id",
+            prop("string", "Identifiant de session (défaut: 'default')."),
+        )
+    };
 
     // Les outils DGM (rsi_dgm_start/status) ne sont listés que si la feature
     // `llm-ollama` est compilée — sinon ils échoueraient systématiquement.
@@ -479,11 +494,21 @@ mod dgm_job {
         if allowed.is_empty() {
             return Err("'allow' doit lister au moins un fichier".to_string());
         }
-        let steps = args.get("steps").and_then(|v| v.as_usize()).unwrap_or(8).clamp(1, 64);
+        let steps = args
+            .get("steps")
+            .and_then(|v| v.as_usize())
+            .unwrap_or(8)
+            .clamp(1, 64);
         let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
-        let min_gain = args.get("min_gain").and_then(|v| v.as_f64()).unwrap_or(0.05);
-        let timeout_secs =
-            args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300).clamp(30, 1800);
+        let min_gain = args
+            .get("min_gain")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.05);
+        let timeout_secs = args
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300)
+            .clamp(30, 1800);
         let bench: Vec<String> = args
             .get("bench")
             .and_then(|v| v.as_str())
@@ -549,8 +574,13 @@ mod dgm_job {
                 };
             let mut config = DgmConfig::new(&ws, &goal);
             config.min_score_gain = min_gain;
-            let mut engine =
-                DgmEngine::new(Archive::with_root(baseline), proposer, evaluator, config, seed);
+            let mut engine = DgmEngine::new(
+                Archive::with_root(baseline),
+                proposer,
+                evaluator,
+                config,
+                seed,
+            );
 
             for i in 0..steps {
                 {
@@ -570,7 +600,12 @@ mod dgm_job {
                             j.set("reason", Json::Str(r.clone()));
                         }
                     }
-                    StepOutcome::Evaluated { accepted, fitness, variant_id, .. } => {
+                    StepOutcome::Evaluated {
+                        accepted,
+                        fitness,
+                        variant_id,
+                        ..
+                    } => {
                         j.set("kind", Json::Str("evaluated".into()))
                             .set("accepted", Json::Bool(*accepted))
                             .set("compiles", Json::Bool(fitness.compiles))
@@ -581,7 +616,13 @@ mod dgm_job {
                             .set(
                                 "reason",
                                 Json::Str(
-                                    fitness.notes.lines().next().unwrap_or("").trim().to_string(),
+                                    fitness
+                                        .notes
+                                        .lines()
+                                        .next()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .to_string(),
                                 ),
                             );
                     }
@@ -633,7 +674,8 @@ fn success_response(id: &Json, result: Json) -> Json {
 
 fn error_response(id: &Json, code: i64, message: &str) -> Json {
     let mut err = Json::obj();
-    err.set("code", Json::Num(code as f64)).set("message", Json::Str(message.into()));
+    err.set("code", Json::Num(code as f64))
+        .set("message", Json::Str(message.into()));
     let mut out = Json::obj();
     out.set("jsonrpc", Json::Str("2.0".into()))
         .set("id", id.clone())

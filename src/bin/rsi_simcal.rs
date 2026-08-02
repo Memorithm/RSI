@@ -30,8 +30,18 @@ use rsi::rng::Rng;
 use rsi::simulation::{build_sim_prompt, parse_sim_verdict, CalibrationStats, SimVerdict};
 
 const VALUE_FLAGS: &[&str] = &[
-    "--goal", "--allow", "--sim-model", "--model", "--steps", "--bench", "--seed", "--timeout",
-    "--out", "--ollama-host", "--ollama-port", "--sim-num-predict",
+    "--goal",
+    "--allow",
+    "--sim-model",
+    "--model",
+    "--steps",
+    "--bench",
+    "--seed",
+    "--timeout",
+    "--out",
+    "--ollama-host",
+    "--ollama-port",
+    "--sim-num-predict",
 ];
 
 fn main() {
@@ -62,14 +72,20 @@ fn main() {
         eprintln!("erreur : --allow doit lister au moins un fichier.");
         exit(2);
     }
-    let steps: usize =
-        flag_value(&args, "--steps").and_then(|v| v.parse().ok()).unwrap_or(10).clamp(1, 100);
-    let seed: u64 = flag_value(&args, "--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
-    let timeout_secs: u64 =
-        flag_value(&args, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(300);
+    let steps: usize = flag_value(&args, "--steps")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10)
+        .clamp(1, 100);
+    let seed: u64 = flag_value(&args, "--seed")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(42);
+    let timeout_secs: u64 = flag_value(&args, "--timeout")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
     let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
-    let port: u16 =
-        flag_value(&args, "--ollama-port").and_then(|v| v.parse().ok()).unwrap_or(11434);
+    let port: u16 = flag_value(&args, "--ollama-port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(11434);
     let bench: Vec<String> = flag_value(&args, "--bench")
         .map(|s| s.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
@@ -77,8 +93,9 @@ fn main() {
     // AgentWorld raisonne EN LONG (chain-of-thought) : le défaut num_predict de
     // 4096 le tronque avant la ligne de verdict (constaté : 15/15 done_reason=
     // length). On lui laisse beaucoup de place + un contexte qui l'englobe.
-    let sim_num_predict: u32 =
-        flag_value(&args, "--sim-num-predict").and_then(|v| v.parse().ok()).unwrap_or(12288);
+    let sim_num_predict: u32 = flag_value(&args, "--sim-num-predict")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12288);
     let sim_num_ctx: u32 = sim_num_predict + 8192; // prompt (~5k) + génération
 
     // --- Proposeur : connexion automatique (comme rsi-dgm). ----------------- //
@@ -97,7 +114,10 @@ fn main() {
             exit(2);
         }
     };
-    if !installed.iter().any(|m| m == &sim_model || m.starts_with(&sim_model)) {
+    if !installed
+        .iter()
+        .any(|m| m == &sim_model || m.starts_with(&sim_model))
+    {
         eprintln!(
             "erreur : world model « {sim_model} » introuvable dans Ollama.\n  \
              Modèles : {}.\n  Cf. docs/AGENTWORLD_STUDY.md pour l'installer.",
@@ -106,7 +126,9 @@ fn main() {
         exit(2);
     }
     println!("• proposeur (code)  : {code_model}");
-    println!("• world model (sim) : {sim_model} (num_predict={sim_num_predict}, num_ctx={sim_num_ctx})");
+    println!(
+        "• world model (sim) : {sim_model} (num_predict={sim_num_predict}, num_ctx={sim_num_ctx})"
+    );
 
     let proposer = LlmProposer::new(
         LlmCodeModel::new(
@@ -173,20 +195,19 @@ fn main() {
         let patch = &proposal.patch;
 
         // 1) Vérité terrain : gate réel sur copie isolée.
-        let real: Fitness = match WorkspaceSnapshot::create(&ws).map(|snap| {
-            match snap.apply(patch) {
+        let real: Fitness =
+            match WorkspaceSnapshot::create(&ws).map(|snap| match snap.apply(patch) {
                 Ok(()) => evaluator
                     .evaluate(snap.root())
                     .unwrap_or_else(|e| Fitness::broken(e.to_string())),
                 Err(e) => Fitness::broken(format!("patch did not apply: {e}")),
-            }
-        }) {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("  · snapshot : {e}");
-                break;
-            }
-        };
+            }) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("  · snapshot : {e}");
+                    break;
+                }
+            };
         let actual = SimVerdict::from_real(real.compiles, real.tests_failed);
 
         // 2) Prédiction du world model (sur le fichier vivant + patch).
@@ -232,16 +253,21 @@ fn main() {
     // --- Rapport. ------------------------------------------------------------ //
     println!("\n{}", stats.report());
     let mut md = String::from("# rsi-simcal — calibration du pré-crible simulé\n\n");
-    md.push_str(&format!("world model : `{sim_model}`\n\n```\n{}\n```\n\n", stats.report()));
+    md.push_str(&format!(
+        "world model : `{sim_model}`\n\n```\n{}\n```\n\n",
+        stats.report()
+    ));
     md.push_str("## Détail par patch\n\n```\n");
     for r in &rows {
         md.push_str(r.trim_start());
         md.push('\n');
     }
-    md.push_str("```\n\n**Lecture** : `fn` (faux négatif) = le simulateur a écarté une \
+    md.push_str(
+        "```\n\n**Lecture** : `fn` (faux négatif) = le simulateur a écarté une \
                  amélioration réelle (idée perdue — le seul coût dangereux d'un pré-crible). \
                  `fp` ne coûte qu'un vrai build. Décision surrogate-gate : viser une \
-                 exactitude « tests » élevée ET peu de `fn`.\n");
+                 exactitude « tests » élevée ET peu de `fn`.\n",
+    );
     let out_path = flag_value(&args, "--out")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| ws.join(".rsi_simcal_report.md"));
@@ -276,7 +302,10 @@ fn one_line(s: &str, max: usize) -> String {
 // ----------------------------- parsing args ------------------------------- //
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn required(args: &[String], flag: &str) -> String {

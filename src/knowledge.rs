@@ -34,7 +34,12 @@ pub struct CorpusKnowledge {
 impl CorpusKnowledge {
     /// Construit depuis des textes en mémoire.
     pub fn from_texts(documents: Vec<String>) -> Self {
-        CorpusKnowledge { documents, cursor: 0, concepts: HashSet::new(), scale: 64.0 }
+        CorpusKnowledge {
+            documents,
+            cursor: 0,
+            concepts: HashSet::new(),
+            scale: 64.0,
+        }
     }
 
     /// Règle l'échelle de saturation (nombre de concepts pour ~63 % du niveau).
@@ -292,7 +297,7 @@ mod tests {
     fn papers_degrades_gracefully_when_absent() {
         // binaire inexistant → dégradation : on ingère le descripteur de source
         let mut p = PapersKnowledge::new(vec![
-            "transformer attention architecture scaling".to_string(),
+            "transformer attention architecture scaling".to_string()
         ])
         .with_binary("definitely_not_a_real_binary_xyz_42")
         .with_scale(8.0);

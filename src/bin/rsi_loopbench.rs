@@ -24,20 +24,31 @@ fn build(seed: u64, meta_every: usize, corpus: &TaskCorpus) -> RSIAgent {
 }
 
 fn main() {
-    let n_seeds: u64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(6);
+    let n_seeds: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(6);
     let corpus = TaskCorpus::extended();
 
     println!("╔══════════════════════════════════════════════════════════════════════════╗");
     println!("║   RSI — BANC D'ESSAI DE BOUCLE (L9)   cadences × convergence × coût         ║");
     println!("╚══════════════════════════════════════════════════════════════════════════╝");
-    println!("corpus Ω={} | {n_seeds} graines | run_until(plateau)\n", corpus.len());
+    println!(
+        "corpus Ω={} | {n_seeds} graines | run_until(plateau)\n",
+        corpus.len()
+    );
     println!(
         "{:>10} │ {:>11} │ {:>9} │ {:>7} │ {:>7} │ {:>10}",
         "meta_every", "pas→arrêt", "raison", "SI_fin", "AUC", "méta-éval"
     );
     println!("{}", "─".repeat(74));
 
-    let lcfg = LoopConfig { max_steps: 400, plateau_window: 15, plateau_eps: 1e-4, ..LoopConfig::default() };
+    let lcfg = LoopConfig {
+        max_steps: 400,
+        plateau_window: 15,
+        plateau_eps: 1e-4,
+        ..LoopConfig::default()
+    };
 
     for meta_every in [1usize, 2, 4, 8] {
         let (mut steps, mut si, mut auc, mut meta_evals, mut plateaus) = (0.0, 0.0, 0.0, 0.0, 0);
@@ -55,10 +66,19 @@ fn main() {
             }
         }
         let k = n_seeds as f64;
-        let reason = if plateaus * 2 >= n_seeds as usize { "plateau" } else { "budget" };
+        let reason = if plateaus * 2 >= n_seeds as usize {
+            "plateau"
+        } else {
+            "budget"
+        };
         println!(
             "{:>10} │ {:>11.1} │ {:>9} │ {:>7.4} │ {:>7.4} │ {:>10.1}",
-            meta_every, steps / k, reason, si / k, auc / k, meta_evals / k
+            meta_every,
+            steps / k,
+            reason,
+            si / k,
+            auc / k,
+            meta_evals / k
         );
     }
     println!("{}", "─".repeat(74));

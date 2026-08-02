@@ -36,7 +36,12 @@ fn vec_json(v: &[f64]) -> Json {
 }
 
 fn json_vec(j: &Json) -> Option<Vec<f64>> {
-    Some(j.as_array()?.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect())
+    Some(
+        j.as_array()?
+            .iter()
+            .map(|x| x.as_f64().unwrap_or(0.0))
+            .collect(),
+    )
 }
 
 fn matrix_json(m: &Matrix) -> Json {
@@ -80,7 +85,10 @@ impl Checkpoint {
 
         let mut strat = Json::obj();
         strat
-            .set("focus", Json::Arr(self.strategy.focus.iter().map(|&x| Json::Num(x)).collect()))
+            .set(
+                "focus",
+                Json::Arr(self.strategy.focus.iter().map(|&x| Json::Num(x)).collect()),
+            )
             .set("software_edit", vec_json(&self.strategy.software_edit))
             .set("gain", Json::Num(self.strategy.gain));
 
@@ -96,7 +104,10 @@ impl Checkpoint {
     /// Reconstruit depuis JSON.
     pub fn from_json(src: &str) -> Result<Self, String> {
         let root = Json::parse(src)?;
-        let t = root.get("t").and_then(|v| v.as_usize()).ok_or("champ 't'")?;
+        let t = root
+            .get("t")
+            .and_then(|v| v.as_usize())
+            .ok_or("champ 't'")?;
 
         let s = root.get("state").ok_or("champ 'state'")?;
         let comp = |k: &str| -> Result<Vec<f64>, String> {
@@ -123,7 +134,8 @@ impl Checkpoint {
         }
 
         let stj = root.get("strategy").ok_or("champ 'strategy'")?;
-        let focus_v = json_vec(stj.get("focus").ok_or("strategy.focus")?).ok_or("strategy.focus")?;
+        let focus_v =
+            json_vec(stj.get("focus").ok_or("strategy.focus")?).ok_or("strategy.focus")?;
         if focus_v.len() != 6 {
             return Err("strategy.focus doit avoir 6 valeurs".into());
         }
@@ -145,7 +157,12 @@ impl Checkpoint {
         {
             return Err("state : composante vide".into());
         }
-        Ok(Checkpoint { t, state, substrate, strategy })
+        Ok(Checkpoint {
+            t,
+            state,
+            substrate,
+            strategy,
+        })
     }
 
     pub fn save(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {

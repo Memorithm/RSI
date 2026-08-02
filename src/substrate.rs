@@ -34,7 +34,14 @@ impl Substrate {
         assert_eq!((a.rows, a.cols), (nh, nh), "A doit être nᴴ×nᴴ");
         assert_eq!((b.rows, b.cols), (no, no), "B doit être nᴼ×nᴼ");
         assert_eq!((c.rows, c.cols), (nh, no), "C doit être nᴴ×nᴼ");
-        Substrate { h, o, a, b, c, measured_software_eff: None }
+        Substrate {
+            h,
+            o,
+            a,
+            b,
+            c,
+            measured_software_eff: None,
+        }
     }
 
     /// Fixe (ou efface) l'efficience logicielle mesurée. Bornée dans (0,1).
@@ -64,8 +71,12 @@ impl Substrate {
             out
         };
 
-        let h: Vec<f64> = (0..n_hardware).map(|_| rng.normal(0.5, 0.2).abs()).collect();
-        let o: Vec<f64> = (0..n_software).map(|_| rng.normal(0.5, 0.2).abs()).collect();
+        let h: Vec<f64> = (0..n_hardware)
+            .map(|_| rng.normal(0.5, 0.2).abs())
+            .collect();
+        let o: Vec<f64> = (0..n_software)
+            .map(|_| rng.normal(0.5, 0.2).abs())
+            .collect();
         let a = spd(n_hardware, 0.3, rng);
         let b = spd(n_software, 0.3, rng);
         let mut c = Matrix::zeros(n_hardware, n_software);

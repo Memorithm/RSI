@@ -41,6 +41,9 @@ fn main() {
     let median = times[times.len() / 2].max(1e-12);
 
     let score = iters as f64 * mb / median; // Mo/s
-    println!("sha256: 1 Mo/hachage, mediane {:.2} ms / {iters} hachages", median * 1e3);
+    println!(
+        "sha256: 1 Mo/hachage, mediane {:.2} ms / {iters} hachages",
+        median * 1e3
+    );
     println!("RSI_BENCH_SCORE={score}");
 }

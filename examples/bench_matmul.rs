@@ -21,7 +21,9 @@ fn matrix(n: usize, seed: u64) -> Vec<f32> {
     let mut s = seed | 1;
     (0..n * n)
         .map(|_| {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((s >> 33) as f32 / (1u64 << 31) as f32) - 1.0
         })
         .collect()
@@ -55,6 +57,9 @@ fn main() {
     let median = times[times.len() / 2].max(1e-12);
 
     let score = iters as f64 / median; // matmuls/seconde, plus grand = mieux
-    println!("matmul_naive: n={n}, mediane {:.2} ms / {iters} appels", median * 1e3);
+    println!(
+        "matmul_naive: n={n}, mediane {:.2} ms / {iters} appels",
+        median * 1e3
+    );
     println!("RSI_BENCH_SCORE={score}");
 }

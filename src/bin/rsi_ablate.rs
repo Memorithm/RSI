@@ -37,12 +37,35 @@ const OFF: Ablation = Ablation {
 
 fn configs() -> Vec<Ablation> {
     vec![
-        Ablation { name: "baseline (nu)", ..OFF },
-        Ablation { name: "+ mémoire", memory: true, ..OFF },
-        Ablation { name: "+ substrat", substrate: true, ..OFF },
-        Ablation { name: "+ connaissances", knowledge: true, ..OFF },
-        Ablation { name: "+ réponse active", active_response: true, ..OFF },
-        Ablation { name: "+ ε adaptatif", adaptive_eps: true, ..OFF },
+        Ablation {
+            name: "baseline (nu)",
+            ..OFF
+        },
+        Ablation {
+            name: "+ mémoire",
+            memory: true,
+            ..OFF
+        },
+        Ablation {
+            name: "+ substrat",
+            substrate: true,
+            ..OFF
+        },
+        Ablation {
+            name: "+ connaissances",
+            knowledge: true,
+            ..OFF
+        },
+        Ablation {
+            name: "+ réponse active",
+            active_response: true,
+            ..OFF
+        },
+        Ablation {
+            name: "+ ε adaptatif",
+            adaptive_eps: true,
+            ..OFF
+        },
         Ablation {
             name: "FULL (tout)",
             memory: true,
@@ -66,10 +89,17 @@ fn build(a: &Ablation, seed: u64, corpus: &TaskCorpus) -> RSIAgent {
     let substrate = Substrate::default_with(4, 4, &mut rng);
     let surface = IntelligenceSurface::from_corpus(corpus);
 
-    let cfg = StabilityConfig { adaptive_epsilon: a.adaptive_eps, ..StabilityConfig::default() };
+    let cfg = StabilityConfig {
+        adaptive_epsilon: a.adaptive_eps,
+        ..StabilityConfig::default()
+    };
     let meta = Box::new(MetaOptimizer::new(48, 0.12, seed ^ 0xA));
-    let mut agent = RSIAgent::new(state, substrate, surface, cfg, meta)
-        .with_risk_config(RiskConfig { rpn_max: 0.3, active_response: a.active_response, ..RiskConfig::default() });
+    let mut agent =
+        RSIAgent::new(state, substrate, surface, cfg, meta).with_risk_config(RiskConfig {
+            rpn_max: 0.3,
+            active_response: a.active_response,
+            ..RiskConfig::default()
+        });
     if a.memory {
         agent = agent.with_memory(Box::new(LinearContextMemory::new()));
     }
@@ -79,8 +109,9 @@ fn build(a: &Ablation, seed: u64, corpus: &TaskCorpus) -> RSIAgent {
             .with_route_threshold(0.3);
     }
     if a.knowledge {
-        agent = agent
-            .with_knowledge(Box::new(CorpusKnowledge::from_texts(knowledge_docs()).with_scale(12.0)));
+        agent = agent.with_knowledge(Box::new(
+            CorpusKnowledge::from_texts(knowledge_docs()).with_scale(12.0),
+        ));
     }
     agent
 }
@@ -119,7 +150,16 @@ fn run_once(a: &Ablation, seed: u64, corpus: &TaskCorpus, steps: usize) -> Metri
         .map(|r| r.t as f64)
         .unwrap_or(n);
 
-    Metrics { si_end, si_safe: last.si_safe, risk_mean, risk_max, t90, auc, interventions, regressions }
+    Metrics {
+        si_end,
+        si_safe: last.si_safe,
+        risk_mean,
+        risk_max,
+        t90,
+        auc,
+        interventions,
+        regressions,
+    }
 }
 
 fn main() {
@@ -171,5 +211,7 @@ fn main() {
     println!("{}", "─".repeat(90));
     println!("Lecture : 'interv' = pas où une réponse de sûreté s'est déclenchée ; 'régr' =");
     println!("régressions notables de SI (>0.05) — doit rester ~0 (non-régression préservée).");
-    println!("Comparer p. ex. '+ réponse active' vs 'baseline' : risk_max ↓ au prix d'interventions.");
+    println!(
+        "Comparer p. ex. '+ réponse active' vs 'baseline' : risk_max ↓ au prix d'interventions."
+    );
 }

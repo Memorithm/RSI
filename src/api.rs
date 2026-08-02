@@ -25,10 +25,10 @@ use crate::json::Json;
 use crate::llm::LlmRefineTask;
 use crate::loop_ctrl::{LoopConfig, StopReason};
 use crate::meta::{CmaEsMeta, MetaOptimizer, MetaSearch};
+use crate::prompt::PromptOpt;
 use crate::rng::Rng;
 use crate::state::{CognitiveState, Dims};
 use crate::substrate::Substrate;
-use crate::prompt::PromptOpt;
 use crate::surface::IntelligenceSurface;
 use crate::synthesis::{Expr, SymbolicSynthesis};
 use crate::tuning::{ConfigTuning, TuneConfig};
@@ -157,7 +157,11 @@ impl RefineDomain for SynthDomain {
     }
     fn evaluate(&self, text: &str) -> EvalOutcome {
         match Expr::parse(text) {
-            Err(e) => EvalOutcome { parseable: false, error: Some(e), ..Default::default() },
+            Err(e) => EvalOutcome {
+                parseable: false,
+                error: Some(e),
+                ..Default::default()
+            },
             Ok(expr) => {
                 let cur = self.task.score(&self.incumbent);
                 let fit = self.task.score(&expr);
@@ -189,7 +193,10 @@ impl RefineDomain for SynthDomain {
                     self.incumbent = expr;
                     ProposeStatus::Adopted { pretty, score: fit }
                 } else {
-                    ProposeStatus::Worse { pretty: expr.pretty(), score: fit }
+                    ProposeStatus::Worse {
+                        pretty: expr.pretty(),
+                        score: fit,
+                    }
                 }
             }
         }
@@ -229,7 +236,11 @@ impl RefineDomain for TuneDomain {
     }
     fn evaluate(&self, text: &str) -> EvalOutcome {
         match TuneConfig::parse(text) {
-            Err(e) => EvalOutcome { parseable: false, error: Some(e), ..Default::default() },
+            Err(e) => EvalOutcome {
+                parseable: false,
+                error: Some(e),
+                ..Default::default()
+            },
             Ok(cfg) => {
                 let cur = self.task.score(&self.incumbent);
                 let fit = self.task.score(&cfg);
@@ -261,7 +272,10 @@ impl RefineDomain for TuneDomain {
                     self.incumbent = cfg;
                     ProposeStatus::Adopted { pretty, score: fit }
                 } else {
-                    ProposeStatus::Worse { pretty: cfg.to_json_string(), score: fit }
+                    ProposeStatus::Worse {
+                        pretty: cfg.to_json_string(),
+                        score: fit,
+                    }
                 }
             }
         }
@@ -334,9 +348,15 @@ impl RefineDomain for PromptDomain {
         let fit = self.task.score(&p);
         if fit > self.task.score(&self.incumbent) {
             self.incumbent = p.clone();
-            ProposeStatus::Adopted { pretty: p, score: fit }
+            ProposeStatus::Adopted {
+                pretty: p,
+                score: fit,
+            }
         } else {
-            ProposeStatus::Worse { pretty: p, score: fit }
+            ProposeStatus::Worse {
+                pretty: p,
+                score: fit,
+            }
         }
     }
     fn set_incumbent(&mut self, text: &str) -> Result<(), String> {
@@ -412,9 +432,15 @@ impl RefineDomain for WasmDomain {
         let fit = self.task.score(&p);
         if fit > self.task.score(&self.incumbent) {
             self.incumbent = p.clone();
-            ProposeStatus::Adopted { pretty: p, score: fit }
+            ProposeStatus::Adopted {
+                pretty: p,
+                score: fit,
+            }
         } else {
-            ProposeStatus::Worse { pretty: p, score: fit }
+            ProposeStatus::Worse {
+                pretty: p,
+                score: fit,
+            }
         }
     }
     fn set_incumbent(&mut self, text: &str) -> Result<(), String> {
@@ -489,7 +515,11 @@ impl RsiApi {
         let info = snapshot_json(&agent, 0);
         self.sessions.insert(
             id.clone(),
-            Session { agent, history: Vec::new(), config: params.clone() },
+            Session {
+                agent,
+                history: Vec::new(),
+                config: params.clone(),
+            },
         );
         let mut out = Json::obj();
         out.set("ok", Json::Bool(true))
@@ -507,10 +537,18 @@ impl RsiApi {
             .ok_or_else(|| format!("session inconnue : '{id}'"))?;
         let agent = build_agent(&cfg)?;
         let info = snapshot_json(&agent, 0);
-        self.sessions
-            .insert(id.clone(), Session { agent, history: Vec::new(), config: cfg });
+        self.sessions.insert(
+            id.clone(),
+            Session {
+                agent,
+                history: Vec::new(),
+                config: cfg,
+            },
+        );
         let mut out = Json::obj();
-        out.set("ok", Json::Bool(true)).set("id", Json::Str(id)).set("initial", info);
+        out.set("ok", Json::Bool(true))
+            .set("id", Json::Str(id))
+            .set("initial", info);
         Ok(out)
     }
 
@@ -569,8 +607,10 @@ impl RsiApi {
         }
         if let Some(v) = params.get("breaker_rpn").and_then(|v| v.as_f64()) {
             lcfg.breaker_rpn = Some(v);
-            lcfg.rollback_on_breach =
-                params.get("rollback_on_breach").and_then(|v| v.as_bool()).unwrap_or(true);
+            lcfg.rollback_on_breach = params
+                .get("rollback_on_breach")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
         }
         if let Some(v) = params.get("max_seconds").and_then(|v| v.as_f64()) {
             lcfg.max_seconds = Some(v);
@@ -697,13 +737,48 @@ impl RsiApi {
             format!("# HELP {name} {help}\n# TYPE {name} {ty}\n{name} {val}\n")
         };
         let text = [
-            metric("rsi_sessions", "Active agent sessions.", "gauge", self.sessions.len()),
-            metric("rsi_refine_sessions", "Active refinement sessions.", "gauge", self.refines.len()),
-            metric("rsi_total_steps", "Cumulative RSI steps across sessions.", "counter", total_steps),
-            metric("rsi_audited_sessions", "Sessions with a hash-chained audit log.", "gauge", audited),
-            metric("rsi_audit_intact", "1 if all audited sessions verify, else 0.", "gauge", audit_intact),
-            metric("rsi_refine_proposals_seen", "Proposals examined by the server.", "counter", proposals),
-            metric("rsi_refine_accepted", "Strictly-better proposals adopted.", "counter", accepted),
+            metric(
+                "rsi_sessions",
+                "Active agent sessions.",
+                "gauge",
+                self.sessions.len(),
+            ),
+            metric(
+                "rsi_refine_sessions",
+                "Active refinement sessions.",
+                "gauge",
+                self.refines.len(),
+            ),
+            metric(
+                "rsi_total_steps",
+                "Cumulative RSI steps across sessions.",
+                "counter",
+                total_steps,
+            ),
+            metric(
+                "rsi_audited_sessions",
+                "Sessions with a hash-chained audit log.",
+                "gauge",
+                audited,
+            ),
+            metric(
+                "rsi_audit_intact",
+                "1 if all audited sessions verify, else 0.",
+                "gauge",
+                audit_intact,
+            ),
+            metric(
+                "rsi_refine_proposals_seen",
+                "Proposals examined by the server.",
+                "counter",
+                proposals,
+            ),
+            metric(
+                "rsi_refine_accepted",
+                "Strictly-better proposals adopted.",
+                "counter",
+                accepted,
+            ),
         ]
         .concat();
         let mut out = Json::obj();
@@ -736,16 +811,18 @@ impl RsiApi {
     // ------------------------------------------------------------------ //
 
     fn refine_mut(&mut self, id: &str) -> Result<&mut RefineSession, String> {
-        self.refines
-            .get_mut(id)
-            .ok_or_else(|| format!("session de raffinement inconnue : '{id}' (appelez d'abord 'refine_new')"))
+        self.refines.get_mut(id).ok_or_else(|| {
+            format!("session de raffinement inconnue : '{id}' (appelez d'abord 'refine_new')")
+        })
     }
 
     /// Crée une session de raffinement. `domain`: 'synthesis' (défaut) ou 'tuning'.
     fn cmd_refine_new(&mut self, params: &Json) -> ApiResult {
         let id = Self::session_id(params);
         if !self.refines.contains_key(&id) && self.refines.len() >= MAX_SESSIONS {
-            return Err(format!("limite de {MAX_SESSIONS} sessions de raffinement atteinte"));
+            return Err(format!(
+                "limite de {MAX_SESSIONS} sessions de raffinement atteinte"
+            ));
         }
         let (domain, descriptor) = build_domain(params)?;
         let s = RefineSession {
@@ -783,7 +860,9 @@ impl RsiApi {
             .set("rejected_worse", Json::Num(s.rejected_worse as f64))
             .set("rejected_unparsed", Json::Num(s.rejected_unparsed as f64));
         let mut out = Json::obj();
-        out.set("ok", Json::Bool(true)).set("id", Json::Str(id)).set("state", state);
+        out.set("ok", Json::Bool(true))
+            .set("id", Json::Str(id))
+            .set("state", state);
         Ok(out)
     }
 
@@ -791,10 +870,15 @@ impl RsiApi {
     fn cmd_refine_load(&mut self, params: &Json) -> ApiResult {
         let id = Self::session_id(params);
         if !self.refines.contains_key(&id) && self.refines.len() >= MAX_SESSIONS {
-            return Err(format!("limite de {MAX_SESSIONS} sessions de raffinement atteinte"));
+            return Err(format!(
+                "limite de {MAX_SESSIONS} sessions de raffinement atteinte"
+            ));
         }
         let state = params.get("state").ok_or("paramètre 'state' requis")?;
-        let config = state.get("config").cloned().ok_or("state.config manquant")?;
+        let config = state
+            .get("config")
+            .cloned()
+            .ok_or("state.config manquant")?;
         let (mut domain, descriptor) = build_domain(&config)?;
         if let Some(text) = state.get("incumbent").and_then(|v| v.as_str()) {
             domain
@@ -815,7 +899,9 @@ impl RsiApi {
         let info = incumbent_json(&s);
         self.refines.insert(id.clone(), s);
         let mut out = Json::obj();
-        out.set("ok", Json::Bool(true)).set("id", Json::Str(id)).set("incumbent", info);
+        out.set("ok", Json::Bool(true))
+            .set("id", Json::Str(id))
+            .set("incumbent", info);
         Ok(out)
     }
 
@@ -952,7 +1038,10 @@ impl RsiApi {
 /// Construit le domaine concret d'une session de raffinement depuis sa config
 /// JSON (partagé par `refine_new` et `refine_load`).
 fn build_domain(params: &Json) -> Result<(Box<dyn RefineDomain>, String), String> {
-    let domain_name = params.get("domain").and_then(|v| v.as_str()).unwrap_or("synthesis");
+    let domain_name = params
+        .get("domain")
+        .and_then(|v| v.as_str())
+        .unwrap_or("synthesis");
     match domain_name {
         "synthesis" => {
             let target = params
@@ -970,17 +1059,26 @@ fn build_domain(params: &Json) -> Result<(Box<dyn RefineDomain>, String), String
             let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(2026);
             let task = SymbolicSynthesis::from_target_split(f, lo, hi, n, seed);
             let incumbent = task.seed_candidate();
-            Ok((Box::new(SynthDomain { task, incumbent }), format!("synthesis:{target}")))
+            Ok((
+                Box::new(SynthDomain { task, incumbent }),
+                format!("synthesis:{target}"),
+            ))
         }
         "tuning" => {
             let task = ConfigTuning::new();
             let incumbent = task.seed_candidate();
-            Ok((Box::new(TuneDomain { task, incumbent }), "tuning".to_string()))
+            Ok((
+                Box::new(TuneDomain { task, incumbent }),
+                "tuning".to_string(),
+            ))
         }
         "prompt" => {
             let task = PromptOpt::new();
             let incumbent = task.seed_candidate();
-            Ok((Box::new(PromptDomain { task, incumbent }), "prompt".to_string()))
+            Ok((
+                Box::new(PromptDomain { task, incumbent }),
+                "prompt".to_string(),
+            ))
         }
         #[cfg(feature = "wasm")]
         "wasm" => {
@@ -993,7 +1091,9 @@ fn build_domain(params: &Json) -> Result<(Box<dyn RefineDomain>, String), String
             let incumbent = task.seed_candidate();
             Ok((Box::new(WasmDomain { task, incumbent }), "wasm".to_string()))
         }
-        other => Err(format!("domaine inconnu : '{other}' (synthesis|tuning|prompt|wasm)")),
+        other => Err(format!(
+            "domaine inconnu : '{other}' (synthesis|tuning|prompt|wasm)"
+        )),
     }
 }
 
@@ -1004,7 +1104,9 @@ fn target_fn(name: &str) -> Result<fn(f64) -> f64, String> {
         "quadratic" => Ok(|x| x * x + 1.0),
         "linear" => Ok(|x| 2.0 * x - 1.0),
         "cubic" => Ok(|x| x * x * x - x),
-        other => Err(format!("cible inconnue : '{other}' (quadratic|linear|cubic)")),
+        other => Err(format!(
+            "cible inconnue : '{other}' (quadratic|linear|cubic)"
+        )),
     }
 }
 
@@ -1063,7 +1165,10 @@ fn build_agent(cfg: &Json) -> Result<RSIAgent, String> {
         stab.forgetting = v;
     }
 
-    let optimizer = cfg.get("optimizer").and_then(|v| v.as_str()).unwrap_or("random");
+    let optimizer = cfg
+        .get("optimizer")
+        .and_then(|v| v.as_str())
+        .unwrap_or("random");
     let meta: Box<dyn MetaSearch> = match optimizer {
         "cma" | "cma-es" | "sep-cma-es" => {
             let pop = bounded(cfg, "population", 0, 0, MAX_POPULATION);
@@ -1073,7 +1178,10 @@ fn build_agent(cfg: &Json) -> Result<RSIAgent, String> {
         }
         "random" | "neighborhood" => {
             let cand = bounded(cfg, "candidates", 48, 1, MAX_CANDIDATES);
-            let scale = cfg.get("explore_scale").and_then(|v| v.as_f64()).unwrap_or(0.12);
+            let scale = cfg
+                .get("explore_scale")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.12);
             Box::new(MetaOptimizer::new(cand, scale, seed ^ 0xABCD))
         }
         other => return Err(format!("optimiseur inconnu : '{other}' (random|cma)")),
@@ -1102,7 +1210,10 @@ fn step_report_json(r: &StepReport) -> Json {
         .set("p_eff", Json::Num(r.p_eff))
         .set("state_norm", Json::Num(r.state_norm))
         .set("meta_delta_norm", Json::Num(r.meta_delta_norm))
-        .set("frac_limited_by_substrate", Json::Num(r.frac_limited_by_substrate))
+        .set(
+            "frac_limited_by_substrate",
+            Json::Num(r.frac_limited_by_substrate),
+        )
         .set("risk_global", Json::Num(r.risk_global))
         .set("max_rpn", Json::Num(r.max_rpn))
         .set("most_critical", Json::Str(r.most_critical.to_string()))
@@ -1128,8 +1239,14 @@ fn snapshot_json(agent: &RSIAgent, t: usize) -> Json {
     let b = agent.surface.bottleneck(&agent.state, &agent.substrate);
     let mut bottleneck = Json::obj();
     bottleneck
-        .set("frac_limited_by_substrate", Json::Num(b.frac_limited_by_substrate))
-        .set("frac_limited_by_cognition", Json::Num(b.frac_limited_by_cognition))
+        .set(
+            "frac_limited_by_substrate",
+            Json::Num(b.frac_limited_by_substrate),
+        )
+        .set(
+            "frac_limited_by_cognition",
+            Json::Num(b.frac_limited_by_cognition),
+        )
         .set("mean_phi", Json::Num(b.mean_phi))
         .set("mean_g", Json::Num(b.mean_g));
 
@@ -1138,7 +1255,10 @@ fn snapshot_json(agent: &RSIAgent, t: usize) -> Json {
         .set("si_global", Json::Num(agent.si_global()))
         .set("p_eff", Json::Num(agent.substrate.effective_power()))
         .set("state_norm", Json::Num(agent.state.norm()))
-        .set("capabilities", capabilities_json(&agent.state.capability_array()))
+        .set(
+            "capabilities",
+            capabilities_json(&agent.state.capability_array()),
+        )
         .set("bottleneck", bottleneck);
     out
 }
@@ -1205,13 +1325,15 @@ mod tests {
         api.handle("create", &cfg).unwrap();
 
         let mut run = Json::obj();
-        run.set("id", Json::Str("s1".into())).set("steps", Json::Num(40.0));
+        run.set("id", Json::Str("s1".into()))
+            .set("steps", Json::Num(40.0));
         let res = api.handle("run", &run).unwrap();
         let gain = res.get("gain").and_then(|v| v.as_f64()).unwrap();
         assert!(gain > 0.0, "gain attendu positif, obtenu {gain}");
 
         let mut exp = Json::obj();
-        exp.set("id", Json::Str("s1".into())).set("format", Json::Str("csv".into()));
+        exp.set("id", Json::Str("s1".into()))
+            .set("format", Json::Str("csv".into()));
         let res = api.handle("export", &exp).unwrap();
         assert_eq!(res.get("rows").and_then(|v| v.as_f64()), Some(40.0));
     }
@@ -1220,13 +1342,16 @@ mod tests {
     fn cma_optimizer_via_api() {
         let mut api = RsiApi::new();
         let mut cfg = Json::obj();
-        cfg.set("optimizer", Json::Str("cma".into())).set("seed", Json::Num(3.0));
+        cfg.set("optimizer", Json::Str("cma".into()))
+            .set("seed", Json::Num(3.0));
         api.handle("create", &cfg).unwrap();
-        let res = api.handle("run", &{
-            let mut r = Json::obj();
-            r.set("steps", Json::Num(30.0));
-            r
-        }).unwrap();
+        let res = api
+            .handle("run", &{
+                let mut r = Json::obj();
+                r.set("steps", Json::Num(30.0));
+                r
+            })
+            .unwrap();
         assert!(res.get("si_end").and_then(|v| v.as_f64()).unwrap() > 0.0);
     }
 
@@ -1234,7 +1359,8 @@ mod tests {
     fn run_until_via_api_stops_on_target() {
         let mut api = RsiApi::new();
         let mut cfg = Json::obj();
-        cfg.set("id", Json::Str("L".into())).set("seed", Json::Num(7.0));
+        cfg.set("id", Json::Str("L".into()))
+            .set("seed", Json::Num(7.0));
         api.handle("create", &cfg).unwrap();
         let si0 = api
             .handle("state", &{
@@ -1252,7 +1378,10 @@ mod tests {
             .set("max_steps", Json::Num(500.0))
             .set("target_si", Json::Num(si0 + 0.03));
         let res = api.handle("run_until", &p).unwrap();
-        assert_eq!(res.get("reason").and_then(|v| v.as_str()), Some("target_reached"));
+        assert_eq!(
+            res.get("reason").and_then(|v| v.as_str()),
+            Some("target_reached")
+        );
         assert!(res.get("si_end").and_then(|v| v.as_f64()).unwrap() >= si0 + 0.03);
     }
 
@@ -1270,18 +1399,26 @@ mod tests {
         let agent = RSIAgent::demo(7).with_audit(Box::new(HashChainLog::new()));
         api2.sessions.insert(
             "x".into(),
-            Session { agent, history: Vec::new(), config: Json::obj() },
+            Session {
+                agent,
+                history: Vec::new(),
+                config: Json::obj(),
+            },
         );
         api2.handle("run", &{
             let mut r = Json::obj();
-            r.set("id", Json::Str("x".into())).set("steps", Json::Num(10.0));
+            r.set("id", Json::Str("x".into()))
+                .set("steps", Json::Num(10.0));
             r
         })
         .unwrap();
         let h = api2.handle("health", &Json::obj()).unwrap();
         assert_eq!(h.get("sessions").and_then(|v| v.as_f64()), Some(1.0));
         assert!(h.get("total_steps").and_then(|v| v.as_f64()).unwrap() >= 10.0);
-        assert_eq!(h.get("audited_sessions").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            h.get("audited_sessions").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
         assert_eq!(h.get("audit_intact").and_then(|v| v.as_bool()), Some(true));
     }
 
@@ -1289,7 +1426,10 @@ mod tests {
     fn metrics_renders_prometheus_exposition() {
         let mut api = RsiApi::new();
         let res = api.handle("metrics", &Json::obj()).unwrap();
-        assert_eq!(res.get("format").and_then(|v| v.as_str()), Some("prometheus"));
+        assert_eq!(
+            res.get("format").and_then(|v| v.as_str()),
+            Some("prometheus")
+        );
         let text = res.get("metrics").and_then(|v| v.as_str()).unwrap();
         // format d'exposition : HELP/TYPE + valeurs
         assert!(text.contains("# TYPE rsi_sessions gauge"));
@@ -1390,8 +1530,14 @@ mod tests {
         );
         let res = api.handle("propose", &p).unwrap();
         let inc = res.get("incumbent").unwrap();
-        assert_eq!(inc.get("rejected_unparsed").and_then(|v| v.as_f64()), Some(1.0));
-        assert_eq!(inc.get("rejected_unsafe").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            inc.get("rejected_unparsed").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
+        assert_eq!(
+            inc.get("rejected_unsafe").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
         assert_eq!(inc.get("accepted").and_then(|v| v.as_f64()), Some(1.0));
     }
 
@@ -1408,7 +1554,8 @@ mod tests {
     fn refine_unknown_target_errors() {
         let mut api = RsiApi::new();
         let mut c = Json::obj();
-        c.set("id", Json::Str("t".into())).set("target", Json::Str("exp".into()));
+        c.set("id", Json::Str("t".into()))
+            .set("target", Json::Str("exp".into()));
         assert!(api.handle("refine_new", &c).is_err());
     }
 
@@ -1416,10 +1563,14 @@ mod tests {
     fn refine_prompt_domain_rejects_injection_via_mcp() {
         let mut api = RsiApi::new();
         let mut c = Json::obj();
-        c.set("id", Json::Str("pr".into())).set("domain", Json::Str("prompt".into()));
+        c.set("id", Json::Str("pr".into()))
+            .set("domain", Json::Str("prompt".into()));
         let created = api.handle("refine_new", &c).unwrap();
         assert_eq!(
-            created.get("incumbent").and_then(|i| i.get("domain")).and_then(|v| v.as_str()),
+            created
+                .get("incumbent")
+                .and_then(|i| i.get("domain"))
+                .and_then(|v| v.as_str()),
             Some("prompt")
         );
 
@@ -1434,7 +1585,10 @@ mod tests {
         let res = api.handle("propose", &p).unwrap();
         let inc = res.get("incumbent").unwrap();
         assert_eq!(res.get("adopted").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(inc.get("rejected_unsafe").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            inc.get("rejected_unsafe").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
         assert!(inc.get("score").and_then(|v| v.as_f64()).unwrap() > 0.9);
     }
 
@@ -1443,10 +1597,14 @@ mod tests {
     fn refine_wasm_domain_executes_and_rejects_imports_via_mcp() {
         let mut api = RsiApi::new();
         let mut c = Json::obj();
-        c.set("id", Json::Str("w".into())).set("domain", Json::Str("wasm".into()));
+        c.set("id", Json::Str("w".into()))
+            .set("domain", Json::Str("wasm".into()));
         let created = api.handle("refine_new", &c).unwrap();
         assert_eq!(
-            created.get("incumbent").and_then(|i| i.get("domain")).and_then(|v| v.as_str()),
+            created
+                .get("incumbent")
+                .and_then(|i| i.get("domain"))
+                .and_then(|v| v.as_str()),
             Some("wasm")
         );
 
@@ -1462,7 +1620,10 @@ mod tests {
         let res = api.handle("propose", &p).unwrap();
         let inc = res.get("incumbent").unwrap();
         // le module à import est rejeté (sûreté), le module pur x²+1 est adopté
-        assert_eq!(inc.get("rejected_unsafe").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            inc.get("rejected_unsafe").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
         assert_eq!(res.get("adopted").and_then(|v| v.as_bool()), Some(true));
         assert!(inc.get("score").and_then(|v| v.as_f64()).unwrap() > 0.9);
     }
@@ -1471,7 +1632,8 @@ mod tests {
     fn refine_unknown_domain_errors() {
         let mut api = RsiApi::new();
         let mut c = Json::obj();
-        c.set("id", Json::Str("d".into())).set("domain", Json::Str("magic".into()));
+        c.set("id", Json::Str("d".into()))
+            .set("domain", Json::Str("magic".into()));
         assert!(api.handle("refine_new", &c).is_err());
     }
 
@@ -1502,7 +1664,10 @@ mod tests {
         let loaded = api.handle("refine_load", &ld).unwrap();
         let inc = loaded.get("incumbent").unwrap();
         // incumbent et compteurs restaurés
-        assert_eq!(inc.get("pretty").and_then(|v| v.as_str()), Some(score_a.as_str()));
+        assert_eq!(
+            inc.get("pretty").and_then(|v| v.as_str()),
+            Some(score_a.as_str())
+        );
         assert!(inc.get("score").and_then(|v| v.as_f64()).unwrap() > 0.9);
         assert_eq!(inc.get("accepted").and_then(|v| v.as_f64()), Some(1.0));
     }
@@ -1513,7 +1678,12 @@ mod tests {
         refine(&mut api, "a");
         let mut sv = Json::obj();
         sv.set("id", Json::Str("a".into()));
-        let mut state = api.handle("refine_save", &sv).unwrap().get("state").unwrap().clone();
+        let mut state = api
+            .handle("refine_save", &sv)
+            .unwrap()
+            .get("state")
+            .unwrap()
+            .clone();
         // corrompt l'incumbent avec une expression trop complexe (> MAX_EXPR_SIZE)
         let huge = (0..40).map(|_| "x").collect::<Vec<_>>().join(" + ");
         state.set("incumbent", Json::Str(huge));
@@ -1527,10 +1697,14 @@ mod tests {
         let mut api = RsiApi::new();
         // session de domaine 'tuning'
         let mut c = Json::obj();
-        c.set("id", Json::Str("g".into())).set("domain", Json::Str("tuning".into()));
+        c.set("id", Json::Str("g".into()))
+            .set("domain", Json::Str("tuning".into()));
         let created = api.handle("refine_new", &c).unwrap();
         assert_eq!(
-            created.get("incumbent").and_then(|i| i.get("domain")).and_then(|v| v.as_str()),
+            created
+                .get("incumbent")
+                .and_then(|i| i.get("domain"))
+                .and_then(|v| v.as_str()),
             Some("tuning")
         );
 
@@ -1546,9 +1720,16 @@ mod tests {
         let res = api.handle("propose", &p).unwrap();
         assert_eq!(res.get("adopted").and_then(|v| v.as_bool()), Some(true));
         let inc = res.get("incumbent").unwrap();
-        assert_eq!(inc.get("rejected_unsafe").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            inc.get("rejected_unsafe").and_then(|v| v.as_f64()),
+            Some(1.0)
+        );
         assert!(inc.get("score").and_then(|v| v.as_f64()).unwrap() > 0.9);
         // l'incumbent est bien une config JSON
-        assert!(inc.get("pretty").and_then(|v| v.as_str()).unwrap().contains("top_k"));
+        assert!(inc
+            .get("pretty")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("top_k"));
     }
 }

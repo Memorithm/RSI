@@ -214,7 +214,11 @@ mod tests {
         let state = CognitiveState::random(Dims::uniform(4), &mut rng, 0.3);
         let sub = Substrate::default_with(4, 4, &mut rng);
         let (_next, info) = dyn_.constrained_step(&state, &sub, 1.0);
-        assert!(info.delta_norm <= cfg.lambda + 1e-9, "‖ΔS‖={}", info.delta_norm);
+        assert!(
+            info.delta_norm <= cfg.lambda + 1e-9,
+            "‖ΔS‖={}",
+            info.delta_norm
+        );
     }
 
     #[test]
@@ -255,7 +259,8 @@ mod tests {
             // État clippé dans [0,1]ⁿ : domaine opérationnel réel du moteur (qui
             // clippe à chaque pas). L'invariant d'amplitude repose sur la
             // non-expansivité de la projection, valable seulement dans ce domaine.
-            let mut state = CognitiveState::random(Dims::uniform(n), &mut rng, 0.5).clipped(0.0, 1.0);
+            let mut state =
+                CognitiveState::random(Dims::uniform(n), &mut rng, 0.5).clipped(0.0, 1.0);
             let sub = Substrate::default_with(n, n, &mut rng);
 
             for _ in 0..12 {

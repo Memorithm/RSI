@@ -322,16 +322,25 @@ impl RSIAgent {
         // une réponse *ciblée* selon le mode le plus critique.
         let mut active = self.strategy.clone();
         let mut mitigation = "none";
-        let rpn_exceeded = self.risk_cfg.active_response && pre_risk.max_rpn > self.risk_cfg.rpn_max;
+        let rpn_exceeded =
+            self.risk_cfg.active_response && pre_risk.max_rpn > self.risk_cfg.rpn_max;
         // §7 — garde-fou de VÉLOCITÉ : si le risque structurel grimpe de plus de
         // `risk_delta` d'un pas à l'autre, on entre en mode conservateur *avant*
         // que le risque n'accélère (borne la dérivée de Risk_global par pas).
         let risk_rising = self.risk_cfg.active_response
-            && risk_velocity_exceeded(self.prev_pre_risk, pre_risk.risk_global, self.risk_cfg.risk_delta);
+            && risk_velocity_exceeded(
+                self.prev_pre_risk,
+                pre_risk.risk_global,
+                self.risk_cfg.risk_delta,
+            );
         let over_threshold = rpn_exceeded || risk_rising;
         if over_threshold {
             active.gain *= 0.5; // réponse de base : pas conservateur
-            mitigation = if rpn_exceeded { "damp_gain" } else { "damp_risk_delta" };
+            mitigation = if rpn_exceeded {
+                "damp_gain"
+            } else {
+                "damp_risk_delta"
+            };
         }
         self.prev_pre_risk = pre_risk.risk_global;
 
@@ -361,7 +370,8 @@ impl RSIAgent {
         // §D — routage par criticité : l'améliorateur de substrat (coûteux) n'est
         // invoqué que lorsque le substrat est la contrainte qui bride réellement
         // (goulot substrat élevé OU mode critique = effondrement du substrat).
-        let substrate_is_critical = pre_bottleneck.frac_limited_by_substrate >= self.route_threshold
+        let substrate_is_critical = pre_bottleneck.frac_limited_by_substrate
+            >= self.route_threshold
             || pre_risk.most_critical == crate::criticality::modes::SUBSTRATE_COLLAPSE;
         // §L3 — cadence : on n'améliore le substrat qu'un pas sur substrate_interval
         let substrate_due = self.t.is_multiple_of(self.substrate_interval);
@@ -411,7 +421,9 @@ impl RSIAgent {
                 let mut tries = 0u32;
                 while si_combined < si_before - eps_eff && tries < 20 {
                     factor *= 0.5;
-                    next_state = state_before.add(&combined_delta.scaled(factor)).clipped(0.0, 1.0);
+                    next_state = state_before
+                        .add(&combined_delta.scaled(factor))
+                        .clipped(0.0, 1.0);
                     si_combined = self.surface.si_global(&next_state, &substrate);
                     tries += 1;
                 }
@@ -445,7 +457,9 @@ impl RSIAgent {
             memory_active: self.memory.is_some(),
         };
         let risk = self.risk_model.assess(&signals);
-        let si_safe = self.risk_model.si_safe(si_after, &risk, self.risk_cfg.kappa);
+        let si_safe = self
+            .risk_model
+            .si_safe(si_after, &risk, self.risk_cfg.kappa);
 
         // §7bis — audit hash-chaîné : trace reproductible et vérifiable du pas ℳ.
         if self.audit.is_some() {
@@ -620,7 +634,11 @@ mod tests {
     fn reports_criticality_fields() {
         let mut agent = RSIAgent::demo(2026);
         for r in agent.run(40) {
-            assert!((0.0..=1.0).contains(&r.risk_global), "risk={}", r.risk_global);
+            assert!(
+                (0.0..=1.0).contains(&r.risk_global),
+                "risk={}",
+                r.risk_global
+            );
             assert!((0.0..=1.0).contains(&r.max_rpn));
             assert!(r.si_safe <= r.si_global + 1e-12); // SI_safe pénalise le risque
             assert!(!r.most_critical.is_empty());
@@ -678,7 +696,10 @@ mod tests {
         assert_eq!(r.most_critical, crate::criticality::modes::VALUE_DRIFT);
         assert_eq!(r.mitigation, "realign_V");
         let v_after: f64 = agent.state.v.iter().sum::<f64>() / agent.state.v.len() as f64;
-        assert!(v_after > v_before, "V réaligné vers le haut : {v_before} → {v_after}");
+        assert!(
+            v_after > v_before,
+            "V réaligné vers le haut : {v_before} → {v_after}"
+        );
     }
 
     #[test]
@@ -692,7 +713,10 @@ mod tests {
         let d0: f64 = agent.state.d.iter().sum::<f64>() / agent.state.d.len() as f64;
         agent.run(8);
         let d1: f64 = agent.state.d.iter().sum::<f64>() / agent.state.d.len() as f64;
-        assert!(d1 > d0, "D doit monter via la source de connaissances : {d0} → {d1}");
+        assert!(
+            d1 > d0,
+            "D doit monter via la source de connaissances : {d0} → {d1}"
+        );
         assert_eq!(agent.active_backends(), vec!["knowledge_source"]);
     }
 
@@ -754,10 +778,22 @@ mod tests {
             let lam = agent.dynamics_cfg.lambda;
             let eps = agent.dynamics_cfg.epsilon;
             for r in agent.run(25) {
-                assert!(r.appr.delta_norm <= lam + 1e-9, "‖ΔS‖={} > λ", r.appr.delta_norm);
-                assert!((0.0..=1.0).contains(&r.si_global), "SI_global={}", r.si_global);
+                assert!(
+                    r.appr.delta_norm <= lam + 1e-9,
+                    "‖ΔS‖={} > λ",
+                    r.appr.delta_norm
+                );
+                assert!(
+                    (0.0..=1.0).contains(&r.si_global),
+                    "SI_global={}",
+                    r.si_global
+                );
                 assert!(r.p_eff > 0.0 && r.p_eff < 1.0, "P_eff={}", r.p_eff);
-                assert!((0.0..=1.0).contains(&r.risk_global), "risk_global={}", r.risk_global);
+                assert!(
+                    (0.0..=1.0).contains(&r.risk_global),
+                    "risk_global={}",
+                    r.risk_global
+                );
                 assert!((0.0..=1.0).contains(&r.max_rpn), "max_rpn={}", r.max_rpn);
                 assert!(
                     r.capabilities.iter().all(|c| (0.0..=1.0).contains(c)),

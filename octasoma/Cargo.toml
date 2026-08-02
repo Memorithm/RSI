@@ -1,0 +1,5 @@
+[package]
+name = "octasoma"
+version = "0.10.0"
+edition = "2021"
+[dependencies]

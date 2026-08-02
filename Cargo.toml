@@ -62,12 +62,12 @@ observability = ["dep:tracing"]
 simd = ["dep:wide"]
 
 [dependencies]
-forge-core = { git = "https://github.com/Memorithm/forge", optional = true }
-octasoma = { git = "https://github.com/Memorithm/octasoma", optional = true }
-ccos = { git = "https://github.com/Memorithm/CCOS", optional = true }
+forge-core = { path = "forge", optional = true }
+octasoma = { path = "octasoma", optional = true }
+ccos = { path = "ccos", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-scirust-rsi = { git = "https://github.com/Memorithm/scirust", optional = true }
+scirust-rsi = { path = "scirust-rsi", optional = true }
 ureq = { version = "2", optional = true }
 wasmi = { version = "0.31", optional = true }
 wat = { version = "1", optional = true }

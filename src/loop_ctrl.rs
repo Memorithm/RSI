@@ -300,4 +300,80 @@ mod tests {
         assert_eq!(out.reason, StopReason::MaxSteps);
         assert_eq!(out.steps, 10);
     }
+
+    #[test]
+    fn test_deficit_geometry_interceptor_continue() {
+        let mut interceptor = DeficitGeometryInterceptor::new(5.0);
+        // Déficit faible : phi=0.8, g=0.7 => écart 0.1
+        let dec = interceptor.intercept_token(0.8, 0.7);
+        assert_eq!(dec, InterceptorDecision::Continue);
+        assert!((interceptor.cumulative_deficit - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_deficit_geometry_interceptor_pruning() {
+        let mut interceptor = DeficitGeometryInterceptor::new(1.0);
+        // Écart initial faible
+        let dec1 = interceptor.intercept_token(0.5, 0.4); // écart 0.1
+        assert_eq!(dec1, InterceptorDecision::Continue);
+
+        // Écart fort, divergence majeure par rapport au substrat : phi=2.0, g=0.5 => écart 1.5
+        let dec2 = interceptor.intercept_token(2.0, 0.5);
+        assert_eq!(dec2, InterceptorDecision::Prune);
+        assert!(interceptor.cumulative_deficit > 1.0);
+    }
+}
+
+// ===================== GÉOMÉTRIE DU DÉFICIT EN TEMPS RÉEL ================= //
+
+/// Décision prise par l'intercepteur en temps réel pour chaque token ou pas de génération.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterceptorDecision {
+    /// Continuer la génération sur la branche courante.
+    Continue,
+    /// Éliger (prune) immédiatement la branche pour cause de divergence géométrique.
+    Prune,
+}
+
+/// Intercepteur de géométrie du déficit s'injectant en temps réel dans le flux de génération de tokens.
+/// Remplace avantageusement les rollbacks post-génération en stoppant immédiatement les branches divergentes.
+pub struct DeficitGeometryInterceptor {
+    /// Seuil maximal de déficit cumulatif autorisé sur une branche.
+    pub max_cumulative_deficit: f64,
+    /// Somme cumulative du déficit mesuré sur la trajectoire courante.
+    pub cumulative_deficit: f64,
+    /// Dernière valeur de la capacité enregistrée pour analyse de transition.
+    pub last_val: f64,
+}
+
+impl DeficitGeometryInterceptor {
+    /// Crée un nouvel intercepteur avec un seuil de déficit maximum fixé.
+    pub fn new(max_cumulative_deficit: f64) -> Self {
+        DeficitGeometryInterceptor {
+            max_cumulative_deficit,
+            cumulative_deficit: 0.0,
+            last_val: 0.0,
+        }
+    }
+
+    /// S'injecte dans la boucle de génération d'un token. Calcule en temps réel le déficit instantané
+    /// entre la performance cognitive théorique `phi` (ex. charge du réseau d'attention) et la
+    /// bande passante réelle autorisée par le substrat matériel `g`.
+    ///
+    /// Renvoie `InterceptorDecision::Prune` pour arrêter immédiatement la branche si la trajectoire
+    /// s'écarte trop des contraintes mathématiques fixées par `max_cumulative_deficit`.
+    pub fn intercept_token(&mut self, phi: f64, g: f64) -> InterceptorDecision {
+        // Calcul du déficit géométrique (Law of the Minimum) : écart entre cognition attendue et substrat effectif.
+        let real_capability = phi.min(g);
+        let instant_deficit = (phi - real_capability).abs();
+
+        self.cumulative_deficit += instant_deficit;
+        self.last_val = real_capability;
+
+        if self.cumulative_deficit > self.max_cumulative_deficit {
+            InterceptorDecision::Prune
+        } else {
+            InterceptorDecision::Continue
+        }
+    }
 }

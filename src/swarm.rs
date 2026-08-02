@@ -6,6 +6,8 @@
 //! par une closure `build(seed)`, donc l'agent ne traverse jamais les threads —
 //! seuls les résultats scalaires reviennent. Déterministe par graine.
 
+#![allow(clippy::items_after_test_module)]
+
 use crate::agent::RSIAgent;
 
 /// Résultat d'un membre de l'essaim.
@@ -299,8 +301,8 @@ impl SwarmMesh6 {
         assert!(node_id < 6, "ID de nœud hors limites");
         let node = &self.nodes[node_id];
         let mut msgs = [0u64; 5];
-        for i in 0..5 {
-            msgs[i] = node.mailboxes[i].load(std::sync::atomic::Ordering::Acquire);
+        for (i, msg) in msgs.iter_mut().enumerate() {
+            *msg = node.mailboxes[i].load(std::sync::atomic::Ordering::Acquire);
         }
         msgs
     }

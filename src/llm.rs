@@ -19,6 +19,8 @@
 //!
 //! Le LLM ne voit jamais `LlmGuard` : il reçoit un prompt, rend `k` propositions.
 
+#![allow(clippy::missing_safety_doc, clippy::manual_dangling_ptr)]
+
 use crate::ascent::RefineTask;
 use std::time::{Duration, Instant};
 

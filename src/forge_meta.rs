@@ -39,7 +39,7 @@ pub struct StrategyCand {
 
 impl Candidate for StrategyCand {
     fn id(&self) -> CandidateId {
-        fnv1a(&self.repr())
+        fnv1a(self.repr())
     }
     fn repr(&self) -> String {
         // représentation textuelle stable (6 décimales) → hash déterministe

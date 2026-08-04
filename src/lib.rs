@@ -73,6 +73,7 @@ pub mod llm;
 pub mod measured_substrate;
 pub mod memory;
 pub mod meta;
+pub mod meta_neuro_symbolic;
 pub mod obs;
 // Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
 #[cfg(feature = "octasoma")]
@@ -97,6 +98,7 @@ pub mod trajectory;
 pub mod tuning;
 #[cfg(feature = "wasm")]
 pub mod wasm_domain;
+pub mod web_crawl;
 
 pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
@@ -118,7 +120,12 @@ pub use knowledge::{CorpusKnowledge, KnowledgeSource, PapersKnowledge};
 pub use loop_ctrl::{LoopConfig, LoopObserver, LoopOutcome, StopReason};
 pub use measured_substrate::MeasuredSubstrate;
 pub use memory::{ContextMemory, LinearContextMemory};
-pub use meta::{CmaEsMeta, MetaOptimizer, MetaSearch, MetaStrategy};
+pub use meta::{CmaEsMeta, DgmMetaParams, MetaOptimizer, MetaSearch, MetaStrategy};
+pub use meta_neuro_symbolic::{
+    compute_meta_ns_loss, AgentExecutionTrace, IntegritySha256Validator, MetaNSConfig, MetaNSState,
+    NoUnsafeValidator, PerTraceBuffer, SymbolicExprValidator, SymbolicValidator,
+    WorkspaceConstraintsValidator,
+};
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
 pub use rng::Rng;
@@ -129,5 +136,11 @@ pub use surface::{
     Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
 };
 pub use swarm::{run_swarm, run_swarm_demo, SwarmMember, SwarmResult};
-pub use synthesis::{Expr, SymbolicSynthesis};
+pub use synthesis::{
+    symbolic_equal, Conjecture, ConjectureGenerator, Expr, SymbolicSynthesis,
+};
 pub use tasks::{GroundedCapability, Task, TaskCorpus};
+pub use web_crawl::{
+    CrawledPage, CrawlLimits, CrawlerOptions, CrawlReport, DdgResult, DuckDuckGoSearch, SearchResult,
+    TextIndex, WebCrawler, WebCrawlerContext,
+};

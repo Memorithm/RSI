@@ -132,8 +132,11 @@ fn subtree_at(e: &Expr, idx: usize, cur: &mut usize) -> Option<Expr> {
     }
     match e {
         Expr::X | Expr::Const(_) => None,
-        Expr::Neg(a) => subtree_at(a, idx, cur),
-        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
+        Expr::Neg(a) | Expr::Exp(a) | Expr::Ln(a) | Expr::Sin(a) | Expr::Cos(a) => {
+            subtree_at(a, idx, cur)
+        }
+        Expr::Pow(a, _) => subtree_at(a, idx, cur),
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) => {
             subtree_at(a, idx, cur).or_else(|| subtree_at(b, idx, cur))
         }
     }
@@ -161,6 +164,15 @@ fn replace_at(e: &Expr, idx: usize, repl: &Expr, cur: &mut usize) -> Expr {
             Box::new(replace_at(a, idx, repl, cur)),
             Box::new(replace_at(b, idx, repl, cur)),
         ),
+        Expr::Div(a, b) => Expr::Div(
+            Box::new(replace_at(a, idx, repl, cur)),
+            Box::new(replace_at(b, idx, repl, cur)),
+        ),
+        Expr::Pow(a, n) => Expr::Pow(Box::new(replace_at(a, idx, repl, cur)), *n),
+        Expr::Exp(a) => Expr::Exp(Box::new(replace_at(a, idx, repl, cur))),
+        Expr::Ln(a) => Expr::Ln(Box::new(replace_at(a, idx, repl, cur))),
+        Expr::Sin(a) => Expr::Sin(Box::new(replace_at(a, idx, repl, cur))),
+        Expr::Cos(a) => Expr::Cos(Box::new(replace_at(a, idx, repl, cur))),
     }
 }
 

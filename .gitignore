@@ -23,3 +23,13 @@ rsi_full_trajectory.*
 
 # datasets flywheel (axe 4) — artefacts d'exécution, jamais versionnés
 /*.jsonl
+
+# artefact de build du crate forge (workspace)
+forge/target/
+forge/Cargo.lock
+
+# artefacts locaux de fine-tuning / session (jamais versionnés)
+unsloth_compiled_cache/
+ft_agentworld.py
+ft_run.log
+.commandcode/

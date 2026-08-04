@@ -65,11 +65,12 @@ nix run                 # lance rsi-mcp
 nix develop             # shell outillé (cargo, clippy, rustfmt)
 ```
 
-> **Distribution.** RSI dépend de 4 crates git privées (forge/octasoma/ccos/
-> scirust) **optionnelles** : il n'est donc **pas publié sur crates.io** (le
-> registre exige une version pour toute dépendance). La distribution se fait par
-> **source + Docker/Nix** ci-dessus. `rsi-full` (features git) sort de ce
-> périmètre hors-ligne.
+> **Distribution.** Les 4 backends « réels » (Forge, OctaSoma, CCOS, scirust-rsi)
+> sont désormais **embarqués dans le workspace** (`forge/`, `octasoma/`, `ccos/`,
+> `scirust-rsi/`) — implémentations locales complètes, plus aucune dépendance
+> git privée. Le cœur reste std-only ; les features `forge`, `octasoma`, `ccos`,
+> `scirust` activent ces backends sans réseau. La distribution se fait par
+> **source + Docker/Nix** ci-dessus.
 
 ## Correspondance équations ↔ code
 
@@ -206,13 +207,66 @@ Chaque [`StepReport`](src/agent.rs) expose :
   voir l'étude : [`docs/INTEGRATION_STUDY.md`](docs/INTEGRATION_STUDY.md) :
   - `forge` — `ℳ` réel (recherche évolutionnaire exécutée, fitness `SI_global`)
     **et** `P_eff` réel (efficience logicielle mesurée sur un vrai kernel) ;
-  - `octasoma` — composante `C` réelle (mémoire vectorielle fractale, k-NN).
+  - `octasoma` — composante `C` réelle (mémoire vectorielle fractale, k-NN) ;
+  - `ccos` — audit hash-chaîné `EventLog` (forensique, replay) ;
+  - `scirust` — moteur d'ascension réel `scirust-rsi` (`RefineTask`/`SelfRefiner`).
+  Les 4 crates sont **embarquées dans le workspace** (`forge/`, `octasoma/`,
+  `ccos/`, `scirust-rsi/`) : plus aucune dépendance git privée.
 
   ```bash
   cargo build --features forge              # ℳ + P_eff réels (Forge)
   cargo build --features octasoma           # mémoire C réelle (OctaSoma)
-  cargo build --features "forge octasoma"   # tout
+  cargo build --features ccos               # audit CCOS réel
+  cargo build --features scirust            # moteur d'ascension réel
+  cargo build --features "forge octasoma ccos scirust"   # tout
   ```
+- **Crawler web & recherche (esprit spider-rs)** : module std-only
+  `web_crawl.rs` — client HTTP/1.1 minimal sur `std::net` (aucune dépendance),
+  crawling BFS **concurrency-first** avec politesse (`robots.txt`, délais,
+  bornes pages/profondeur/taille), parsing HTML (texte + liens + titre), index
+  plein-texte local (TF-IDF) et recherche. La feature optionnelle `web` ajoute
+  le client `reqwest` (TLS/gzip/redirections) pour plus de robustesse. Deux
+  usages :
+  - **CLI** : `rsi-crawl crawl <url>… --max-pages 50 --depth 2 --query "…"`,
+    `rsi-crawl fetch <url>`, `rsi-crawl search <index.jsonl> <query>` ;
+  - **RAG dans la boucle DGM** : [`WebCrawlerContext`](src/web_crawl.rs)
+    implémente [`WebContextProvider`](src/dgm.rs) — branché sur
+    `DgmEngine::with_web_context`, il crawle des seeds puis injecte les extraits
+    pertinents dans le prompt du proposeur LLM (`external_context`). Le LLM
+    s'appuie sur ce qu'il a *appris du web* au lieu de deviner.
+    Démo : `cargo run --release --example web_research_dgm`. Guide :
+    [`docs/WEB_CRAWL.md`](docs/WEB_CRAWL.md).
+- **Moteur de recherche externe (DuckDuckGo)** : [`DuckDuckGoSearch`](src/web_crawl.rs)
+  interroge le vrai endpoint HTTPS (feature `web` / reqwest-TLS) et parse les
+  résultats. Branché sur le proposeur DGM via `DgmEngine::with_web_context`,
+  il donne au LLM les **vrais résultats de recherche web** pour son objectif.
+  CLI : `rsi-dgm --web [--web-prefix "rust"]`.
+- **Découverte mathématique** : grammaire d'expressions **étendue** dans
+  `synthesis.rs` — `+ - * / ^` (exposant entier), `exp`, `ln`, `sin`, `cos`,
+  constantes `e`/`pi` — évaluée en sandbox (interpréteur maison, jamais
+  exécutée comme code). Trois briques :
+  - **vérificateur d'égalité symbolique** [`symbolic_equal`](src/synthesis.rs) :
+    réécriture algébrique (`x/x → 1`, `a+0 → a`…) + vérification polynomiale
+    exacte + échantillonnage dense pour les fonctions transcendantes ;
+  - **générateur de conjectures** [`ConjectureGenerator`](src/synthesis.rs) :
+    découvre des identités `left = right` (ex. `sin(x)²+cos(x)² = 1`) avec
+    confiance numérique et preuve symbolique, en filtrant les trivialités ;
+  - **synthèse symbolique étendue** : la boucle 1+λ et le chemin LLM peuvent
+    désormais retrouver des fonctions trigonométriques, exponentielles, etc.
+- **Meta-NeuroSymbolic (`meta_neuro_symbolic.rs`)** : objectif d'apprentissage
+  RL pour la politique neuro-symbolique, à maximiser puis converti en perte :
+  `MetaNS(φ) = E[ RM_NS(x,y) − β_NS·log(LLM_φ/LLM_SFT) ] + γ_NS·E[log LLM_φ]`.
+  - **`SymbolicValidator`** (trait injectable) : récompense neuro-symbolique
+    par vérification formelle — validateurs fournis : intégrité SHA-256
+    (`IntegritySha256Validator`), absence d'`unsafe` (`NoUnsafeValidator`),
+    structure d'expression mathématique (`SymbolicExprValidator`), contraintes
+    d'espace de travail (`WorkspaceConstraintsValidator`) ;
+  - **`compute_meta_ns_loss`** : calcul de la perte **zéro allocation**
+    (tampons `PerTraceBuffer` pré-alloués, `#[deny(clippy::alloc_in_loop)]`),
+    **0 `unsafe`**, déterministe, avec pénalité KL + régularisation pretrain ;
+  - **`AgentExecutionTrace`** : traçabilité complète (log-probs, récompense
+    symbolique, contexte/artefact, validateur appliqué).
+  Voir [`docs/META_NEURO_SYMBOLIC.md`](docs/META_NEURO_SYMBOLIC.md).
 - **§7 — Modes de défaillance & criticité (AMDEC/FMECA)** : module
   `criticality.rs` (cœur, sans dépendance) — `RPN`, `Risk_global`, intelligence
   ajustée au risque `SI_safe = SI_global − κ·Risk_global`, garde-fou de
@@ -223,8 +277,8 @@ Chaque [`StepReport`](src/agent.rs) expose :
 - **§7bis — Audit & déterminisme** : `audit.rs` (cœur) — journal **hash-chaîné
   SHA-256** (SHA-256 Rust pur, schéma `EventLog` de CCOS) rendant chaque pas de
   `ℳ` **traçable, vérifiable et rejouable** (`with_audit`, `audit_head/verify`),
-  avec export ingestable par CCOS. Feature `ccos` : délègue au vrai `EventLog`
-  de CCOS (`cargo build --features ccos`, sans async/TLS).
+  avec export ingestable par CCOS. Feature `ccos` : journal `EventLog` réel
+  (embarqué dans `ccos/`), forensique + replay (`cargo build --features ccos`).
 - **Ancrage & robustesse (v0.10, cœur sans dépendance)** :
   - `tasks.rs` — **corpus de tâches réel** (Ω ancré, chargeable JSON) + compétence
     par **loi de Liebig** (`GroundedCapability`) ; `IntelligenceSurface::from_corpus`.
@@ -404,6 +458,7 @@ src/
 ├── cma.rs          §5  sep-CMA-ES (covariance diagonale)
 ├── agent.rs        §5/§6  boucle discrète complète
 ├── dgm.rs          auto-amélioration empirique du code (Darwin–Gödel/STOP, port soul-rsi)
+├── web_crawl.rs    crawler web & recherche (esprit spider-rs), std-only
 ├── json.rs         (dé)sérialisation JSON std-only
 ├── report.rs       export CSV / JSON de la trajectoire
 ├── api.rs          façade RsiApi (commandes JSON in/out)
@@ -411,7 +466,15 @@ src/
 └── bin/
     ├── rsi_mcp.rs      serveur MCP (JSON-RPC 2.0 / stdio)
     ├── rsi_dgm.rs      CLI DGM/STOP sur dépôt réel (dry-run sûr, --promote opt-in)
+    ├── rsi_crawl.rs    CLI crawler web / fetch / recherche (rsi-crawl)
     └── rsi_connect.rs  auto-enregistrement MCP (openclaw, hermes-agent, …)
+forge/           moteur évolutionnaire Forge (embarqué, feature `forge`)
+octasoma/        mémoire fractale OctaSoma (embarquée, feature `octasoma`)
+ccos/            EventLog hash-chaîné CCOS (embarqué, feature `ccos`)
+scirust-rsi/     moteur d'ascension réel scirust-rsi (embarqué, feature `scirust`)
+crates/
+├── cogno-core/      COGNO-1 oracle scalaire (sécurité, objectif, déterminisme)
+└── cogno-scirust/   COGNO-1 backend batch validé contre l'oracle
 scripts/
 └── auto-connect.sh  build + connexion MCP automatique
 docs/
@@ -420,7 +483,7 @@ paper/
 ├── rsi.md           paper scientifique (anglais)
 └── rsi.tex          source LaTeX
 tests/
-└── integration.rs   trajectoire stable & croissante, déterminisme, substrat
+└── integration.rs   trajectoire stable & croissante, déterminisme, substrat, crawler
 ```
 
 ## Licence

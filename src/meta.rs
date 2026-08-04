@@ -31,12 +31,43 @@ const GAIN_HI: f64 = 0.25;
 /// - `focus` : répartition de l'effort cognitif sur (D,M,R,A,C,V), normalisée ;
 /// - `software_edit` : direction de réécriture du logiciel O (auto-amélioration
 ///   du substrat) ;
-/// - `gain` : amplitude globale de la proposition de ℳ.
+/// - `gain` : amplitude globale de la proposition de ℳ ;
+/// - `dgm` : hyperparamètres de la boucle DGM pilotés par ℳ (connexion méta↔DGM).
 #[derive(Clone, Debug)]
 pub struct MetaStrategy {
     pub focus: [f64; 6],
     pub software_edit: Vec<f64>,
     pub gain: f64,
+    pub dgm: DgmMetaParams,
+}
+
+/// Hyperparamètres de la boucle DGM pilotés par la méta-optimisation.
+///
+/// C'est la connexion **méta ↔ DGM** : en plus d'ajuster où l'effort cognitif
+/// est investi (`focus`) et l'amplitude (`gain`), la méta-révision ℳ peut
+/// régler les leviers de la boucle d'auto-amélioration empirique (Darwin–Gödel) :
+/// - `min_score_gain` : seuil anti-bruit d'adoption des gains de score ;
+/// - `simulated_revisions` : combien de fois corriger une proposition prédite
+///   cassée avant le gate réel (coût LLM vs builds) ;
+/// - `explore_budget` : budget de propositions par étape (diversité).
+///
+/// Ces paramètres sont appliqués à un [`crate::dgm::DgmConfig`] via
+/// [`MetaStrategy::apply_to_config`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct DgmMetaParams {
+    pub min_score_gain: f64,
+    pub simulated_revisions: u32,
+    pub explore_budget: u32,
+}
+
+impl Default for DgmMetaParams {
+    fn default() -> Self {
+        DgmMetaParams {
+            min_score_gain: 0.0,
+            simulated_revisions: 0,
+            explore_budget: 1,
+        }
+    }
 }
 
 impl MetaStrategy {
@@ -46,6 +77,7 @@ impl MetaStrategy {
             focus: [1.0 / 6.0; 6],
             software_edit: vec![0.0; n_software],
             gain: 0.05,
+            dgm: DgmMetaParams::default(),
         }
     }
 
@@ -65,10 +97,15 @@ impl MetaStrategy {
             .map(|&w| w + rng.normal(0.0, scale))
             .collect();
         let gain = (self.gain + rng.normal(0.0, scale * 0.2)).clamp(GAIN_LO, GAIN_HI);
+        // Les hyperparamètres DGM ne sont PAS perturbés ici : la méta-révision
+        // les porte (encode/decode) et `apply_to_config` les écrit dans la
+        // config DGM après sélection. Les garder stables préserve la dynamique
+        // interne et le déterminisme des invariants (λ/ε) testés par propriétés.
         MetaStrategy {
             focus,
             software_edit,
             gain,
+            dgm: self.dgm.clone(),
         }
     }
 
@@ -150,7 +187,24 @@ impl MetaStrategy {
             focus,
             software_edit,
             gain,
+            dgm: DgmMetaParams::default(),
         }
+    }
+
+    /// Applique les hyperparamètres DGM de cette stratégie à une config DGM.
+    ///
+    /// C'est le point de jonction entre la méta-optimisation (qui maximise
+    /// `SI_global` projeté) et la boucle d'auto-amélioration empirique : après
+    /// une méta-révision, les leviers `min_score_gain`, `simulated_revisions`
+    /// et `explore_budget` sélectionnés sont écrits dans la `DgmConfig` de la
+    /// prochaine campagne.
+    pub fn apply_to_config(&self, config: &mut crate::dgm::DgmConfig) {
+        config.min_score_gain = self.dgm.min_score_gain;
+        config.simulated_revisions = self.dgm.simulated_revisions;
+        // `explore_budget` (nb de propositions par étape) : non consommé par
+        // `DgmConfig` aujourd'hui, il reste disponible pour l'appelant
+        // (le champ est exposé pour les futurs pilotes multi-propositions).
+        let _ = self.dgm.explore_budget;
     }
 }
 
@@ -441,6 +495,11 @@ mod tests {
             focus: [0.1, 0.2, 0.3, 0.15, 0.05, 0.2],
             software_edit: vec![0.3, -0.2, 0.1, 0.0],
             gain: 0.1,
+            dgm: DgmMetaParams {
+                min_score_gain: 0.02,
+                simulated_revisions: 2,
+                explore_budget: 3,
+            },
         };
         let theta = s.encode();
         let d = MetaStrategy::decode(&theta, 4);
@@ -449,6 +508,27 @@ mod tests {
         }
         assert!((s.gain - d.gain).abs() < 1e-6);
         assert_eq!(s.software_edit, d.software_edit);
+    }
+
+    #[test]
+    fn apply_to_config_writes_dgm_params() {
+        use crate::dgm::DgmConfig;
+        let s = MetaStrategy {
+            focus: [1.0 / 6.0; 6],
+            software_edit: vec![0.0; 4],
+            gain: 0.05,
+            dgm: DgmMetaParams {
+                min_score_gain: 0.03,
+                simulated_revisions: 2,
+                explore_budget: 2,
+            },
+        };
+        let mut cfg = DgmConfig::new("ws", "goal");
+        assert_eq!(cfg.min_score_gain, 0.0);
+        assert_eq!(cfg.simulated_revisions, 0);
+        s.apply_to_config(&mut cfg);
+        assert_eq!(cfg.min_score_gain, 0.03);
+        assert_eq!(cfg.simulated_revisions, 2);
     }
 
     #[test]

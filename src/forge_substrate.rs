@@ -44,7 +44,7 @@ impl KernelCand {
 
 impl Candidate for KernelCand {
     fn id(&self) -> CandidateId {
-        fnv1a(&self.repr())
+        fnv1a(self.repr())
     }
     fn repr(&self) -> String {
         let (bm, bn, bk) = self.tiles();

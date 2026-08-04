@@ -178,6 +178,7 @@ fn main() {
             parent_fitness: Some(&baseline),
             recent_rejections: &rejections,
             simulated_feedback: &[],
+            external_context: &[],
         };
         let proposal = match proposer.propose(&ctx, &mut rng) {
             Ok(Some(p)) => p,
@@ -229,7 +230,7 @@ fn main() {
         };
         let line = format!(
             "  #{n:2} {} · compile sim={} réel={} {} · tests sim={} réel={} {} · {}",
-            &short(patch),
+            short(patch),
             b(predicted.compiles),
             b(actual.compiles),
             mark(predicted.compiles, actual.compiles),

@@ -1,0 +1,9 @@
+[package]
+name = "cogno-scirust"
+version = "0.1.0"
+edition = "2021"
+description = "COGNO-1 — backend batch/tensoriel validé contre l'oracle cogno-core"
+license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
+
+[dependencies]
+cogno-core = { path = "../cogno-core" }

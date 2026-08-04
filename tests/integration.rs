@@ -69,3 +69,34 @@ fn deterministic_given_seed() {
     let b = RSIAgent::demo(42).run(40).last().unwrap().si_global;
     assert_eq!(a, b);
 }
+
+/// Le crawler web extrait le texte et les liens, indexe et répond à une
+/// recherche — le tout hors-ligne (parseur + index purs, aucune requête).
+#[test]
+fn web_crawl_parse_index_search_offline() {
+    use rsi::web_crawl::{parse_html, TextIndex};
+
+    let html = r#"<html><head><title>RSI Docs</title></head><body>
+        <h1>Recursive Self-Improvement</h1>
+        <p>The substrate efficiency P_eff is measured.</p>
+        <a href="/guide">Guide</a>
+        <a href="https://example.com/ext">External</a>
+    </body></html>"#;
+    let (text, links, title) = parse_html(html, "http://rsi.local/docs");
+    assert_eq!(title, "RSI Docs");
+    assert!(text.contains("Recursive Self-Improvement"));
+    assert!(text.contains("substrate efficiency"));
+    assert!(links.contains(&"http://rsi.local/guide".to_string()));
+    assert!(links.contains(&"https://example.com/ext".to_string()));
+
+    // index + recherche
+    let mut idx = TextIndex::new();
+    idx.add("http://rsi.local/docs", "RSI Docs", &text);
+    idx.add("http://rsi.local/other", "Autre", "cooking recipes pasta");
+    let res = idx.search("substrate", 5);
+    assert_eq!(res.len(), 1);
+    assert_eq!(res[0].url, "http://rsi.local/docs");
+    let none = idx.search("pizza", 5);
+    assert!(none.is_empty());
+}
+

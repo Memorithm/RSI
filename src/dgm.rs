@@ -614,6 +614,11 @@ pub struct ImprovementContext<'a> {
     pub recent_rejections: &'a [String],
     /// Verdicts d'un simulateur sur les tentatives de CE step (axe 3).
     pub simulated_feedback: &'a [String],
+    /// Contexte externe optionnel (recherche web, littérature, résultats de
+    /// crawl, connaissances extraites) injecté dans le prompt du proposeur.
+    /// C'est le point d'entrée du « RAG » : le proposeur peut s'appuyer sur ce
+    /// qu'il a *appris* au lieu de seulement deviner.
+    pub external_context: &'a [String],
 }
 
 impl ImprovementContext<'_> {
@@ -625,6 +630,15 @@ impl ImprovementContext<'_> {
     pub fn resolve(&self, rel: &str) -> PathBuf {
         self.workspace_root.join(rel)
     }
+}
+
+/// Fournit un contexte externe (recherche web, papiers, …) à injecter dans le
+/// prompt du proposeur. Un proposeur DGM peut être branché sur n'importe quel
+/// fournisseur (moteur de recherche local, crawl ciblé, API arXiv, …) sans
+/// changer la boucle.
+pub trait WebContextProvider: Send + Sync {
+    /// Cherche et renvoie des extraits pertinents pour `goal` (borné).
+    fn search(&self, goal: &str, max_results: usize) -> Vec<String>;
 }
 
 /// Une auto-modification proposée avec son raisonnement.
@@ -1270,6 +1284,18 @@ impl<M: CodeModel> LlmProposer<M> {
                 lessons.push_str(&format!("- {f}\n"));
             }
         }
+        // Contexte externe (recherche web / littérature / crawl) : le proposeur
+        // peut s'appuyer sur des faits appris au lieu de deviner.
+        if !ctx.external_context.is_empty() {
+            lessons.push_str(
+                "\nRelevant web/literature context gathered from research (use it as \
+                 guidance for your edit):\n",
+            );
+            for c in ctx.external_context.iter().take(6) {
+                let shown: String = c.chars().take(600).collect();
+                lessons.push_str(&format!("- {shown}\n"));
+            }
+        }
 
         // Contenu ACTUEL des fichiers éditables : sans lui, le modèle invente du
         // code inexistant et son `FIND` ne matche jamais. On borne chaque fichier
@@ -1574,6 +1600,10 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
     revisions: u64,
     /// Trajectoires à vérité terrain (axe 4, flywheel). Cf. [`crate::trajectory`].
     trajectories: Vec<Trajectory>,
+    /// Fournisseur de contexte externe optionnel (recherche web / littérature) :
+    /// injecté dans le prompt du proposeur à chaque `propose` (RAG). Cf.
+    /// [`WebContextProvider`].
+    web_context: Option<Box<dyn WebContextProvider>>,
 }
 
 impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
@@ -1592,7 +1622,15 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             prescreen_skips: 0,
             revisions: 0,
             trajectories: Vec::new(),
+            web_context: None,
         }
+    }
+
+    /// Attache un fournisseur de contexte externe (recherche web / littérature)
+    /// qui alimente le proposeur à chaque étape. Cf. [`WebContextProvider`].
+    pub fn with_web_context(mut self, web: Box<dyn WebContextProvider>) -> Self {
+        self.web_context = Some(web);
+        self
     }
 
     /// Attache un pré-crible (world model) — cf. [`VerdictPredictor`].
@@ -1751,12 +1789,20 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         rejections: &[String],
         sim_feedback: &[String],
     ) -> Result<Option<Proposal>> {
+        // Contexte externe (recherche web / littérature) : le fournisseur
+        // branché (s'il y en a un) interroge le web pour l'objectif courant.
+        let web_ctx: Vec<String> = self
+            .web_context
+            .as_ref()
+            .map(|w| w.search(&self.config.goal, 4))
+            .unwrap_or_default();
         let ctx = ImprovementContext {
             workspace_root: &self.config.workspace_root,
             goal: &self.config.goal,
             parent_fitness: parent.fitness.as_ref(),
             recent_rejections: rejections,
             simulated_feedback: sim_feedback,
+            external_context: &web_ctx,
         };
         self.proposer.propose(&ctx, &mut self.rng)
     }
@@ -2285,6 +2331,7 @@ RATIONALE: bump the constant
             parent_fitness: None,
             recent_rejections: &[],
             simulated_feedback: &[],
+            external_context: &[],
         };
         let ok = LlmProposer::new(
             FixedModel(WELL_FORMED.to_string()),
@@ -2305,6 +2352,7 @@ RATIONALE: bump the constant
             parent_fitness: None,
             recent_rejections: &[],
             simulated_feedback: &[],
+            external_context: &[],
         };
         // Modèle qui décline (« NO PROPOSAL. ») → non parsable → raison remontée.
         let declines =

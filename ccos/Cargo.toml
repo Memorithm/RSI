@@ -2,4 +2,7 @@
 name = "ccos"
 version = "0.10.0"
 edition = "2021"
+description = "EventLog hash-chaîné de CCOS (audit/déterminisme) — remplacement local du crate git ccos"
+license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
+
 [dependencies]

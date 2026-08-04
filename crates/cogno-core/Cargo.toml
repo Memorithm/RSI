@@ -1,0 +1,8 @@
+[package]
+name = "cogno-core"
+version = "0.1.0"
+edition = "2021"
+description = "COGNO-1 — oracle scalaire indépendant (sécurité, objectif neuro-symbolique, déterminisme)"
+license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
+
+[dependencies]

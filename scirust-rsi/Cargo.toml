@@ -2,4 +2,8 @@
 name = "scirust-rsi"
 version = "0.10.0"
 edition = "2021"
+description = "Moteur d'ascension auto-améliorante (RefineTask/SelfRefiner) — remplacement local du crate git scirust-rsi"
+license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
+
 [dependencies]
+rand = "0.8"

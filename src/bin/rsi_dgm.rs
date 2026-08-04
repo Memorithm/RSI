@@ -65,6 +65,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--claude-base-url",
     "--temperature",
     "--top-p",
+    "--web-prefix",
 ];
 
 /// Pré-crible par world model (Qwen-AgentWorld) : prédit le verdict d'un patch
@@ -338,8 +339,33 @@ fn main() {
         );
     }
 
+    // --- Recherche web en contexte du proposeur (--web). -------------------- //
+    // Branche un moteur de recherche (DuckDuckGo) comme `WebContextProvider` :
+    // à chaque étape, le proposeur LLM reçoit les résultats web pertinents pour
+    // son objectif (RAG « apprendre du web pour s'améliorer »). Requiert la
+    // feature `web` (reqwest/TLS) pour les endpoints HTTPS réels.
+    let mut web_note = String::new();
+    if args.iter().any(|a| a == "--web") {
+        let prefix = flag_value(&args, "--web-prefix").unwrap_or_default();
+        let prefix_for_search = prefix.clone();
+        let limits = rsi::web_crawl::CrawlLimits {
+            max_pages: 1,
+            max_depth: 0,
+            max_bytes: 2 << 20,
+            timeout: Duration::from_secs(15),
+            politeness_delay: Duration::ZERO,
+        };
+        let ddg = rsi::web_crawl::DuckDuckGoSearch::new(limits).with_prefix(prefix_for_search);
+        engine = engine.with_web_context(Box::new(ddg));
+        if prefix.is_empty() {
+            web_note = ", recherche web: DuckDuckGo".to_string();
+        } else {
+            web_note = format!(", recherche web: DuckDuckGo (préfixe « {prefix} »)");
+        }
+    }
+
     println!(
-        "• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}, fichiers={allowed:?}"
+        "• boucle DGM : {steps} étapes, backend={backend}{prescreen_note}{web_note}, fichiers={allowed:?}"
     );
     println!("  (chaque étape = proposition LLM + build+test+bench du snapshot : ~1-3 min)\n");
     // Étape par étape (et non `engine.run(steps)`) pour AFFICHER chaque
@@ -591,6 +617,8 @@ fn usage() {
            --bench \"ARGS\"        score = perf mesurée (RSI_BENCH_SCORE) au lieu\n                          du pass-rate — ex. \"run --release --example bench_dot\"\n  \
            --min-gain FRAC       gain relatif de score minimal (anti-bruit),\n                          ex. 0.02 = ≥ 2 %% (défaut 0 ; gains structurels exemptés)\n  \
            --prescreen-model TAG world model (Qwen-AgentWorld) qui saute le build\n                          des patchs prédits cassés (jamais une amélioration)\n  \
+           --web               recherche web (DuckDuckGo) en contexte du proposeur\n                          (RAG ; requiert la feature `web`)\n  \
+           --web-prefix PREFIX préfixe de requête (ex. \"rust\", \"site:arxiv.org\")\n  \
            --promote             applique le meilleur variant tout-au-vert\n  \
            --backups DIR         sauvegardes (défaut <ws>/.rsi_backups)\n\n\
          CONNEXION AUTOMATIQUE (défaut) : sonde Ollama local, découvre les modèles\n\

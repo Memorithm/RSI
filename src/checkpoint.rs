@@ -146,6 +146,9 @@ impl Checkpoint {
             software_edit: json_vec(stj.get("software_edit").ok_or("strategy.software_edit")?)
                 .ok_or("strategy.software_edit")?,
             gain: stj.get("gain").and_then(|v| v.as_f64()).unwrap_or(0.05),
+            // Les hyperparamètres DGM ne sont pas persistés dans le checkpoint
+            // v1 : on repart des valeurs par défaut (reproductibilité du moteur).
+            dgm: Default::default(),
         };
 
         // Cohérence interne minimale : aucune composante d'état vide (sinon panic

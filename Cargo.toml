@@ -16,6 +16,15 @@ readme = "README.md"
 keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
 categories = ["science", "simulation"]
 
+# Workspace : le crate principal + les 4 crates « backends réels » (Forge,
+# OctaSoma, CCOS, scirust-rsi) désormais embarquées localement, sans dépendance
+# git privée. Chaque crate est une implémentation réelle du contrat consommé.
+# COGNO-1 : `cogno-core` (oracle scalaire indépendant) et `cogno-scirust`
+# (backend tensoriel/batch validé contre l'oracle).
+[workspace]
+members = ["forge", "octasoma", "ccos", "scirust-rsi", "crates/cogno-core", "crates/cogno-scirust"]
+resolver = "2"
+
 [[bin]]
 name = "rsi-full"
 path = "src/bin/rsi_full.rs"
@@ -60,6 +69,11 @@ observability = ["dep:tracing"]
 # ⚠️ Relâche la repro BIT-EXACTE *cross-build* (l'ordre de sommation change) ;
 # le déterminisme reste intact À L'INTÉRIEUR d'un build SIMD. OFF par défaut.
 simd = ["dep:wide"]
+# Web : client HTTP complet (`reqwest` : TLS, gzip, redirections) pour le
+# crawler/la recherche web. Sans cette feature, `web_crawl` utilise le client
+# HTTP/1.1 minimal std-only (http://, pages statiques). Le module compile
+# toujours ; la feature améliore la robustesse réseau.
+web = ["dep:reqwest"]
 
 [dependencies]
 forge-core = { path = "forge", optional = true }
@@ -73,6 +87,7 @@ wasmi = { version = "0.31", optional = true }
 wat = { version = "1", optional = true }
 tracing = { version = "0.1", optional = true }
 wide = { version = "0.7", optional = true }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false, optional = true }
 
 [[bin]]
 name = "rsi-demo"
@@ -125,6 +140,12 @@ required-features = ["llm-ollama"]
 name = "rsi-ascend"
 path = "src/bin/rsi_ascend.rs"
 required-features = ["llm-ollama"]
+
+# Crawler web / recherche (esprit spider-rs). Fonctionne en std-only ; la
+# feature `web` ajoute le client reqwest (TLS/gzip) pour plus de robustesse.
+[[bin]]
+name = "rsi-crawl"
+path = "src/bin/rsi_crawl.rs"
 
 [profile.release]
 opt-level = 3

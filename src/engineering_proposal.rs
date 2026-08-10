@@ -58,12 +58,12 @@ impl ProposalBudget {
                 return Err(ProposalError::PathNotAllowed(path.to_string()));
             }
             let cost = operation_cost(operation, workspace_root)?;
-            touched = touched.checked_add(cost).ok_or_else(|| {
+            touched = touched.checked_add(cost).ok_or(
                 ProposalError::TouchedByteBudgetExceeded {
                     actual: u64::MAX,
                     limit: self.max_touched_bytes,
-                }
-            })?;
+                },
+            )?;
             if touched > self.max_touched_bytes {
                 return Err(ProposalError::TouchedByteBudgetExceeded {
                     actual: touched,

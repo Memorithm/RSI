@@ -674,7 +674,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -817,6 +817,7 @@ name = "rsi"
 version = "0.10.0"
 dependencies = [
  "ccos",
+ "cogno-core",
  "forge-core",
  "octasoma",
  "rand 0.8.7",

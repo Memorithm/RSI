@@ -56,17 +56,14 @@ pub mod compatibility;
 pub mod convergence;
 pub mod criticality;
 pub mod cumulative_archive;
-// Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP) — port std-only de
-// `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
 pub mod dynamics;
+pub mod engineering_evaluator;
 pub mod engineering_proposal;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
 pub mod forge_substrate;
-pub mod loop_ctrl;
-// Sonde matérielle réelle (CPU/mém/GPU) pour ancrer le substrat — utile sur Jetson.
 pub mod flywheel;
 pub mod hw_probe;
 pub mod json;
@@ -74,12 +71,12 @@ pub mod kernels;
 pub mod knowledge;
 pub mod linalg;
 pub mod llm;
+pub mod loop_ctrl;
 pub mod measured_substrate;
 pub mod memory;
 pub mod meta;
 pub mod meta_neuro_symbolic;
 pub mod obs;
-// Ω concret : banc de tâches réelles nommées (extension de §1, sans duplication).
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
 pub mod omega_tasks;
@@ -127,6 +124,11 @@ pub use cumulative_archive::{
     CumulativeOutcome, CumulativeRecord, PromotionReceipt,
 };
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
+pub use engineering_evaluator::{
+    CargoEvidenceSource, CargoGateEvidence, CognoEngineeringEvaluator, EngineeringEvaluation,
+    EngineeringEvaluationError, EngineeringEvidenceAssembler, EngineeringEvidenceCollector,
+    EngineeringRanker, RankingEvidence,
+};
 pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;

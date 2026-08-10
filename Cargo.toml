@@ -34,48 +34,24 @@ required-features = ["forge", "octasoma", "ccos"]
 name = "rsi"
 path = "src/lib.rs"
 
-# Le cœur reste sans dépendance ; les backends réels sont optionnels.
+# Le cœur RSI conserve des dépendances minimales ; COGNO scalar reste lui-même
+# std-only et indépendant de tout backend tensoriel.
 [features]
 default = []
-# Méta-optimiseur ℳ et substrat P_eff adossés au moteur Forge (exécution réelle).
 forge = ["dep:forge-core", "dep:rand", "dep:serde"]
-# Mémoire contextuelle C adossée au moteur de mémoire fractale OctaSoma.
 octasoma = ["dep:octasoma"]
-# Audit/déterminisme adossé à l'EventLog hash-chaîné de CCOS.
 ccos = ["dep:ccos"]
-# Moteur d'ascension canonique `scirust-rsi`, épinglé sur la révision SciRust
-# qualifiée par P1.1. Activer avec : --features scirust.
 scirust = ["dep:scirust-rsi", "dep:rand"]
-# Backend LLM local Ollama (client HTTP minimal sur std::net, sans dépendance).
-# Active OllamaClient pour brancher un modèle local (http://localhost:11434).
 llm-ollama = []
-# Backend LLM Claude (API Anthropic Messages). std-only : la logique (requête /
-# parsing) est sans dépendance ; le transport HTTPS/TLS est injecté par l'hôte
-# (trait ClaudeTransport), car std n'offre pas de TLS.
 llm-claude = []
-# Transport HTTPS turnkey pour Claude via `ureq` (bloquant, rustls). Fournit
-# UreqTransport prêt à l'emploi. Nécessite le réseau (api.anthropic.com).
 llm-claude-ureq = ["llm-claude", "dep:ureq"]
-# Domaine WASM : exécution RÉELLE de code candidat en bac à sable (wasmi, pur
-# Rust, déterministe, avec fuel + zéro import host). 4e point du spectre
-# texte→config→code. Le LLM propose du WebAssembly textuel (WAT).
 wasm = ["dep:wasmi", "dep:wat"]
-# Observabilité : émission d'événements structurés via `tracing` (l'hôte attache
-# son subscriber). Sans la feature, les points d'instrumentation sont des no-ops
-# (le cœur reste std-only). Les métriques Prometheus (commande `metrics`) sont,
-# elles, toujours disponibles et sans dépendance.
 observability = ["dep:tracing"]
-# SIMD : vectorise les réductions linalg (dot/mean) via `wide` (stable, sûr).
-# ⚠️ Relâche la repro BIT-EXACTE *cross-build* (l'ordre de sommation change) ;
-# le déterminisme reste intact À L'INTÉRIEUR d'un build SIMD. OFF par défaut.
 simd = ["dep:wide"]
-# Web : client HTTP complet (`reqwest` : TLS, gzip, redirections) pour le
-# crawler/la recherche web. Sans cette feature, `web_crawl` utilise le client
-# HTTP/1.1 minimal std-only (http://, pages statiques). Le module compile
-# toujours ; la feature améliore la robustesse réseau.
 web = ["dep:reqwest"]
 
 [dependencies]
+cogno-core = { path = "crates/cogno-core" }
 forge-core = { path = "forge", optional = true }
 octasoma = { path = "octasoma", optional = true }
 ccos = { path = "ccos", optional = true }
@@ -113,36 +89,26 @@ path = "src/bin/rsi_loopbench.rs"
 name = "rsi-refine"
 path = "src/bin/rsi_refine.rs"
 
-# Boucle d'auto-amélioration empirique (DGM/STOP) sur un dépôt réel. Backend LLM
-# local Ollama requis ; Claude optionnel via --features llm-claude-ureq.
 [[bin]]
 name = "rsi-dgm"
 path = "src/bin/rsi_dgm.rs"
 required-features = ["llm-ollama"]
 
-# Addon papers-agent : papier scientifique → objectifs DGM directifs → preuves
-# empiriques (dry-run strict). Cf. docs/ADDONS.md et docs/PAPERS_SYNERGY.md.
 [[bin]]
 name = "rsi-scholar"
 path = "src/bin/rsi_scholar.rs"
 required-features = ["llm-ollama"]
 
-# Calibration du pré-crible simulé (world model Qwen-AgentWorld × gate DGM).
-# Cf. docs/AGENTWORLD_STUDY.md.
 [[bin]]
 name = "rsi-simcal"
 path = "src/bin/rsi_simcal.rs"
 required-features = ["llm-ollama"]
 
-# Ascension auto-améliorante pilotée par LLM (ascend_llm + LlmGuard) sur les
-# domaines std-only synthesis/prompt/tuning. Backend Ollama local.
 [[bin]]
 name = "rsi-ascend"
 path = "src/bin/rsi_ascend.rs"
 required-features = ["llm-ollama"]
 
-# Crawler web / recherche (esprit spider-rs). Fonctionne en std-only ; la
-# feature `web` ajoute le client reqwest (TLS/gzip) pour plus de robustesse.
 [[bin]]
 name = "rsi-crawl"
 path = "src/bin/rsi_crawl.rs"

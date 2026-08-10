@@ -1,57 +1,60 @@
 # Moteur `scirust-rsi` — activation
 
-RSI consomme le contrat de `scirust-rsi` (`propose → évalue → garde si meilleur →
-répète`, élitiste/borné/reproductible) de **deux** façons :
+RSI consomme le contrat de `scirust-rsi` (`propose → évalue → garde si meilleur → répète`, élitiste/borné/reproductible) de **deux** façons :
 
 | Mode | Module | Dépendance | Statut |
 |------|--------|-----------|--------|
 | **Stand-in intégré** | [`src/ascent.rs`](src/ascent.rs) | aucune (std) | ✅ actif par défaut, testé |
-| **Moteur réel** | [`src/scirust_bridge.rs`](src/scirust_bridge.rs) | `scirust-rsi` (git amont) | ✅ `--features scirust` |
+| **Moteur canonique SciRust** | [`src/scirust_bridge.rs`](src/scirust_bridge.rs) | `Memorithm/scirust/scirust-rsi` | ✅ `--features scirust` |
 
-## Activer le moteur réel
+## Source canonique
 
-Le crate `scirust-rsi` est consommé en **dépendance git amont**
-(`Memorithm/scirust`, sous-crate `scirust-rsi`). La feature est déjà câblée :
+Depuis P1.2 du programme RSI × COGNO-1 × SciRust, RSI **n'embarque plus de copie locale** du crate `scirust-rsi`. L'implémentation canonique vit exclusivement dans `Memorithm/scirust/scirust-rsi`.
+
+La dépendance est épinglée sur la révision SciRust immuable qui a fusionné le contrat canonique P1.1 :
+
+```text
+8af0801b8bc0c69630797db82bb2dd3416cc8f0a
+```
 
 ```toml
 [features]
 scirust = ["dep:scirust-rsi", "dep:rand"]
 
 [dependencies]
-scirust-rsi = { git = "https://github.com/Memorithm/scirust", optional = true }
+scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "8af0801b8bc0c69630797db82bb2dd3416cc8f0a", optional = true }
 ```
 
-Activation (nécessite un accès réseau à `github.com` — niveau **Trusted** en
-session cloud, cf. [`docs/WEB_ENV.md`](docs/WEB_ENV.md)) :
+**Jamais de `branch = "master"` ou de révision flottante** : toute évolution du contrat doit d'abord être fusionnée et qualifiée dans SciRust, puis RSI avance son pin dans une PR dédiée avec CI verte et mise à jour du CompatibilitySet.
+
+## Activation
 
 ```bash
 cargo run    --release --features scirust --example self_improve_real
-cargo test   --features scirust
-cargo clippy --features scirust --all-targets
+cargo test   --locked --features scirust
+cargo clippy --locked --features scirust --all-targets -- -D warnings
 ```
 
-> ✅ **Validé de bout en bout** : `cargo test --features scirust` compile le vrai
-> crate amont (`scirust-rsi v0.1.0 @ Memorithm/scirust`) et passe les 131 tests
-> sans aucune modification du bridge — l'API ci-dessous correspond exactement.
+La CI RSI inclut la feature `scirust` dans les features publiques afin que le bridge soit compilé et testé contre le crate canonique épinglé.
 
-## API ciblée (vérifiée contre le crate amont)
+## API ciblée
 
-- `pub type Fitness = f64;` (plus grand = mieux) → aucun constructeur, le score
-  scalaire **est** la fitness.
-- `trait RefineTask { type Solution: Clone; fn initial(&self, &mut StdRng); fn
-  score(&self, &Solution) -> Fitness; fn refine(&self, &Solution, &mut StdRng)
-  -> Solution; }`
-- `SelfRefiner::new(seed).run(&task, &guard) -> (Solution, Report)`.
-- `Report { iterations, accepted, best_fitness, history, stop_reason }`,
-  `Report::is_monotone()`, `Report::total_gain()`.
-- Aussi exposés : `ascend(...)` (fonction libre), `bench::{sphere, rastrigin,
-  rosenbrock}`, et les pilotes `star`, `expert_iteration`, `pbt`, `evo`, `llm`.
+Le contrat canonique P1.1 verrouille notamment :
 
-## Garde-fous (identiques dans les deux modes)
+- `pub type Fitness = f64;` — plus grand = mieux ;
+- `RefineTask { initial, score, refine }` piloté par un `StdRng` reproductible ;
+- `SelfRefiner::new(seed).run(&task, &guard) -> (Solution, Report)` ;
+- `Report::history` = incumbent best-so-far après chaque itération ;
+- un candidat rejeté ne modifie pas l'incumbent et ne rend pas `is_monotone()` faux ;
+- `Report::is_monotone()` et `Report::total_gain()` ;
+- `Guard` pour les bornes d'itération, patience, cible, delta minimal et budget temporel du moteur canonique.
 
-- **Sandbox** : le candidat est un AST `Expr` évalué par notre interpréteur
-  (`Expr::eval`) — le moteur n'exécute jamais de code généré, ne se modifie pas.
-- **Non-régression** : adoption élitiste ⇒ `report.is_monotone()`.
-- **Terminaison** : `Guard::max_iters` borne chaque run ; `patience`/`target`
-  arrêtent proprement.
-- **Reproductible** : même graine ⇒ même run.
+Le crate SciRust expose aussi Self-Refine, STaR, Expert Iteration, `(1+λ)`-ES, PBT et les pilotes LLM. Leur sémantique appartient à SciRust ; RSI ne doit pas en maintenir de fork local.
+
+## Garde-fous
+
+- **Sandbox** : le bridge actuel travaille sur un AST `Expr` évalué par l'interpréteur RSI ; `scirust-rsi` n'exécute pas de code arbitraire du DGM.
+- **Non-régression** : adoption élitiste et historique best-so-far monotone.
+- **Terminaison** : `Guard` borne chaque run.
+- **Reproductibilité** : même graine + même tâche déterministe ⇒ même solution et même rapport.
+- **Provenance** : la révision SciRust exacte fait partie de la compatibilité cross-repo ; un résultat ne peut pas être attribué à une branche mobile.

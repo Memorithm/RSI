@@ -50,16 +50,22 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # P1.2 probe only: ask Cargo to produce the exact lockfile for the new
-      # immutable SciRust git pin. The generated artifact is committed back to
-      # the branch, then these two probe steps are removed before final CI.
+      # P1.2 probe only. Export both the committed baseline lock and Cargo's
+      # generated result so the final commit can preserve unrelated versions.
+      - name: Upload P1.2 baseline Cargo.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-2-cargo-lock-baseline
+          path: Cargo.lock
+          if-no-files-found: error
+
       - name: P1.2 generate canonical lockfile
         run: cargo generate-lockfile
 
-      - name: Upload P1.2 Cargo.lock
+      - name: Upload P1.2 generated Cargo.lock
         uses: actions/upload-artifact@v4
         with:
-          name: p1-2-cargo-lock
+          name: p1-2-cargo-lock-generated
           path: Cargo.lock
           if-no-files-found: error
 

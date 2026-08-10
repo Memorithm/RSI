@@ -51,6 +51,7 @@ pub mod ccos_audit;
 pub mod chaos;
 pub mod checkpoint;
 pub mod cma;
+pub mod compatibility;
 pub mod convergence;
 pub mod criticality;
 // Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP) — port std-only de
@@ -108,6 +109,9 @@ pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
 pub use ccos_audit::CcosAudit;
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
+pub use compatibility::{
+    COMPATIBILITY_SCHEMA_VERSION, CompatibilityError, CompatibilitySet, RepositoryRevision,
+};
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};

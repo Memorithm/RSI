@@ -55,6 +55,7 @@ pub mod cma;
 pub mod compatibility;
 pub mod convergence;
 pub mod criticality;
+pub mod cross_repo_workspace;
 pub mod cumulative_archive;
 pub mod dgm;
 pub mod dynamics;
@@ -119,6 +120,11 @@ pub use compatibility::{
 };
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
+pub use cross_repo_workspace::{
+    CargoPatchOverride, CrossRepoWorkspace, CrossRepoWorkspaceError, CrossRepoWorkspacePolicy,
+    CrossRepoWorkspaceResult, EffectiveCargoOverride, EffectiveRepositoryState,
+    LocalRepositorySource,
+};
 pub use cumulative_archive::{
     CUMULATIVE_ARCHIVE_SCHEMA_VERSION, CumulativeArchive, CumulativeArchiveError,
     CumulativeOutcome, CumulativeRecord, PromotionReceipt,

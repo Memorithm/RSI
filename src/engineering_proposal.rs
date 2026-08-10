@@ -353,7 +353,7 @@ mod tests {
         let err = ProposalBudget::new(1, 128)
             .validate(&set, &root, &["src/other.rs".into()])
             .unwrap_err();
-        assert!(matches!(err, ProposalError::PathNotAllowed(_));
+        assert!(matches!(err, ProposalError::PathNotAllowed(_)));
         let _ = std::fs::remove_dir_all(root);
     }
 

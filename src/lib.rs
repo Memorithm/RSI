@@ -58,6 +58,7 @@ pub mod criticality;
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
 pub mod dynamics;
+pub mod engineering_proposal;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
@@ -81,6 +82,7 @@ pub mod obs;
 pub mod octasoma_memory;
 pub mod omega_tasks;
 pub mod patchset;
+pub mod patchset_trajectory;
 pub mod plot;
 pub mod prompt;
 pub mod report;
@@ -116,6 +118,7 @@ pub use compatibility::{
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
+pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;
 #[cfg(feature = "forge")]
@@ -134,6 +137,9 @@ pub use meta_neuro_symbolic::{
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
 pub use patchset::{FileOperation, PatchSet, PatchSetError, PatchSetSnapshot};
+pub use patchset_trajectory::{
+    PatchSetTrajectory, PatchSetTrajectoryError, PATCHSET_TRAJECTORY_SCHEMA_VERSION,
+};
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};

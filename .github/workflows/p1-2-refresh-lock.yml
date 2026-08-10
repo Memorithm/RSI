@@ -1,0 +1,32 @@
+name: P1.2 refresh canonical lock
+
+on:
+  push:
+    branches: [rsi/p1-2-canonical-scirust-rsi]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rsi/p1-2-canonical-scirust-rsi
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Regenerate lock from exact canonical SciRust revision
+        run: cargo generate-lockfile
+
+      - name: Commit lock and retire bootstrap workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/p1-2-refresh-lock.yml
+          git add Cargo.lock
+          git diff --cached --check
+          git commit -m "build: refresh lock for canonical scirust-rsi pin"
+          git push origin HEAD:rsi/p1-2-canonical-scirust-rsi

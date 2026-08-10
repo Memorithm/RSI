@@ -5,6 +5,7 @@
 //! its PatchSet is structurally valid, allowlisted, and within explicit operation
 //! and touched-byte budgets measured against the current workspace.
 
+use crate::json::Json;
 use crate::patchset::{FileOperation, PatchSet, PatchSetError};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -109,6 +110,52 @@ impl BoundedProposal {
         })
     }
 
+    /// Parse a strict JSON proposal envelope and immediately apply all hard
+    /// budgets. Unknown/malformed operation kinds fail closed.
+    ///
+    /// Schema:
+    /// `{"operations":[{"kind":"modify_exact","path":"...","expected":"...","replacement":"..."}],"rationale":"..."}`
+    pub fn from_json_envelope(
+        raw: &str,
+        budget: ProposalBudget,
+        workspace_root: &Path,
+        allowed_paths: &[String],
+    ) -> Result<Self, ProposalError> {
+        let json = Json::parse(raw).map_err(ProposalError::Envelope)?;
+        let ops = json
+            .get("operations")
+            .and_then(Json::as_array)
+            .ok_or_else(|| ProposalError::Envelope("missing operations array".to_string()))?;
+        let mut operations = Vec::with_capacity(ops.len());
+        for op in ops {
+            let kind = required_str(op, "kind")?;
+            let path = required_str(op, "path")?;
+            let parsed = match kind {
+                "modify_exact" => FileOperation::modify_exact(
+                    path,
+                    required_str(op, "expected")?,
+                    required_str(op, "replacement")?,
+                ),
+                "create" => FileOperation::create(path, required_str(op, "content")?),
+                "delete" => {
+                    FileOperation::delete(path, required_str(op, "expected_sha256")?)
+                }
+                other => {
+                    return Err(ProposalError::Envelope(format!(
+                        "unsupported operation kind: {other}"
+                    )))
+                }
+            };
+            operations.push(parsed);
+        }
+        let patch_set = PatchSet::new(operations).map_err(ProposalError::PatchSet)?;
+        let rationale = json
+            .get("rationale")
+            .and_then(Json::as_str)
+            .unwrap_or("multi-file proposal");
+        Self::new(patch_set, rationale, budget, workspace_root, allowed_paths)
+    }
+
     /// Compatibility entry point for the historical one-file proposal API.
     pub fn from_legacy_patch(
         patch: &crate::dgm::Patch,
@@ -130,6 +177,7 @@ impl BoundedProposal {
 #[derive(Debug)]
 pub enum ProposalError {
     PatchSet(PatchSetError),
+    Envelope(String),
     InvalidBudget(String),
     PathNotAllowed(String),
     OperationBudgetExceeded { actual: usize, limit: usize },
@@ -141,6 +189,7 @@ impl fmt::Display for ProposalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PatchSet(e) => write!(f, "invalid PatchSet: {e}"),
+            Self::Envelope(msg) => write!(f, "invalid proposal envelope: {msg}"),
             Self::InvalidBudget(msg) => write!(f, "invalid proposal budget: {msg}"),
             Self::PathNotAllowed(path) => write!(f, "proposal target outside allowlist: {path}"),
             Self::OperationBudgetExceeded { actual, limit } => {
@@ -156,6 +205,13 @@ impl fmt::Display for ProposalError {
 
 impl std::error::Error for ProposalError {}
 
+fn required_str<'a>(json: &'a Json, key: &str) -> Result<&'a str, ProposalError> {
+    json.get(key)
+        .and_then(Json::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ProposalError::Envelope(format!("missing or empty {key}")))
+}
+
 fn operation_cost(operation: &FileOperation, root: &Path) -> Result<u64, ProposalError> {
     match operation {
         FileOperation::ModifyExact {
@@ -163,12 +219,8 @@ fn operation_cost(operation: &FileOperation, root: &Path) -> Result<u64, Proposa
             expected,
             replacement,
         } => {
-            // Count both bytes consumed from the current candidate and bytes
-            // introduced by the proposal. This makes replacement growth and
-            // large rewrites explicit rather than hiding them behind a delta.
-            let content = std::fs::read_to_string(root.join(path)).map_err(|e| {
-                ProposalError::Workspace(format!("read {path}: {e}"))
-            })?;
+            let content = std::fs::read_to_string(root.join(path))
+                .map_err(|e| ProposalError::Workspace(format!("read {path}: {e}")))?;
             let occurrences = content.matches(expected).count();
             if occurrences != 1 {
                 return Err(ProposalError::Workspace(format!(
@@ -189,11 +241,8 @@ fn operation_cost(operation: &FileOperation, root: &Path) -> Result<u64, Proposa
             path,
             expected_sha256: _,
         } => {
-            // A delete can otherwise bypass a payload-only budget with a tiny
-            // hash declaration while removing a huge file. Charge actual size.
-            let metadata = std::fs::metadata(root.join(path)).map_err(|e| {
-                ProposalError::Workspace(format!("metadata {path}: {e}"))
-            })?;
+            let metadata = std::fs::metadata(root.join(path))
+                .map_err(|e| ProposalError::Workspace(format!("metadata {path}: {e}")))?;
             if !metadata.is_file() {
                 return Err(ProposalError::Workspace(format!(
                     "Delete target is not a file: {path}"
@@ -258,6 +307,26 @@ mod tests {
     }
 
     #[test]
+    fn strict_json_envelope_parses_multiple_operation_kinds() {
+        let root = workspace();
+        let delete_hash = hex(b"remove-me");
+        let raw = format!(
+            "{{\"operations\":[{{\"kind\":\"modify_exact\",\"path\":\"src/a.rs\",\"expected\":\"1\",\"replacement\":\"2\"}},{{\"kind\":\"create\",\"path\":\"src/new.rs\",\"content\":\"new\"}},{{\"kind\":\"delete\",\"path\":\"src/b.rs\",\"expected_sha256\":\"{delete_hash}\"}}],\"rationale\":\"bounded migration\"}}"
+        );
+        let allowed = vec!["src/a.rs".into(), "src/new.rs".into(), "src/b.rs".into()];
+        let proposal = BoundedProposal::from_json_envelope(
+            &raw,
+            ProposalBudget::new(3, 64),
+            &root,
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(proposal.patch_set.len(), 3);
+        assert_eq!(proposal.rationale, "bounded migration");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rejects_operation_and_byte_budget_overflow() {
         let root = workspace();
         let allowed = vec!["src/a.rs".into(), "src/new.rs".into()];
@@ -284,7 +353,7 @@ mod tests {
         let err = ProposalBudget::new(1, 128)
             .validate(&set, &root, &["src/other.rs".into()])
             .unwrap_err();
-        assert!(matches!(err, ProposalError::PathNotAllowed(_)));
+        assert!(matches!(err, ProposalError::PathNotAllowed(_));
         let _ = std::fs::remove_dir_all(root);
     }
 

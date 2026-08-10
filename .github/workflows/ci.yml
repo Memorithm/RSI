@@ -1,8 +1,8 @@
 name: CI
 
 # Build + tests + clippy à chaque push sur main et chaque pull request.
-# P1.2 TEMPORARY HEAD: materialise the minimal Cargo.lock update on the PR
-# branch, then this helper is removed before the final merge gate.
+# Le seuil dur du dépôt est clippy 0 warning + tests verts. P1.2 ajoute le
+# moteur canonique SciRust à la matrice publique ; le lockfile reste immuable.
 
 on:
   push:
@@ -12,11 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: rsi-ci-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,14 +26,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Toolchain Rust stable (+ clippy)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
+      # `scirust-rsi` est une dépendance git publique, épinglée sur une révision
+      # SciRust immuable. Ce filet permet seulement le fetch si le dépôt devenait
+      # privé ; il ne transforme jamais le pin en branche mobile.
       - name: Auth deps git Memorithm (filet — si DEPS_TOKEN présent)
         env:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
@@ -46,78 +43,10 @@ jobs:
             git config --global \
               url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
               "https://github.com/Memorithm/"
+            echo "auth Memorithm configurée (fetch privé activé)"
+          else
+            echo "DEPS_TOKEN absent — dépôt SciRust public (nominal)"
           fi
-
-      - name: P1.2 materialize minimal Cargo.lock
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("Cargo.lock")
-          s = p.read_text()
-          old = '''[[package]]
-          name = "scirust-rsi"
-          version = "0.10.0"
-          dependencies = [
-           "rand 0.8.6",
-          ]
-          '''
-          new = '''[[package]]
-          name = "scirust-rsi"
-          version = "0.1.0"
-          source = "git+https://github.com/Memorithm/scirust?rev=8af0801b8bc0c69630797db82bb2dd3416cc8f0a#8af0801b8bc0c69630797db82bb2dd3416cc8f0a"
-          dependencies = [
-           "rand 0.8.6",
-           "rand_distr",
-           "serde",
-          ]
-          '''
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif 'source = "git+https://github.com/Memorithm/scirust?rev=8af0801b8bc0c69630797db82bb2dd3416cc8f0a#8af0801b8bc0c69630797db82bb2dd3416cc8f0a"' not in s:
-              raise SystemExit("unexpected scirust-rsi lock block")
-
-          if 'name = "rand_distr"' not in s:
-              anchor = '''[[package]]
-          name = "rand_core"
-          version = "0.10.1"
-          source = "registry+https://github.com/rust-lang/crates.io-index"
-          checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
-
-          '''
-              insert = '''[[package]]
-          name = "rand_distr"
-          version = "0.4.3"
-          source = "registry+https://github.com/rust-lang/crates.io-index"
-          checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
-          dependencies = [
-           "num-traits",
-           "rand 0.8.6",
-          ]
-
-          '''
-              if anchor not in s:
-                  raise SystemExit("rand_core anchor not found")
-              s = s.replace(anchor, anchor + insert, 1)
-          p.write_text(s)
-          PY
-          git diff -- Cargo.lock
-
-      - name: Validate minimal lock with Cargo
-        run: cargo metadata --locked --format-version 1 --no-deps >/dev/null
-
-      - name: Commit P1.2 Cargo.lock to PR branch
-        if: github.event_name == 'pull_request'
-        run: |
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock already materialized"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock
-          git commit -m "build: lock canonical SciRust RSI engine"
-          git push origin HEAD:${{ github.head_ref }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

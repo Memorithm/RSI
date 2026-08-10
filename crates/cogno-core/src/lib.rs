@@ -27,6 +27,7 @@ pub mod admissible;
 pub mod budget;
 pub mod calib;
 pub mod determinism;
+pub mod engineering;
 pub mod error;
 pub mod kv_cache;
 pub mod memory;
@@ -41,6 +42,10 @@ pub use admissible::{AdmissibilityGate, AdmissibilityVerdict, HardValidator, Pro
 pub use budget::{NormalizedCosts, ResourceBudget, ResourceWeights};
 pub use calib::{CalibrationMetrics, CalibrationPoint, compute_brier_calibration};
 pub use determinism::{DeterminismRecord, ExecutionMode, fingerprint};
+pub use engineering::{
+    CheckStatus, EngineeringAdmissibility, EngineeringAdmissibilityVerdict, EngineeringCheck,
+    EngineeringGateKind, EngineeringPolicyCheck,
+};
 pub use error::{CognoError, CognoResult, checked_add, checked_mul};
 pub use kv_cache::{BoundedKvCache, FixedKvCache, KvCacheConfig, KvCacheError, TensorView, TensorViewMut};
 pub use memory::{MemoryMetrics, MemorySample, compute_memory_objective, cosine_similarity};

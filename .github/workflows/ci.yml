@@ -1,8 +1,8 @@
 name: CI
 
-# Build + tests + clippy à chaque push sur main et chaque pull request.
-# Le seuil dur du dépôt est clippy 0 warning + tests verts. P1.2 ajoute le
-# moteur canonique SciRust à la matrice publique ; le lockfile reste immuable.
+# P1.2 TEMPORARY RESOLUTION PROBE. This head exists only to identify the exact
+# Cargo.lock completion required by the canonical SciRust dependency. It is
+# removed before the final merge gate.
 
 on:
   push:
@@ -32,9 +32,6 @@ jobs:
         with:
           components: clippy
 
-      # `scirust-rsi` est une dépendance git publique, épinglée sur une révision
-      # SciRust immuable. Ce filet permet seulement le fetch si le dépôt devenait
-      # privé ; il ne transforme jamais le pin en branche mobile.
       - name: Auth deps git Memorithm (filet — si DEPS_TOKEN présent)
         env:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
@@ -43,22 +40,29 @@ jobs:
             git config --global \
               url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
               "https://github.com/Memorithm/"
-            echo "auth Memorithm configurée (fetch privé activé)"
-          else
-            echo "DEPS_TOKEN absent — dépôt SciRust public (nominal)"
           fi
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Upload committed P1.2 lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-2-lock-before-full-resolution
+          path: Cargo.lock
+          if-no-files-found: error
 
-      - name: Clippy (défaut) — 0 warning
+      - name: Resolve exact full workspace graph
+        run: cargo metadata --format-version 1 >/dev/null
+
+      - name: Show required lock completion
+        run: git diff -- Cargo.lock
+
+      - name: Upload fully resolved P1.2 lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-2-lock-after-full-resolution
+          path: Cargo.lock
+          if-no-files-found: error
+
+      # Keep a compile signal in this probe, but the authoritative gate is the
+      # later read-only --locked head after the resolved lock is committed.
+      - name: Clippy probe (défaut)
         run: cargo clippy --all-targets --locked -- -D warnings
-
-      - name: Tests (défaut, + doctests)
-        run: cargo test --locked
-
-      - name: Clippy (features publiques) — 0 warning
-        run: cargo clippy --all-targets --locked --features "$PUBLIC_FEATURES" -- -D warnings
-
-      - name: Tests (features publiques)
-        run: cargo test --locked --features "$PUBLIC_FEATURES"

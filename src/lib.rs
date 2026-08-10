@@ -80,6 +80,7 @@ pub mod obs;
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
 pub mod omega_tasks;
+pub mod patchset;
 pub mod plot;
 pub mod prompt;
 pub mod report;
@@ -132,6 +133,7 @@ pub use meta_neuro_symbolic::{
 };
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
+pub use patchset::{FileOperation, PatchSet, PatchSetError, PatchSetSnapshot};
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
 pub use state::{CognitiveState, Dims};

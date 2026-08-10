@@ -55,6 +55,7 @@ pub mod cma;
 pub mod compatibility;
 pub mod convergence;
 pub mod criticality;
+pub mod cumulative_archive;
 // Boucle d'auto-amélioration empirique (Darwin–Gödel / STOP) — port std-only de
 // `soul-rsi` : propose un patch → build+test en copie isolée → garde si meilleur.
 pub mod dgm;
@@ -121,6 +122,10 @@ pub use compatibility::{
 };
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
+pub use cumulative_archive::{
+    CUMULATIVE_ARCHIVE_SCHEMA_VERSION, CumulativeArchive, CumulativeArchiveError,
+    CumulativeOutcome, CumulativeRecord, PromotionReceipt,
+};
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
 pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
 #[cfg(feature = "forge")]

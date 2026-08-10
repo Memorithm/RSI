@@ -1,8 +1,7 @@
 name: CI
 
-# P1.2 TEMPORARY RESOLUTION PROBE. This head exists only to identify the exact
-# Cargo.lock completion required by the canonical SciRust dependency. It is
-# removed before the final merge gate.
+# P1.2 TEMPORARY ONE-SHOT: add the single transitive lock edge identified by
+# the full Cargo resolver, commit it to the PR branch, then remove this helper.
 
 on:
   push:
@@ -12,57 +11,69 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: rsi-p12-lock-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq scirust"
 
 jobs:
   check:
     name: build · test · clippy
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout PR branch
         uses: actions/checkout@v4
-
-      - name: Toolchain Rust stable (+ clippy)
-        uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Auth deps git Memorithm (filet — si DEPS_TOKEN présent)
-        env:
-          DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
+      - name: Add exact num-traits libm lock edge
+        shell: bash
         run: |
-          if [ -n "$DEPS_TOKEN" ]; then
-            git config --global \
-              url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
-              "https://github.com/Memorithm/"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("Cargo.lock")
+          s = p.read_text()
+          old = '''[[package]]
+          name = "num-traits"
+          version = "0.2.19"
+          source = "registry+https://github.com/rust-lang/crates.io-index"
+          checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+          dependencies = [
+           "autocfg",
+          ]
+          '''
+          new = '''[[package]]
+          name = "num-traits"
+          version = "0.2.19"
+          source = "registry+https://github.com/rust-lang/crates.io-index"
+          checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+          dependencies = [
+           "autocfg",
+           "libm",
+          ]
+          '''
+          if old in s:
+              p.write_text(s.replace(old, new, 1))
+          elif new not in s:
+              raise SystemExit("unexpected num-traits lock block")
+          PY
+          git diff --check
+          git diff -- Cargo.lock
+
+      - name: Commit exact lock completion
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already complete"
+            exit 0
           fi
-
-      - name: Upload committed P1.2 lock
-        uses: actions/upload-artifact@v4
-        with:
-          name: p1-2-lock-before-full-resolution
-          path: Cargo.lock
-          if-no-files-found: error
-
-      - name: Resolve exact full workspace graph
-        run: cargo metadata --format-version 1 >/dev/null
-
-      - name: Show required lock completion
-        run: git diff -- Cargo.lock
-
-      - name: Upload fully resolved P1.2 lock
-        uses: actions/upload-artifact@v4
-        with:
-          name: p1-2-lock-after-full-resolution
-          path: Cargo.lock
-          if-no-files-found: error
-
-      # Keep a compile signal in this probe, but the authoritative gate is the
-      # later read-only --locked head after the resolved lock is committed.
-      - name: Clippy probe (défaut)
-        run: cargo clippy --all-targets --locked -- -D warnings
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "build: complete canonical SciRust RSI lock graph"
+          git push origin HEAD:${{ github.head_ref }}

@@ -12,25 +12,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Relance manuelle (onglet Actions → Run workflow) : utile quand l'échec
-  # venait d'un état externe (dépôt de dépendance inaccessible, réécrit…).
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  # Les features testées ici sont std-only / crates publiques. MAIS cargo RÉSOUT
-  # tout le graphe — y compris les deps git optionnelles `forge/octasoma/ccos/
-  # scirust` (dépôts Memorithm, PUBLICS) NON activées : il clone chaque git-dep
-  # pour en lire le manifeste, même sous `--locked` et même sans la feature. Si
-  # l'un de ces dépôts devient privé/inaccessible (HTTP 401) ou perd sa révision
-  # épinglée (force-push), TOUTE la CI casse dès le premier `cargo`. Deux parades :
-  #   1. `CARGO_NET_GIT_FETCH_WITH_CLI=true` + un secret `DEPS_TOKEN` (PAT en
-  #      lecture) si l'un de ces dépôts repassait privé → l'étape « Auth »
-  #      ci-dessous configure git pour les cloner ; OU
-  #   2. garder ces dépôts PUBLICS (cas nominal — aucun secret nécessaire,
-  #      l'étape Auth est alors un no-op).
+  # `scirust` fait partie des features publiques : P1.2 exige que le bridge RSI
+  # compile et soit testé contre la révision SciRust canonique épinglée.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq"
+  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq scirust"
 
 jobs:
   check:
@@ -45,12 +34,6 @@ jobs:
         with:
           components: clippy
 
-      # Cargo clone les deps git optionnelles (forge/octasoma/ccos/scirust) même
-      # non activées, pour résoudre le graphe. Elles sont PUBLIQUES (org Memorithm)
-      # → aucun secret requis en nominal. Filet de sécurité : si l'une repassait
-      # privée, un PAT en lecture (secret `DEPS_TOKEN`) rétablit le fetch. No-op
-      # quand le secret est absent : la CI reste verte tant que les dépôts sont
-      # publics.
       - name: Auth deps git Memorithm (filet — si DEPS_TOKEN présent)
         env:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
@@ -67,16 +50,25 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # --- Défaut (cœur sans dépendance de compilation) -------------------- #
-      # NB : `--locked` fige le Cargo.lock mais NE dispense PAS de cloner les
-      # git-deps optionnelles (cargo lit leur manifeste pour résoudre le graphe).
+      # P1.2 probe only: ask Cargo to produce the exact lockfile for the new
+      # immutable SciRust git pin. The generated artifact is committed back to
+      # the branch, then these two probe steps are removed before final CI.
+      - name: P1.2 generate canonical lockfile
+        run: cargo generate-lockfile
+
+      - name: Upload P1.2 Cargo.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-2-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+
       - name: Clippy (défaut) — 0 warning
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Tests (défaut, + doctests)
         run: cargo test --locked
 
-      # --- Toutes les features publiques ----------------------------------- #
       - name: Clippy (features publiques) — 0 warning
         run: cargo clippy --all-targets --locked --features "$PUBLIC_FEATURES" -- -D warnings
 

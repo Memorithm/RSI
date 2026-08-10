@@ -1,33 +1,19 @@
-//! Pont **RSI → moteur réel `scirust-rsi`** (d'après `scirust-rsi/INTEGRATION.md`).
+//! Pont **RSI → moteur canonique `scirust-rsi`**.
 //!
-//! Ce module implémente le *vrai* contrat de `scirust-rsi`
+//! Ce module implémente le contrat qualifié de `scirust-rsi`
 //! (`scirust_rsi::refine::{RefineTask, SelfRefiner}`, `scirust_rsi::{Fitness,
-//! Guard}`) pour le domaine de synthèse symbolique de RSI. Il remplace le
-//! *stand-in* local [`crate::ascent`] dès que le dépôt `Memorithm/scirust`
-//! est joignable.
+//! Guard}`) pour le domaine de synthèse symbolique de RSI.
 //!
-//! ## Activation (dans un environnement où `scirust` est autorisé)
-//! 1. Ajouter au `Cargo.toml` (voir aussi `scirust.patch` à la racine) :
-//!    ```toml
-//!    [features]
-//!    scirust = ["dep:scirust-rsi", "dep:rand"]
+//! La dépendance est épinglée dans `Cargo.toml` sur la révision SciRust exacte
+//! qualifiée par P1.1. RSI ne maintient plus de seconde implémentation locale du
+//! crate `scirust-rsi`.
 //!
-//!    [dependencies]
-//!    scirust-rsi = { git = "https://github.com/Memorithm/scirust", branch = "master", optional = true }
-//!    ```
-//! 2. Dans `src/lib.rs` :
-//!    ```rust,ignore
-//!    #[cfg(feature = "scirust")]
-//!    pub mod scirust_bridge;
-//!    ```
-//! 3. `cargo run --release --features scirust --example self_improve_real`
-//!
-//! ## Sandbox (garde-fou inchangé)
+//! ## Sandbox
 //! Le candidat reste un AST [`crate::synthesis::Expr`] **évalué par notre propre
 //! interpréteur** ([`Expr::eval`]) : le moteur `scirust-rsi` n'appelle que nos
 //! `score`/`refine` et ne voit que des nombres. Il n'exécute jamais de code
 //! généré et ne se modifie pas. Le contrat de sûreté (terminaison, non-régression
-//! `is_monotone`, déterminisme par graine) est porté par le moteur réel.
+//! best-so-far, déterminisme par graine) est porté par le moteur canonique.
 #![cfg(feature = "scirust")]
 
 use crate::synthesis::Expr;
@@ -36,14 +22,7 @@ use rand::Rng as _;
 use scirust_rsi::refine::{RefineTask, SelfRefiner};
 use scirust_rsi::{Fitness, Guard};
 
-// `scirust_rsi::Fitness` est un alias `f64` (plus grand = mieux) — aucun
-// constructeur à fournir : le score scalaire EST la fitness.
-
-/// Domaine de régression symbolique adossé au moteur réel `scirust-rsi`.
-///
-/// Identique sémantiquement à [`crate::synthesis::SymbolicSynthesis`], mais
-/// implémente le trait `RefineTask` **de `scirust-rsi`** (signatures à base de
-/// `StdRng`/`Fitness`) plutôt que le stand-in local.
+/// Domaine de régression symbolique adossé au moteur canonique `scirust-rsi`.
 pub struct SymbolicSynthesis {
     cases: Vec<(f64, f64)>,
     tol: f64,
@@ -75,7 +54,6 @@ impl SymbolicSynthesis {
     }
 
     /// Score scalaire = fraction de cas réussis − pénalité de complexité.
-    /// (sandbox : `Expr::eval` est notre interpréteur, aucune exécution externe)
     fn raw_score(&self, e: &Expr) -> f64 {
         let mut passed = 0usize;
         for (x, t) in &self.cases {
@@ -99,8 +77,6 @@ impl SymbolicSynthesis {
     }
 }
 
-// --- générateur déterministe piloté par le StdRng du moteur ----------------- //
-
 fn random_terminal(rng: &mut StdRng) -> Expr {
     if rng.gen::<f64>() < 0.5 {
         Expr::X
@@ -123,7 +99,6 @@ fn random_expr(rng: &mut StdRng, depth: usize) -> Expr {
     }
 }
 
-/// Sous-arbre d'indice `idx` (préordre).
 fn subtree_at(e: &Expr, idx: usize, cur: &mut usize) -> Option<Expr> {
     let here = *cur;
     *cur += 1;
@@ -142,7 +117,6 @@ fn subtree_at(e: &Expr, idx: usize, cur: &mut usize) -> Option<Expr> {
     }
 }
 
-/// Remplace le nœud d'indice `idx` (préordre) par `repl`.
 fn replace_at(e: &Expr, idx: usize, repl: &Expr, cur: &mut usize) -> Expr {
     let here = *cur;
     *cur += 1;
@@ -181,7 +155,6 @@ fn mutate(e: &Expr, rng: &mut StdRng) -> Expr {
     let idx = rng.gen_range(0..n);
     let r = rng.gen::<f64>();
     let repl = if r < 0.45 {
-        // grow : enrober le sous-arbre choisi dans un opérateur binaire
         let mut cur = 0;
         let sub = subtree_at(e, idx, &mut cur).unwrap_or(Expr::X);
         let term = random_terminal(rng);
@@ -204,18 +177,14 @@ fn mutate(e: &Expr, rng: &mut StdRng) -> Expr {
 impl RefineTask for SymbolicSynthesis {
     type Solution = Expr;
 
-    /// Candidat initial trivial (déterministe).
     fn initial(&self, _rng: &mut StdRng) -> Expr {
         Expr::Const(0.0)
     }
 
-    /// ÉVALUATEUR → `Fitness` (= f64).
     fn score(&self, a: &Expr) -> Fitness {
         self.raw_score(a)
     }
 
-    /// GÉNÉRATEUR : meilleure de `lambda` mutations (révision critiquée, 1+λ),
-    /// pilotée par le `StdRng` reproductible du moteur.
     fn refine(&self, a: &Expr, rng: &mut StdRng) -> Expr {
         let mut best = mutate(a, rng);
         let mut best_fit = self.raw_score(&best);
@@ -231,11 +200,29 @@ impl RefineTask for SymbolicSynthesis {
     }
 }
 
-/// Lance l'ascension sur la cible `x² + 1` via le **moteur réel** `SelfRefiner`.
-/// Renvoie `(meilleur_expr, rapport)` — `report.is_monotone()` prouve la
-/// non-régression, le `Guard` borne et fait converger la boucle.
+/// Lance l'ascension sur la cible `x² + 1` via le moteur canonique.
 pub fn run_self_improve(seed: u64) -> (Expr, scirust_rsi::Report) {
     let task = SymbolicSynthesis::from_target(|x| x * x + 1.0, -2.0, 2.0, 21).with_lambda(24);
     let guard = Guard::new().max_iters(50).patience(12).target(0.99);
     SelfRefiner::new(seed).run(&task, &guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_report_is_deterministic_best_so_far() {
+        let (_, a) = run_self_improve(0x5C1_2026);
+        let (_, b) = run_self_improve(0x5C1_2026);
+
+        assert_eq!(a.iterations, b.iterations);
+        assert_eq!(a.accepted, b.accepted);
+        assert_eq!(a.best_fitness, b.best_fitness);
+        assert_eq!(a.history, b.history);
+        assert_eq!(a.history.len(), a.iterations);
+        assert!(a.is_monotone());
+        assert!(a.history.windows(2).all(|w| w[0] <= w[1]));
+        assert_eq!(a.history.last().copied(), Some(a.best_fitness));
+    }
 }

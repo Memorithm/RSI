@@ -61,6 +61,7 @@ pub mod dgm;
 pub mod dynamics;
 pub mod engineering_evaluator;
 pub mod engineering_proposal;
+pub mod evaluation_pipeline;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
@@ -136,6 +137,11 @@ pub use engineering_evaluator::{
     EngineeringRanker, RankingEvidence,
 };
 pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
+pub use evaluation_pipeline::{
+    BoundedEvidencePipeline, EvaluationCommandHost, EvaluationEvidence, EvaluationPipelineError,
+    EvaluationPlan, EvaluationPlanPolicy, EvaluationStep, EvidenceKind, ResolvedCommand,
+    StepEvidence,
+};
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;
 #[cfg(feature = "forge")]

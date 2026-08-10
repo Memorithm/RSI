@@ -27,6 +27,8 @@ scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "8af0801b8bc
 
 **Jamais de `branch = "master"` ou de révision flottante** : toute évolution du contrat doit d'abord être fusionnée et qualifiée dans SciRust, puis RSI avance son pin dans une PR dédiée avec CI verte et mise à jour du CompatibilitySet.
 
+Le lockfile P1.2 conserve les versions registry existantes et ajoute seulement le graphe exigé par le crate canonique : `rand_distr 0.4.3` et l'activation `libm` de `num-traits`, en plus de `rand 0.8` et `serde` déjà présents. Ce détail est volontairement enregistré afin qu'une future avance du pin distingue une vraie évolution de dépendances d'un bruit de résolution Cargo.
+
 ## Activation
 
 ```bash

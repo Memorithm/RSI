@@ -16,13 +16,11 @@ readme = "README.md"
 keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
 categories = ["science", "simulation"]
 
-# Workspace : le crate principal + les 4 crates « backends réels » (Forge,
-# OctaSoma, CCOS, scirust-rsi) désormais embarquées localement, sans dépendance
-# git privée. Chaque crate est une implémentation réelle du contrat consommé.
-# COGNO-1 : `cogno-core` (oracle scalaire indépendant) et `cogno-scirust`
-# (backend tensoriel/batch validé contre l'oracle).
+# Workspace : le crate principal + les backends locaux Forge/OctaSoma/CCOS et
+# COGNO-1. `scirust-rsi` n'est volontairement plus embarqué : son implémentation
+# canonique vit dans Memorithm/scirust et RSI la consomme par révision Git exacte.
 [workspace]
-members = ["forge", "octasoma", "ccos", "scirust-rsi", "crates/cogno-core", "crates/cogno-scirust"]
+members = ["forge", "octasoma", "ccos", "crates/cogno-core", "crates/cogno-scirust"]
 resolver = "2"
 
 [[bin]]
@@ -43,8 +41,8 @@ forge = ["dep:forge-core", "dep:rand", "dep:serde"]
 octasoma = ["dep:octasoma"]
 # Audit/déterminisme adossé à l'EventLog hash-chaîné de CCOS.
 ccos = ["dep:ccos"]
-# Moteur d'ascension réel `scirust-rsi` (dépendance git Memorithm/scirust).
-# Voir SCIRUST_ACTIVATION.md. Activer avec : --features scirust.
+# Moteur d'ascension canonique `scirust-rsi` de Memorithm/scirust.
+# La dépendance est épinglée sur le merge P1.1 exact ; jamais sur une branche mobile.
 scirust = ["dep:scirust-rsi", "dep:rand"]
 # Backend LLM local Ollama (client HTTP minimal sur std::net, sans dépendance).
 # Active OllamaClient pour brancher un modèle local (http://localhost:11434).
@@ -81,7 +79,7 @@ octasoma = { path = "octasoma", optional = true }
 ccos = { path = "ccos", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-scirust-rsi = { path = "scirust-rsi", optional = true }
+scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "8af0801b8bc0c69630797db82bb2dd3416cc8f0a", optional = true }
 ureq = { version = "2", optional = true }
 wasmi = { version = "0.31", optional = true }
 wat = { version = "1", optional = true }

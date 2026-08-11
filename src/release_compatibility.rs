@@ -99,19 +99,22 @@ impl ReleaseCompatibilityLock {
 
     pub fn from_json_str(input: &str) -> Result<Self, ReleaseCompatibilityError> {
         let root = Json::parse(input).map_err(ReleaseCompatibilityError::InvalidJson)?;
-        let schema = root
-            .get("schema")
-            .and_then(Json::as_u64)
-            .ok_or(ReleaseCompatibilityError::MissingField("schema"))?;
+        let schema = exact_u64(root.get("schema"), "schema")?;
         if schema != RELEASE_COMPATIBILITY_LOCK_SCHEMA_VERSION {
             return Err(ReleaseCompatibilityError::UnsupportedSchema(schema));
         }
 
-        let compatibility_json = root
+        let compatibility_value = root
             .get("compatibility")
-            .ok_or(ReleaseCompatibilityError::MissingField("compatibility"))?
-            .to_string();
-        let compatibility = CompatibilitySet::from_json_str(&compatibility_json)
+            .ok_or(ReleaseCompatibilityError::MissingField("compatibility"))?;
+        let compatibility_schema =
+            exact_u64(compatibility_value.get("schema"), "compatibility.schema")?;
+        if compatibility_schema != COMPATIBILITY_SCHEMA_VERSION {
+            return Err(ReleaseCompatibilityError::Compatibility(
+                CompatibilityError::UnsupportedSchema(compatibility_schema),
+            ));
+        }
+        let compatibility = CompatibilitySet::from_json_str(&compatibility_value.to_string())
             .map_err(ReleaseCompatibilityError::Compatibility)?;
         let cogno_contract_version = required_string(&root, "cogno_contract_version")?;
         let qualification_evidence = root
@@ -273,6 +276,30 @@ fn compatibility_json(compatibility: &CompatibilitySet) -> Json {
     root
 }
 
+fn exact_u64(
+    value: Option<&Json>,
+    field: &'static str,
+) -> Result<u64, ReleaseCompatibilityError> {
+    let value = value.ok_or(ReleaseCompatibilityError::MissingField(field))?;
+    let number = value
+        .as_f64()
+        .ok_or_else(|| ReleaseCompatibilityError::InvalidValue {
+            field,
+            value: value.to_string(),
+        })?;
+    if !number.is_finite()
+        || number < 0.0
+        || number.fract() != 0.0
+        || number > u64::MAX as f64
+    {
+        return Err(ReleaseCompatibilityError::InvalidValue {
+            field,
+            value: value.to_string(),
+        });
+    }
+    Ok(number as u64)
+}
+
 fn validate_text(field: &'static str, value: &str) -> Result<(), ReleaseCompatibilityError> {
     if value.is_empty() {
         return Err(ReleaseCompatibilityError::EmptyField(field));
@@ -353,6 +380,38 @@ mod tests {
                 "tokenizer:canonical-parity",
             ]
         );
+    }
+
+    #[test]
+    fn fractional_outer_schema_is_rejected_before_canonicalization() {
+        let canonical = CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON.trim();
+        assert!(canonical.contains("\"schema\":1}"));
+        let malformed = canonical.replacen("\"schema\":1}", "\"schema\":1.9}", 1);
+        assert!(matches!(
+            ReleaseCompatibilityLock::from_json_str(&malformed),
+            Err(ReleaseCompatibilityError::InvalidValue {
+                field: "schema",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn fractional_nested_compatibility_schema_is_rejected() {
+        let canonical = CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON.trim();
+        assert!(canonical.contains("\"schema\":1,\"toolchain\""));
+        let malformed = canonical.replacen(
+            "\"schema\":1,\"toolchain\"",
+            "\"schema\":1.9,\"toolchain\"",
+            1,
+        );
+        assert!(matches!(
+            ReleaseCompatibilityLock::from_json_str(&malformed),
+            Err(ReleaseCompatibilityError::InvalidValue {
+                field: "compatibility.schema",
+                ..
+            })
+        ));
     }
 
     #[test]

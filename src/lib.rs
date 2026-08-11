@@ -49,6 +49,7 @@ pub mod audit;
 pub mod autopilot_feature;
 pub mod autopilot_intake;
 pub mod autopilot_perf;
+pub mod autopilot_pr;
 pub mod autopilot_task_dag;
 pub mod candidate_state;
 #[cfg(feature = "ccos")]
@@ -131,6 +132,11 @@ pub use autopilot_perf::{
     BenchmarkClass, BenchmarkEnvironment, FrozenBenchmarkArtifact, FrozenPerfBenchmark,
     MetricDirection, PerfBenchmarkApproval, PerfBenchmarkDraft, PerfCaseResult,
     PerfComparisonReport, PerfMeasurementBatch, PerfRegimeError,
+};
+pub use autopilot_pr::{
+    AUTOPILOT_PR_PLAN_SCHEMA_VERSION, AutopilotPrError, AutopilotPullRequestPlan,
+    ExternalPrVerdict, ExternalVerdictKind, HostingAction, PullRequestEmissionReceipt,
+    PullRequestPlanDraft, append_external_pr_verdict,
 };
 pub use autopilot_task_dag::{
     AUTOPILOT_TASK_DAG_SCHEMA_VERSION, AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError,

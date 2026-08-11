@@ -315,7 +315,7 @@ mod tests {
     const SCIRUST_RSI_CANONICAL: &str = "8af0801b8bc0c69630797db82bb2dd3416cc8f0a";
     const FLAT_M15: &str = "974ebbaf95f54917dba0dc3f394d9ad1a92e8349";
 
-    fn revision(lock: &ReleaseCompatibilityLock, role: &str) -> &str {
+    fn revision<'a>(lock: &'a ReleaseCompatibilityLock, role: &str) -> &'a str {
         &lock.locked_revision(role).unwrap().revision
     }
 

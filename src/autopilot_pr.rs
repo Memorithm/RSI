@@ -1,10 +1,10 @@
 //! P8.5 AUTOPILOT PR emission and human-review flywheel contract.
 //!
 //! The core remains network-free and cannot merge anything. It emits exactly a
-//! branch-creation plan followed by a pull-request plan. A hosting adapter may
-//! execute those two actions and return an immutable receipt. CI and human
-//! review verdicts are then appended to the existing [`EngineeringTrajectory`]
-//! as [`LaterVerdict`] records tied to the exact PR head.
+//! branch-creation plan followed by a pull-request plan. A trusted hosting
+//! adapter may execute those two actions and return an immutable receipt. CI and
+//! human-review verdicts are then appended to the existing engineering
+//! trajectory as later evidence tied to the exact PR head.
 
 use crate::autopilot_intake::FrozenAutopilotSpec;
 use crate::autopilot_task_dag::{AutopilotTask, AutopilotTaskDag, TaskOperation, TaskRegime};
@@ -129,6 +129,7 @@ impl AutopilotPullRequestPlan {
                 draft.repository_role,
             ));
         }
+
         validate_compatibility_against_spec(spec, &trajectory.compatibility)?;
         let target = unique_revision_for_role(&trajectory.compatibility, &draft.repository_role)?;
         validate_patchset_for_target(task, &draft.repository_role, &trajectory.patch_set)?;
@@ -152,16 +153,17 @@ impl AutopilotPullRequestPlan {
                 draft.default_branch,
             ));
         }
-        let body = render_pr_body(
+
+        let body = render_pr_body(PrBodyContext {
             spec,
             dag,
             task,
             trajectory,
-            &target,
-            &compatibility_sha256,
-            &patch_set_sha256,
-            &candidate_sha256,
-        )?;
+            target: &target,
+            compatibility_sha256: &compatibility_sha256,
+            patch_set_sha256: &patch_set_sha256,
+            candidate_sha256: &candidate_sha256,
+        });
 
         let mut plan = Self {
             schema_version: AUTOPILOT_PR_PLAN_SCHEMA_VERSION,
@@ -291,8 +293,8 @@ impl AutopilotPullRequestPlan {
     }
 }
 
-/// Immutable result returned by the trusted hosting adapter after it has created
-/// the branch and opened the PR described by a plan.
+/// Immutable result returned by the trusted hosting adapter after branch/PR
+/// creation. Authentication belongs to that adapter, not to model output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequestEmissionReceipt {
     plan_sha256: String,
@@ -362,8 +364,7 @@ impl ExternalVerdictKind {
     }
 }
 
-/// Authenticated evidence is collected by the hosting adapter and represented in
-/// the core as an immutable hash plus the exact PR/head it describes.
+/// CI/review evidence tied to one exact pull-request head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalPrVerdict {
     kind: ExternalVerdictKind,
@@ -413,9 +414,9 @@ impl ExternalPrVerdict {
     }
 }
 
-/// Append one external CI/review verdict to the original engineering trajectory.
-/// This never returns a merge decision. Rejections are retained as negative
-/// flywheel evidence exactly like approvals.
+/// Append an external CI/review verdict to the same P7 engineering trajectory.
+/// Rejections are retained as negative flywheel evidence. This function never
+/// returns a merge decision.
 pub fn append_external_pr_verdict(
     plan: &AutopilotPullRequestPlan,
     receipt: &PullRequestEmissionReceipt,
@@ -536,6 +537,17 @@ impl fmt::Display for AutopilotPrError {
 
 impl std::error::Error for AutopilotPrError {}
 
+struct PrBodyContext<'a> {
+    spec: &'a FrozenAutopilotSpec,
+    dag: &'a AutopilotTaskDag,
+    task: &'a AutopilotTask,
+    trajectory: &'a EngineeringTrajectory,
+    target: &'a RepositoryRevision,
+    compatibility_sha256: &'a str,
+    patch_set_sha256: &'a str,
+    candidate_sha256: &'a str,
+}
+
 fn unique_revision_for_role(
     compatibility: &CompatibilitySet,
     role: &str,
@@ -620,37 +632,31 @@ fn patch_operation_kind(operation: &FileOperation) -> TaskOperation {
     }
 }
 
+/// Identity of the immutable pre-PR trajectory. Later verdicts are excluded so
+/// appending CI/review feedback does not change candidate identity, while any
+/// mutation to the patch, gates, evidence, benchmark or base verdict does.
 fn trajectory_candidate_identity(
     trajectory: &EngineeringTrajectory,
 ) -> Result<String, AutopilotPrError> {
-    let patch_set_sha256 = trajectory
-        .patch_set
-        .identity()
-        .map_err(|error| AutopilotPrError::InvalidPatchSet(error.to_string()))?;
-    let material = format!(
-        "rsi-autopilot-candidate-v1|{}|{}|{}|{}|{}|{}|{}",
-        trajectory.task_spec_id,
-        trajectory.compatibility.fingerprint(),
-        trajectory.parent_state_id,
-        patch_set_sha256,
-        trajectory.proposer.provider,
-        trajectory.proposer.model,
-        trajectory.proposer.configuration_id,
-    );
-    Ok(hex_digest(&sha256(material.as_bytes())))
+    let mut frozen = trajectory.clone();
+    frozen.later_verdicts.clear();
+    frozen
+        .validate()
+        .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
+    Ok(hex_digest(&sha256(frozen.to_json_string().as_bytes())))
 }
 
-fn render_pr_body(
-    spec: &FrozenAutopilotSpec,
-    dag: &AutopilotTaskDag,
-    task: &AutopilotTask,
-    trajectory: &EngineeringTrajectory,
-    target: &RepositoryRevision,
-    compatibility_sha256: &str,
-    patch_set_sha256: &str,
-    candidate_sha256: &str,
-) -> Result<String, AutopilotPrError> {
-    let compatibility_json = trajectory.compatibility.to_json_string();
+fn render_pr_body(context: PrBodyContext<'_>) -> String {
+    let PrBodyContext {
+        spec,
+        dag,
+        task,
+        trajectory,
+        target,
+        compatibility_sha256,
+        patch_set_sha256,
+        candidate_sha256,
+    } = context;
     let mut body = String::new();
     body.push_str("## AUTOPILOT engineering candidate\n\n");
     body.push_str(&format!("- task: `{}`\n", task.id()));
@@ -666,17 +672,19 @@ fn render_pr_body(
     ));
 
     body.push_str("## Compatibility set\n\n```json\n");
-    body.push_str(&compatibility_json);
+    body.push_str(&trajectory.compatibility.to_json_string());
     body.push_str("\n```\n\n## Hard-gate evidence\n\n");
     for (name, status) in admissibility_rows(trajectory) {
         body.push_str(&format!("- {name}: `{}`\n", gate_status(status)));
     }
+
     body.push_str("\n## Compiler / test / device evidence\n\n");
     for evidence in &trajectory.compiler_test_device_evidence {
         body.push_str("- ");
         body.push_str(evidence);
         body.push('\n');
     }
+
     body.push_str("\n## Benchmark evidence\n\n");
     if trajectory.benchmarks.is_empty() {
         body.push_str("- no benchmark required by this accepted FEATURE trajectory\n");
@@ -691,11 +699,12 @@ fn render_pr_body(
             ));
         }
     }
+
     body.push_str("\n## Review and merge policy\n\n");
     body.push_str(
         "This plan requests branch creation and pull-request creation only. It does not request or encode automatic merge. CI and human-review verdicts are external evidence appended to the engineering trajectory.\n",
     );
-    Ok(body)
+    body
 }
 
 fn admissibility_rows(
@@ -822,7 +831,6 @@ mod tests {
         AutopilotTask, AutopilotTaskDraft, HardGateProfile, TaskBudget, TaskDagPolicy,
         TaskEditAllowance,
     };
-    use crate::compatibility::RepositoryRevision;
     use crate::engineering_trajectory::{
         AdmissibilityBreakdown, BenchmarkRecord, ProposerMetadata,
     };
@@ -981,8 +989,8 @@ mod tests {
     fn plan_requests_branch_then_pr_and_never_merge() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let trajectory = trajectory(&spec, false);
-        let plan = plan(&spec, &dag, &trajectory);
+        let candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
         assert_eq!(
             plan.hosting_actions(),
             [HostingAction::CreateBranch, HostingAction::OpenPullRequest]
@@ -996,27 +1004,27 @@ mod tests {
     fn body_contains_exact_compatibility_and_evidence() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let trajectory = trajectory(&spec, false);
-        let plan = plan(&spec, &dag, &trajectory);
-        assert!(plan.body().contains(&trajectory.compatibility.fingerprint()));
-        assert!(plan.body().contains(&trajectory.compatibility.to_json_string()));
+        let candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
+        assert!(plan.body().contains(&candidate.compatibility.fingerprint()));
+        assert!(plan.body().contains(&candidate.compatibility.to_json_string()));
         assert!(plan.body().contains("numerical_parity: `pass`"));
         assert!(plan.body().contains("cargo test: pass"));
         plan.verify().unwrap();
     }
 
     #[test]
-    fn inadmissible_or_rejected_candidate_cannot_emit_pr() {
+    fn inadmissible_candidate_cannot_emit_pr() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        trajectory.admissibility.policy_checks = GateStatus::Fail;
-        trajectory.verdict = EngineeringVerdict::Rejected;
+        let mut candidate = trajectory(&spec, false);
+        candidate.admissibility.policy_checks = GateStatus::Fail;
+        candidate.verdict = EngineeringVerdict::Rejected;
         assert!(matches!(
             AutopilotPullRequestPlan::new(
                 &spec,
                 &dag,
-                &trajectory,
+                &candidate,
                 PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
             ),
             Err(AutopilotPrError::TrajectoryNotAccepted)
@@ -1028,12 +1036,12 @@ mod tests {
     fn perf_candidate_requires_recorded_benchmark() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::perf("perf-v1").unwrap());
-        let trajectory = trajectory(&spec, false);
+        let unmeasured = trajectory(&spec, false);
         assert!(matches!(
             AutopilotPullRequestPlan::new(
                 &spec,
                 &dag,
-                &trajectory,
+                &unmeasured,
                 PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
             ),
             Err(AutopilotPrError::PerfTrajectoryMissingBenchmark)
@@ -1046,13 +1054,14 @@ mod tests {
     fn patchset_must_stay_inside_task_allowance() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        trajectory.patch_set = PatchSet::new(vec![FileOperation::create("docs/out.md", "x")]).unwrap();
+        let mut candidate = trajectory(&spec, false);
+        candidate.patch_set =
+            PatchSet::new(vec![FileOperation::create("docs/out.md", "x")]).unwrap();
         assert!(matches!(
             AutopilotPullRequestPlan::new(
                 &spec,
                 &dag,
-                &trajectory,
+                &candidate,
                 PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
             ),
             Err(AutopilotPrError::PatchOutsideTaskAllowance { .. })
@@ -1063,8 +1072,8 @@ mod tests {
     fn ci_and_human_review_are_appended_to_same_trajectory() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        let plan = plan(&spec, &dag, &trajectory);
+        let mut candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let ci = ExternalPrVerdict::new(
             &receipt,
@@ -1074,7 +1083,7 @@ mod tests {
             digest('e'),
         )
         .unwrap();
-        append_external_pr_verdict(&plan, &receipt, &ci, &mut trajectory).unwrap();
+        append_external_pr_verdict(&plan, &receipt, &ci, &mut candidate).unwrap();
         let review = ExternalPrVerdict::new(
             &receipt,
             ExternalVerdictKind::HumanReview,
@@ -1083,12 +1092,12 @@ mod tests {
             digest('f'),
         )
         .unwrap();
-        append_external_pr_verdict(&plan, &receipt, &review, &mut trajectory).unwrap();
+        append_external_pr_verdict(&plan, &receipt, &review, &mut candidate).unwrap();
 
-        assert_eq!(trajectory.later_verdicts.len(), 2);
-        assert!(trajectory.later_verdicts[0].accepted);
-        assert!(!trajectory.later_verdicts[1].accepted);
-        assert!(trajectory.later_verdicts[1]
+        assert_eq!(candidate.later_verdicts.len(), 2);
+        assert!(candidate.later_verdicts[0].accepted);
+        assert!(!candidate.later_verdicts[1].accepted);
+        assert!(candidate.later_verdicts[1]
             .source
             .contains("github:human-review:Memorithm/RSI#42@"));
     }
@@ -1097,8 +1106,8 @@ mod tests {
     fn duplicate_external_verdict_is_rejected() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        let plan = plan(&spec, &dag, &trajectory);
+        let mut candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let ci = ExternalPrVerdict::new(
             &receipt,
@@ -1108,9 +1117,9 @@ mod tests {
             digest('e'),
         )
         .unwrap();
-        append_external_pr_verdict(&plan, &receipt, &ci, &mut trajectory).unwrap();
+        append_external_pr_verdict(&plan, &receipt, &ci, &mut candidate).unwrap();
         assert!(matches!(
-            append_external_pr_verdict(&plan, &receipt, &ci, &mut trajectory),
+            append_external_pr_verdict(&plan, &receipt, &ci, &mut candidate),
             Err(AutopilotPrError::DuplicateExternalVerdict(_))
         ));
     }
@@ -1119,8 +1128,8 @@ mod tests {
     fn verdict_for_other_head_is_rejected() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        let plan = plan(&spec, &dag, &trajectory);
+        let mut candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let mut verdict = ExternalPrVerdict::new(
             &receipt,
@@ -1132,8 +1141,30 @@ mod tests {
         .unwrap();
         verdict.head_revision = revision('f');
         assert!(matches!(
-            append_external_pr_verdict(&plan, &receipt, &verdict, &mut trajectory),
+            append_external_pr_verdict(&plan, &receipt, &verdict, &mut candidate),
             Err(AutopilotPrError::ExternalVerdictContextMismatch)
+        ));
+    }
+
+    #[test]
+    fn post_plan_candidate_mutation_is_rejected() {
+        let spec = spec();
+        let dag = dag(&spec, TaskRegime::feature());
+        let mut candidate = trajectory(&spec, false);
+        let plan = plan(&spec, &dag, &candidate);
+        let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
+        let ci = ExternalPrVerdict::new(
+            &receipt,
+            ExternalVerdictKind::Ci,
+            true,
+            "CI passed",
+            digest('e'),
+        )
+        .unwrap();
+        candidate.compiler_test_device_evidence[0] = "mutated evidence".to_string();
+        assert!(matches!(
+            append_external_pr_verdict(&plan, &receipt, &ci, &mut candidate),
+            Err(AutopilotPrError::TrajectoryCandidateMismatch { .. })
         ));
     }
 
@@ -1141,8 +1172,8 @@ mod tests {
     fn compatibility_must_match_frozen_repository_revision() {
         let spec = spec();
         let dag = dag(&spec, TaskRegime::feature());
-        let mut trajectory = trajectory(&spec, false);
-        trajectory.compatibility = CompatibilitySet::new(
+        let mut candidate = trajectory(&spec, false);
+        candidate.compatibility = CompatibilitySet::new(
             vec![RepositoryRevision::new("Memorithm/RSI", revision('9'), "rsi").unwrap()],
             "stable",
             Vec::new(),
@@ -1152,7 +1183,7 @@ mod tests {
             AutopilotPullRequestPlan::new(
                 &spec,
                 &dag,
-                &trajectory,
+                &candidate,
                 PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
             ),
             Err(AutopilotPrError::CompatibilityScopeMismatch { .. })

@@ -47,6 +47,7 @@ pub mod api;
 pub mod ascent;
 pub mod audit;
 pub mod autopilot_intake;
+pub mod autopilot_task_dag;
 pub mod candidate_state;
 #[cfg(feature = "ccos")]
 pub mod ccos_audit;
@@ -117,6 +118,11 @@ pub use autopilot_intake::{
     AutopilotSpecDraft, ExplorationObservation, ExplorationSource, ExploredObjective,
     FrozenAutopilotSpec, IntakeQuestion, IntakeQuestionnaire, QuestionAnswer, RepositoryExploration,
     RepositoryScope, ResolvedIntake, ResolvedQuestion, SpecBudget,
+};
+pub use autopilot_task_dag::{
+    AUTOPILOT_TASK_DAG_SCHEMA_VERSION, AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError,
+    AutopilotTaskDraft, HardGateProfile, TaskBudget, TaskDagPolicy, TaskEditAllowance,
+    TaskOperation, TaskRegime,
 };
 pub use candidate_state::{
     CandidateState, CandidateStateError, CandidateStoragePolicy, TreeUsage,

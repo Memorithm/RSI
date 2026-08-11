@@ -19,9 +19,14 @@
 pub mod adamw;
 pub mod batch;
 pub mod cross_validate;
+pub mod train;
 
 pub use adamw::{AdamW, AdamWConfig};
 pub use batch::{CognoBatchOutput, compute_cogno01_loss_batch, compute_objective_batch};
 pub use cross_validate::{
-    BatchComparison, compare_oracle_and_backend, CrossValidationReport,
+    BatchComparison, compare_after_optim_step, compare_oracle_and_backend, CrossValidationReport,
+};
+pub use train::{
+    AllocationStats, ControlledRollout, GradientAccumulator, PpoConfig, PpoSample,
+    Rollout, RolloutPolicy, compute_ppo_loss, validate_f32_path,
 };

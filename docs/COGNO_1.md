@@ -92,6 +92,29 @@ pub struct CognoObjectiveBreakdown {
 nettoyable, mesurable en octets, décodage sans allocation par token,
 protégé contre les dépassements.
 
+## Masques et séquences (contrat §14)
+
+- `Mask` : masque binaire `{0,1}` **validé à la construction** (rejette toute
+  valeur hors domaine, mismatch de longueur = erreur structurée) ;
+- `Sequence` / `SequenceBatch` : séquences de **longueurs différentes**
+  (padding à droite via masque partiel), somme/moyenne masquées, cohérence
+  interne validée.
+
+## Entraînement contrôlé (contrat §10, §12 — `cogno-scirust::train`)
+
+- `GradientAccumulator` : accumulation de gradient **contrôlée** (facteur
+  fixe, normalisation, remise à zéro explicite, validation des longueurs) ;
+- `AllocationStats` : **statistiques d'allocation** du chemin critique
+  (compteur d'allocations, octets, appels — le chemin chaud doit rester
+  zéro-alloc) ;
+- chemin **f32** : `sum_f32` + `validate_f32_path` (mixed precision seulement
+  après validation du chemin f32 — écart relatif sous tolérance) ;
+- `ControlledRollout` : **rollouts contrôlés** — la sortie générée passe le
+  gate d'admissibilité `F(x)` avant d'être retournée (jamais de sortie
+  inadmissible) ;
+- `compute_ppo_loss` : **PPO** (clip ratio, ratio en log-espace) — garde
+  `require_stable_01` : bloqué tant que COGNO-0.1 n'est pas stabilisé (§10).
+
 ## Contrat de déterminisme (contrat §16)
 
 `DeterminismRecord` enregistre : graine, ordre des exemples, ordre des
@@ -102,10 +125,13 @@ dtype, backend, threads, mode, empreintes données/poids.
 
 `compare_oracle_and_backend` vérifie, pour chaque batch déterministe, que le
 backend correspond à l'oracle composante par composante (tolérance
-configurable). Cas couverts par les tests : batch vide, taille un, tous termes
-actifs, log-probs très négatives, policy=ref, règle violée, mémoire mal
-classée, surconfiance, coûts au budget, NaN, infini, mismatch de longueur,
-préférence indifférente.
+configurable). `compare_gradients` vérifie la différentiabilité (différences
+finies) et `compare_after_optim_step` vérifie le résultat **après un pas
+d'optimisation** (AdamW, déterministe, fini, borné par le clip).
+Cas couverts par les tests : batch vide, taille un, tous termes actifs,
+log-probs très négatives, policy=ref, règle violée, mémoire mal classée,
+surconfiance, coûts au budget, NaN, infini, mismatch de longueur,
+préférence indifférente, masques partiels, séquences de longueurs différentes.
 
 ## Interdictions respectées (contrat §18)
 

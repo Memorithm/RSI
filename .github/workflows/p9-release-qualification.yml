@@ -17,15 +17,17 @@ jobs:
   exact-lineage-e2e:
     runs-on: ubuntu-latest
     env:
+      RSI_QUALIFICATION_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       RSI_LOCKED: 83009f1be2ddbdb42da840a3a3df6504aef57b5a
       SCIRUST_LOCKED: 07d3524bc241d59142c22515a009c8c2b64ef50e
       SCIRUST_RSI_LOCKED: 8af0801b8bc0c69630797db82bb2dd3416cc8f0a
       FLAT_LOCKED: 974ebbaf95f54917dba0dc3f394d9ad1a92e8349
       CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
-      - name: Checkout RSI qualification head
+      - name: Checkout exact RSI qualification head
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: rsi
 
       - name: Checkout exact qualified SciRust
@@ -54,6 +56,7 @@ jobs:
 
       - name: Verify immutable compatibility lock and checkout revisions
         run: |
+          test "$(git -C rsi rev-parse HEAD)" = "$RSI_QUALIFICATION_HEAD"
           test "$(git -C scirust rev-parse HEAD)" = "$SCIRUST_LOCKED"
           test "$(git -C flat rev-parse HEAD)" = "$FLAT_LOCKED"
           python3 - <<'PY'
@@ -78,7 +81,7 @@ jobs:
               "tokenizer:canonical-parity",
           }
           assert set(lock["compatibility"]["feature_contract"]) == required
-          print("immutable P9 compatibility lock verified")
+          print("immutable P9 compatibility lock and exact qualification head verified")
           PY
 
       - name: Execute RSI local P9 qualification and export trajectory
@@ -133,10 +136,12 @@ jobs:
         run: |
           grep -F 'rev = "974ebbaf95f54917dba0dc3f394d9ad1a92e8349"' scirust/scirust-gpu/Cargo.toml
 
-      - name: Qualify FLAT M15 source at exact revision
+      - name: Replay historical FLAT M15 WGPU device qualification
+        working-directory: flat
         env:
+          FLAT_REQUIRE_WGPU: "1"
           WGPU_BACKEND: vulkan
-        run: cargo +1.89.0 test --locked --manifest-path flat/Cargo.toml --features wgpu
+        run: cargo +1.89.0 test --features wgpu --tests -- --nocapture
 
       - name: Replay SciRust FLAT M15 compile-time contract
         working-directory: scirust

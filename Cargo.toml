@@ -2,6 +2,7 @@
 name = "rsi"
 version = "0.10.0"
 edition = "2021"
+rust-version = "1.89"
 description = "Recursive Self-Improvement — implémentation Rust du système géométrique unifié (v9)"
 # Double licence (cf. LICENSING.md) : gratuit en usage non commercial sous
 # PolyForm-Noncommercial-1.0.0, licence commerciale séparée sinon. L'expression
@@ -17,12 +18,12 @@ keywords = ["rsi", "self-improvement", "optimization", "agent", "llm"]
 categories = ["science", "simulation"]
 
 # Workspace : le crate principal + les backends réels embarqués localement.
-# `scirust-rsi` n'est plus dupliqué ici : SciRust en est l'unique propriétaire
-# canonique et RSI le consomme à une révision git immuable (voir dépendances).
+# `scirust-rsi` et `octasoma` ne sont pas dupliqués ici : leurs dépôts Memorithm
+# canoniques sont consommés à des révisions git immuables (voir dépendances).
 # COGNO-1 : `cogno-core` (oracle scalaire indépendant) et `cogno-scirust`
 # (backend tensoriel/batch validé contre l'oracle).
 [workspace]
-members = ["forge", "octasoma", "ccos", "crates/cogno-core", "crates/cogno-scirust"]
+members = ["forge", "ccos", "crates/cogno-core", "crates/cogno-scirust"]
 resolver = "2"
 
 [[bin]]
@@ -53,7 +54,8 @@ web = ["dep:reqwest"]
 [dependencies]
 cogno-core = { path = "crates/cogno-core" }
 forge-core = { path = "forge", optional = true }
-octasoma = { path = "octasoma", optional = true }
+# Canonical semantic/episodic memory. Optional so the RSI core remains minimal.
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false, optional = true }
 ccos = { path = "ccos", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }

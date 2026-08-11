@@ -200,13 +200,13 @@ fn prove_cumulative_lineage(
         } else {
             0.0
         };
-        Ok(Fitness {
+        Fitness {
             compiles: true,
             tests_passed: 1,
             tests_failed: 0,
             score,
             notes: "deterministic fixture evaluator".to_string(),
-        })
+        }
     });
     let mut archive = CumulativeArchive::new(live, baseline, policy)
         .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?;

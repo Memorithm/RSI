@@ -127,10 +127,10 @@ pub use autopilot_intake::{
     RepositoryScope, ResolvedIntake, ResolvedQuestion, SpecBudget,
 };
 pub use autopilot_perf::{
-    PERF_BENCHMARK_SCHEMA_VERSION, AntiNoisePolicy, BenchmarkCase, BenchmarkClass,
-    BenchmarkEnvironment, FrozenBenchmarkArtifact, FrozenPerfBenchmark, MetricDirection,
-    PerfBenchmarkApproval, PerfCaseResult, PerfComparisonReport, PerfMeasurementBatch,
-    PerfRegimeError,
+    PERF_BENCHMARK_SCHEMA_VERSION, AntiNoisePolicy, BenchmarkCase, BenchmarkCaseSpec,
+    BenchmarkClass, BenchmarkEnvironment, FrozenBenchmarkArtifact, FrozenPerfBenchmark,
+    MetricDirection, PerfBenchmarkApproval, PerfBenchmarkDraft, PerfCaseResult,
+    PerfComparisonReport, PerfMeasurementBatch, PerfRegimeError,
 };
 pub use autopilot_task_dag::{
     AUTOPILOT_TASK_DAG_SCHEMA_VERSION, AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError,

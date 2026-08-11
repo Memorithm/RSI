@@ -884,7 +884,10 @@ fn immutable_trajectory_identity(
     frozen
         .validate()
         .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
-    Ok(hex_digest(&sha256(frozen.to_json_string().as_bytes())))
+    let json = frozen
+        .to_json_string()
+        .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
+    Ok(hex_digest(&sha256(json.as_bytes())))
 }
 
 fn bound_candidate_identity(

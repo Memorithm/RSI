@@ -46,6 +46,7 @@ pub mod agent;
 pub mod api;
 pub mod ascent;
 pub mod audit;
+pub mod autopilot_feature;
 pub mod autopilot_intake;
 pub mod autopilot_task_dag;
 pub mod candidate_state;
@@ -113,6 +114,11 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
+pub use autopilot_feature::{
+    FEATURE_IMPLEMENTATION_CONTRACT_SCHEMA_VERSION, FEATURE_TEST_MANIFEST_SCHEMA_VERSION,
+    FeatureImplementationContract, FeatureRegimeError, FeatureTestApproval, FrozenFeatureTests,
+    FrozenTestArtifact,
+};
 pub use autopilot_intake::{
     AUTOPILOT_SPEC_SCHEMA_VERSION, AcceptanceCheck, AcceptanceCriterion, AutopilotIntakeError,
     AutopilotSpecDraft, ExplorationObservation, ExplorationSource, ExploredObjective,

@@ -52,7 +52,7 @@ jobs:
 
       - name: Install locked MSRV and lavapipe
         run: |
-          rustup toolchain install 1.89.0 --profile minimal --component clippy
+          rustup toolchain install 1.89.0 --profile minimal
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers
 
@@ -159,7 +159,7 @@ jobs:
         working-directory: scirust
         run: |
           cargo +1.89.0 test -p scirust --locked --features autotune autotune::tests -- --nocapture
-          cargo +1.89.0 clippy -p scirust --all-targets --locked --features autotune -- -D warnings
+          cargo +stable clippy -p scirust --all-targets --locked --features autotune -- -D warnings
 
       - name: Replay exact FLAT M24 WGPU device qualification
         working-directory: flat

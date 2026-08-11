@@ -94,6 +94,7 @@ pub mod patchset_trajectory;
 pub mod plot;
 pub mod prompt;
 pub mod release_compatibility;
+pub mod release_qualification;
 pub mod report;
 pub mod rng;
 pub mod schedule;
@@ -209,6 +210,10 @@ pub use patchset_trajectory::{
 pub use release_compatibility::{
     CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON, RELEASE_COMPATIBILITY_LOCK_SCHEMA_VERSION,
     ReleaseCompatibilityError, ReleaseCompatibilityLock, current_release_compatibility_lock,
+};
+pub use release_qualification::{
+    RELEASE_QUALIFICATION_SCHEMA_VERSION, ReleaseQualificationArtifacts,
+    ReleaseQualificationError, ReleaseQualificationReport, run_local_release_qualification,
 };
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};

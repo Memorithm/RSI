@@ -35,6 +35,7 @@ pub mod objective;
 pub mod pref;
 pub mod reward;
 pub mod resource;
+pub mod seq;
 pub mod softlogic;
 
 pub use admissible::{AdmissibilityGate, AdmissibilityVerdict, HardValidator, ProvenanceValidator};
@@ -49,4 +50,5 @@ pub use objective::{CognoObjectiveBreakdown, CognoObjectiveInput, CognoWeights, 
 pub use pref::{PreferencePair, compute_preference_objective, sigmoid_stable};
 pub use reward::{RewardBreakdown, compute_reward_breakdown};
 pub use resource::{ResourceCosts, compute_resource_loss_batch};
+pub use seq::{Mask, Sequence, SequenceBatch};
 pub use softlogic::{SoftLogic, SoftRule, compute_symbolic_objective};

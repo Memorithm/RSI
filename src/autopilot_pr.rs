@@ -1,12 +1,14 @@
 //! P8.5 AUTOPILOT PR emission and human-review flywheel contract.
 //!
-//! The core remains network-free and cannot merge anything. It emits exactly a
-//! branch-creation plan followed by a pull-request plan. A trusted hosting
-//! adapter may execute those two actions and return an immutable receipt. CI and
-//! human-review verdicts are then appended to the existing engineering
-//! trajectory as later evidence tied to the exact PR head.
+//! The core remains network-free and cannot merge anything. It binds an
+//! accepted engineering trajectory to one exact P8 task/repository role, emits
+//! only a branch-creation plan followed by a pull-request plan, and accepts
+//! exact-head CI/human-review evidence back into the same trajectory.
 
 use crate::autopilot_intake::FrozenAutopilotSpec;
+use crate::autopilot_perf::{
+    FrozenPerfBenchmark, PerfCaseResult, PerfComparisonReport, PerfMeasurementBatch,
+};
 use crate::autopilot_task_dag::{AutopilotTask, AutopilotTaskDag, TaskOperation, TaskRegime};
 use crate::compatibility::{CompatibilitySet, RepositoryRevision};
 use crate::engineering_trajectory::{
@@ -36,24 +38,234 @@ impl HostingAction {
     }
 }
 
+/// Proven P8.4 promotion evidence. The fields are private so callers cannot
+/// manufacture a `promotable = true` report without re-running the frozen
+/// profile through the P8.4 evaluator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifiedPerfPromotion {
+    task_id: String,
+    profile_id: String,
+    profile_sha256: String,
+    environment_fingerprint: String,
+    trajectory_sha256: String,
+    evidence_sha256: String,
+    report: PerfComparisonReport,
+}
+
+impl VerifiedPerfPromotion {
+    pub fn evaluate(
+        profile: &FrozenPerfBenchmark,
+        trajectory: &EngineeringTrajectory,
+        baseline: &[PerfMeasurementBatch],
+        candidate: &[PerfMeasurementBatch],
+    ) -> Result<Self, AutopilotPrError> {
+        profile
+            .verify()
+            .map_err(|error| AutopilotPrError::InvalidPerfEvidence(error.to_string()))?;
+        trajectory
+            .validate()
+            .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
+        let report = PerfComparisonReport::evaluate(
+            profile,
+            &trajectory.admissibility,
+            baseline,
+            candidate,
+        )
+        .map_err(|error| AutopilotPrError::InvalidPerfEvidence(error.to_string()))?;
+        if !report.hard_gates_passed || !report.promotable {
+            return Err(AutopilotPrError::PerfCandidateNotPromotable);
+        }
+        let trajectory_sha256 = immutable_trajectory_identity(trajectory)?;
+        let evidence_sha256 = perf_evidence_identity(profile, baseline, candidate, &report);
+        Ok(Self {
+            task_id: profile.task_id().to_string(),
+            profile_id: profile.profile_id().to_string(),
+            profile_sha256: profile.profile_sha256().to_string(),
+            environment_fingerprint: profile.environment_fingerprint(),
+            trajectory_sha256,
+            evidence_sha256,
+            report,
+        })
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
+    pub fn profile_sha256(&self) -> &str {
+        &self.profile_sha256
+    }
+
+    pub fn evidence_sha256(&self) -> &str {
+        &self.evidence_sha256
+    }
+
+    pub fn report(&self) -> &PerfComparisonReport {
+        &self.report
+    }
+}
+
+/// Accepted engineering evidence bound to the exact P8 task that produced it.
+/// PR emission no longer accepts an independent task ID/repository role, so a
+/// trajectory cannot be reinterpreted under another overlapping task contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskBoundEngineeringTrajectory {
+    spec_sha256: String,
+    dag_sha256: String,
+    task_id: String,
+    repository_role: String,
+    trajectory: EngineeringTrajectory,
+    perf_promotion: Option<VerifiedPerfPromotion>,
+    candidate_sha256: String,
+}
+
+impl TaskBoundEngineeringTrajectory {
+    pub fn new(
+        spec: &FrozenAutopilotSpec,
+        dag: &AutopilotTaskDag,
+        task_id: impl Into<String>,
+        repository_role: impl Into<String>,
+        trajectory: EngineeringTrajectory,
+        perf_promotion: Option<VerifiedPerfPromotion>,
+    ) -> Result<Self, AutopilotPrError> {
+        spec.verify()
+            .map_err(|error| AutopilotPrError::InvalidSpec(error.to_string()))?;
+        dag.verify()
+            .map_err(|error| AutopilotPrError::InvalidDag(error.to_string()))?;
+        if dag.spec_sha256() != spec.spec_sha256() {
+            return Err(AutopilotPrError::SpecDagMismatch);
+        }
+        trajectory
+            .validate()
+            .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
+        if trajectory.task_spec_id != spec.spec_sha256() {
+            return Err(AutopilotPrError::TrajectorySpecMismatch {
+                expected: spec.spec_sha256().to_string(),
+                actual: trajectory.task_spec_id.clone(),
+            });
+        }
+        if trajectory.verdict != EngineeringVerdict::Accepted
+            || !trajectory.admissibility.is_admissible()
+        {
+            return Err(AutopilotPrError::TrajectoryNotAccepted);
+        }
+
+        let task_id = task_id.into();
+        let repository_role = repository_role.into();
+        validate_identifier("task_id", &task_id)?;
+        validate_identifier("repository_role", &repository_role)?;
+        let task = dag
+            .task(&task_id)
+            .ok_or_else(|| AutopilotPrError::UnknownTask(task_id.clone()))?;
+        if !task
+            .repository_roles()
+            .iter()
+            .any(|role| role == &repository_role)
+        {
+            return Err(AutopilotPrError::RepositoryRoleOutsideTask(
+                repository_role,
+            ));
+        }
+
+        validate_compatibility_against_spec(spec, &trajectory.compatibility)?;
+        unique_revision_for_role(&trajectory.compatibility, &repository_role)?;
+        validate_patchset_for_target(task, &repository_role, &trajectory.patch_set)?;
+        validate_perf_binding(task, &trajectory, perf_promotion.as_ref())?;
+
+        let candidate_sha256 = bound_candidate_identity(
+            &trajectory,
+            &task_id,
+            &repository_role,
+            perf_promotion.as_ref(),
+        )?;
+        Ok(Self {
+            spec_sha256: spec.spec_sha256().to_string(),
+            dag_sha256: dag.dag_sha256().to_string(),
+            task_id,
+            repository_role,
+            trajectory,
+            perf_promotion,
+            candidate_sha256,
+        })
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn repository_role(&self) -> &str {
+        &self.repository_role
+    }
+
+    pub fn candidate_sha256(&self) -> &str {
+        &self.candidate_sha256
+    }
+
+    pub fn trajectory(&self) -> &EngineeringTrajectory {
+        &self.trajectory
+    }
+
+    pub fn perf_promotion(&self) -> Option<&VerifiedPerfPromotion> {
+        self.perf_promotion.as_ref()
+    }
+
+    pub fn into_trajectory(self) -> EngineeringTrajectory {
+        self.trajectory
+    }
+
+    fn verify(
+        &self,
+        spec: &FrozenAutopilotSpec,
+        dag: &AutopilotTaskDag,
+    ) -> Result<(), AutopilotPrError> {
+        spec.verify()
+            .map_err(|error| AutopilotPrError::InvalidSpec(error.to_string()))?;
+        dag.verify()
+            .map_err(|error| AutopilotPrError::InvalidDag(error.to_string()))?;
+        if self.spec_sha256 != spec.spec_sha256()
+            || self.dag_sha256 != dag.dag_sha256()
+            || dag.spec_sha256() != spec.spec_sha256()
+        {
+            return Err(AutopilotPrError::BoundCandidateContextMismatch);
+        }
+        self.trajectory
+            .validate()
+            .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
+        let task = dag
+            .task(&self.task_id)
+            .ok_or_else(|| AutopilotPrError::UnknownTask(self.task_id.clone()))?;
+        validate_compatibility_against_spec(spec, &self.trajectory.compatibility)?;
+        validate_patchset_for_target(task, &self.repository_role, &self.trajectory.patch_set)?;
+        validate_perf_binding(task, &self.trajectory, self.perf_promotion.as_ref())?;
+        let actual = bound_candidate_identity(
+            &self.trajectory,
+            &self.task_id,
+            &self.repository_role,
+            self.perf_promotion.as_ref(),
+        )?;
+        if actual != self.candidate_sha256 {
+            return Err(AutopilotPrError::BoundCandidateHashMismatch {
+                expected: self.candidate_sha256.clone(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PullRequestPlanDraft {
-    pub task_id: String,
-    pub repository_role: String,
     pub default_branch: String,
     pub title: String,
 }
 
 impl PullRequestPlanDraft {
-    pub fn new(
-        task_id: impl Into<String>,
-        repository_role: impl Into<String>,
-        default_branch: impl Into<String>,
-        title: impl Into<String>,
-    ) -> Self {
+    pub fn new(default_branch: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
-            task_id: task_id.into(),
-            repository_role: repository_role.into(),
             default_branch: default_branch.into(),
             title: title.into(),
         }
@@ -84,70 +296,35 @@ impl AutopilotPullRequestPlan {
     pub fn new(
         spec: &FrozenAutopilotSpec,
         dag: &AutopilotTaskDag,
-        trajectory: &EngineeringTrajectory,
+        candidate: &TaskBoundEngineeringTrajectory,
         draft: PullRequestPlanDraft,
     ) -> Result<Self, AutopilotPrError> {
-        spec.verify()
-            .map_err(|error| AutopilotPrError::InvalidSpec(error.to_string()))?;
-        dag.verify()
-            .map_err(|error| AutopilotPrError::InvalidDag(error.to_string()))?;
-        if dag.spec_sha256() != spec.spec_sha256() {
-            return Err(AutopilotPrError::SpecDagMismatch);
-        }
-        trajectory
-            .validate()
-            .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
-        if trajectory.task_spec_id != spec.spec_sha256() {
-            return Err(AutopilotPrError::TrajectorySpecMismatch {
-                expected: spec.spec_sha256().to_string(),
-                actual: trajectory.task_spec_id.clone(),
-            });
-        }
-        if trajectory.verdict != EngineeringVerdict::Accepted
-            || !trajectory.admissibility.is_admissible()
-        {
-            return Err(AutopilotPrError::TrajectoryNotAccepted);
-        }
-
-        validate_identifier("task_id", &draft.task_id)?;
-        validate_identifier("repository_role", &draft.repository_role)?;
-        validate_branch_component("default_branch", &draft.default_branch)?;
+        candidate.verify(spec, dag)?;
+        validate_git_branch_name("default_branch", &draft.default_branch)?;
         validate_text("title", &draft.title)?;
         if draft.title.len() > 240 {
             return Err(AutopilotPrError::TitleTooLong(draft.title.len()));
         }
 
         let task = dag
-            .task(&draft.task_id)
-            .ok_or_else(|| AutopilotPrError::UnknownTask(draft.task_id.clone()))?;
-        if !task
-            .repository_roles()
-            .iter()
-            .any(|role| role == &draft.repository_role)
-        {
-            return Err(AutopilotPrError::RepositoryRoleOutsideTask(
-                draft.repository_role,
-            ));
-        }
-
-        validate_compatibility_against_spec(spec, &trajectory.compatibility)?;
-        let target = unique_revision_for_role(&trajectory.compatibility, &draft.repository_role)?;
-        validate_patchset_for_target(task, &draft.repository_role, &trajectory.patch_set)?;
-        if matches!(task.regime(), TaskRegime::Perf { .. }) && trajectory.benchmarks.is_empty() {
-            return Err(AutopilotPrError::PerfTrajectoryMissingBenchmark);
-        }
-
+            .task(candidate.task_id())
+            .ok_or_else(|| AutopilotPrError::UnknownTask(candidate.task_id().to_string()))?;
+        let trajectory = candidate.trajectory();
+        let target = unique_revision_for_role(
+            &trajectory.compatibility,
+            candidate.repository_role(),
+        )?;
         let patch_set_sha256 = trajectory
             .patch_set
             .identity()
             .map_err(|error| AutopilotPrError::InvalidPatchSet(error.to_string()))?;
         let compatibility_sha256 = trajectory.compatibility.fingerprint();
-        let candidate_sha256 = trajectory_candidate_identity(trajectory)?;
         let branch_name = format!(
             "autopilot/{}/{}",
-            draft.task_id,
+            candidate.task_id(),
             &patch_set_sha256[..12]
         );
+        validate_git_branch_name("generated_branch", &branch_name)?;
         if branch_name == draft.default_branch {
             return Err(AutopilotPrError::DefaultBranchMutationForbidden(
                 draft.default_branch,
@@ -158,19 +335,17 @@ impl AutopilotPullRequestPlan {
             spec,
             dag,
             task,
-            trajectory,
+            candidate,
             target: &target,
             compatibility_sha256: &compatibility_sha256,
             patch_set_sha256: &patch_set_sha256,
-            candidate_sha256: &candidate_sha256,
         });
-
         let mut plan = Self {
             schema_version: AUTOPILOT_PR_PLAN_SCHEMA_VERSION,
             spec_sha256: spec.spec_sha256().to_string(),
             dag_sha256: dag.dag_sha256().to_string(),
-            task_id: task.id().to_string(),
-            repository_role: draft.repository_role,
+            task_id: candidate.task_id().to_string(),
+            repository_role: candidate.repository_role().to_string(),
             repository: target.repository,
             base_revision: target.revision,
             default_branch: draft.default_branch,
@@ -179,7 +354,7 @@ impl AutopilotPullRequestPlan {
             body,
             compatibility_sha256,
             patch_set_sha256,
-            candidate_sha256,
+            candidate_sha256: candidate.candidate_sha256().to_string(),
             plan_sha256: String::new(),
         };
         plan.plan_sha256 = plan.compute_sha256();
@@ -227,6 +402,8 @@ impl AutopilotPullRequestPlan {
     }
 
     pub fn verify(&self) -> Result<(), AutopilotPrError> {
+        validate_git_branch_name("default_branch", &self.default_branch)?;
+        validate_git_branch_name("generated_branch", &self.branch_name)?;
         if self.branch_name == self.default_branch {
             return Err(AutopilotPrError::DefaultBranchMutationForbidden(
                 self.default_branch.clone(),
@@ -421,15 +598,17 @@ pub fn append_external_pr_verdict(
     plan: &AutopilotPullRequestPlan,
     receipt: &PullRequestEmissionReceipt,
     verdict: &ExternalPrVerdict,
-    trajectory: &mut EngineeringTrajectory,
+    candidate: &mut TaskBoundEngineeringTrajectory,
 ) -> Result<(), AutopilotPrError> {
     plan.verify()?;
     receipt.verify_against_plan(plan)?;
-    trajectory
-        .validate()
-        .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
-    let actual_candidate = trajectory_candidate_identity(trajectory)?;
-    if actual_candidate != plan.candidate_sha256 {
+    let actual_candidate = bound_candidate_identity(
+        &candidate.trajectory,
+        &candidate.task_id,
+        &candidate.repository_role,
+        candidate.perf_promotion.as_ref(),
+    )?;
+    if actual_candidate != plan.candidate_sha256 || actual_candidate != candidate.candidate_sha256 {
         return Err(AutopilotPrError::TrajectoryCandidateMismatch {
             expected: plan.candidate_sha256.clone(),
             actual: actual_candidate,
@@ -451,7 +630,8 @@ pub fn append_external_pr_verdict(
         verdict.head_revision,
         verdict.evidence_sha256
     );
-    if trajectory
+    if candidate
+        .trajectory
         .later_verdicts
         .iter()
         .any(|existing| existing.source == source)
@@ -460,8 +640,9 @@ pub fn append_external_pr_verdict(
     }
     let later = LaterVerdict::new(source, verdict.accepted, verdict.reason.clone())
         .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
-    trajectory.later_verdicts.push(later);
-    trajectory
+    candidate.trajectory.later_verdicts.push(later);
+    candidate
+        .trajectory
         .validate()
         .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
     Ok(())
@@ -513,7 +694,27 @@ pub enum AutopilotPrError {
         operation: TaskOperation,
     },
     RepositoryRoleReadOnly(String),
-    PerfTrajectoryMissingBenchmark,
+    InvalidPerfEvidence(String),
+    PerfCandidateNotPromotable,
+    MissingPerfPromotion {
+        task_id: String,
+        profile_id: String,
+    },
+    UnexpectedPerfPromotion(String),
+    PerfPromotionTaskMismatch {
+        expected: String,
+        actual: String,
+    },
+    PerfPromotionProfileMismatch {
+        expected: String,
+        actual: String,
+    },
+    PerfPromotionTrajectoryMismatch,
+    BoundCandidateContextMismatch,
+    BoundCandidateHashMismatch {
+        expected: String,
+        actual: String,
+    },
     DefaultBranchMutationForbidden(String),
     PlanHashMismatch {
         expected: String,
@@ -541,11 +742,54 @@ struct PrBodyContext<'a> {
     spec: &'a FrozenAutopilotSpec,
     dag: &'a AutopilotTaskDag,
     task: &'a AutopilotTask,
-    trajectory: &'a EngineeringTrajectory,
+    candidate: &'a TaskBoundEngineeringTrajectory,
     target: &'a RepositoryRevision,
     compatibility_sha256: &'a str,
     patch_set_sha256: &'a str,
-    candidate_sha256: &'a str,
+}
+
+fn validate_perf_binding(
+    task: &AutopilotTask,
+    trajectory: &EngineeringTrajectory,
+    promotion: Option<&VerifiedPerfPromotion>,
+) -> Result<(), AutopilotPrError> {
+    match task.regime() {
+        TaskRegime::Feature => {
+            if promotion.is_some() {
+                return Err(AutopilotPrError::UnexpectedPerfPromotion(
+                    task.id().to_string(),
+                ));
+            }
+        }
+        TaskRegime::Perf {
+            benchmark_profile_id,
+        } => {
+            let promotion = promotion.ok_or_else(|| AutopilotPrError::MissingPerfPromotion {
+                task_id: task.id().to_string(),
+                profile_id: benchmark_profile_id.clone(),
+            })?;
+            if promotion.task_id != task.id() {
+                return Err(AutopilotPrError::PerfPromotionTaskMismatch {
+                    expected: task.id().to_string(),
+                    actual: promotion.task_id.clone(),
+                });
+            }
+            if promotion.profile_id != *benchmark_profile_id {
+                return Err(AutopilotPrError::PerfPromotionProfileMismatch {
+                    expected: benchmark_profile_id.clone(),
+                    actual: promotion.profile_id.clone(),
+                });
+            }
+            let trajectory_sha256 = immutable_trajectory_identity(trajectory)?;
+            if promotion.trajectory_sha256 != trajectory_sha256 {
+                return Err(AutopilotPrError::PerfPromotionTrajectoryMismatch);
+            }
+            if !promotion.report.hard_gates_passed || !promotion.report.promotable {
+                return Err(AutopilotPrError::PerfCandidateNotPromotable);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn unique_revision_for_role(
@@ -632,10 +876,7 @@ fn patch_operation_kind(operation: &FileOperation) -> TaskOperation {
     }
 }
 
-/// Identity of the immutable pre-PR trajectory. Later verdicts are excluded so
-/// appending CI/review feedback does not change candidate identity, while any
-/// mutation to the patch, gates, evidence, benchmark or base verdict does.
-fn trajectory_candidate_identity(
+fn immutable_trajectory_identity(
     trajectory: &EngineeringTrajectory,
 ) -> Result<String, AutopilotPrError> {
     let mut frozen = trajectory.clone();
@@ -646,17 +887,86 @@ fn trajectory_candidate_identity(
     Ok(hex_digest(&sha256(frozen.to_json_string().as_bytes())))
 }
 
+fn bound_candidate_identity(
+    trajectory: &EngineeringTrajectory,
+    task_id: &str,
+    repository_role: &str,
+    promotion: Option<&VerifiedPerfPromotion>,
+) -> Result<String, AutopilotPrError> {
+    let trajectory_sha256 = immutable_trajectory_identity(trajectory)?;
+    let perf = promotion
+        .map(|value| value.evidence_sha256.as_str())
+        .unwrap_or("feature");
+    let material = format!(
+        "rsi-autopilot-bound-candidate-v1|{trajectory_sha256}|{task_id}|{repository_role}|{perf}"
+    );
+    Ok(hex_digest(&sha256(material.as_bytes())))
+}
+
+fn perf_evidence_identity(
+    profile: &FrozenPerfBenchmark,
+    baseline: &[PerfMeasurementBatch],
+    candidate: &[PerfMeasurementBatch],
+    report: &PerfComparisonReport,
+) -> String {
+    let mut material = String::new();
+    material.push_str("rsi-autopilot-perf-evidence-v1|");
+    material.push_str(profile.profile_sha256());
+    append_measurements(&mut material, "baseline", baseline);
+    append_measurements(&mut material, "candidate", candidate);
+    for result in &report.cases {
+        material.push('|');
+        material.push_str(&result.case_id);
+        material.push(':');
+        material.push_str(if result.passed { "pass" } else { "fail" });
+        material.push(':');
+        material.push_str(&result.improvement_ppm.to_string());
+        material.push(':');
+        material.push_str(&result.max_relative_mad_ppm.to_string());
+        material.push(':');
+        material.push_str(&result.winning_batches.to_string());
+    }
+    hex_digest(&sha256(material.as_bytes()))
+}
+
+fn append_measurements(
+    material: &mut String,
+    label: &str,
+    measurements: &[PerfMeasurementBatch],
+) {
+    let mut ordered: Vec<_> = measurements.iter().collect();
+    ordered.sort_by(|left, right| {
+        left.case_id
+            .cmp(&right.case_id)
+            .then_with(|| left.batch_id.cmp(&right.batch_id))
+    });
+    for batch in ordered {
+        material.push('|');
+        material.push_str(label);
+        material.push(':');
+        material.push_str(&batch.case_id);
+        material.push(':');
+        material.push_str(&batch.batch_id);
+        material.push(':');
+        material.push_str(&batch.environment_fingerprint);
+        for sample in &batch.samples {
+            material.push(':');
+            material.push_str(&format!("{:016x}", sample.to_bits()));
+        }
+    }
+}
+
 fn render_pr_body(context: PrBodyContext<'_>) -> String {
     let PrBodyContext {
         spec,
         dag,
         task,
-        trajectory,
+        candidate,
         target,
         compatibility_sha256,
         patch_set_sha256,
-        candidate_sha256,
     } = context;
+    let trajectory = candidate.trajectory();
     let mut body = String::new();
     body.push_str("## AUTOPILOT engineering candidate\n\n");
     body.push_str(&format!("- task: `{}`\n", task.id()));
@@ -666,7 +976,10 @@ fn render_pr_body(context: PrBodyContext<'_>) -> String {
     body.push_str(&format!("- exact base revision: `{}`\n", target.revision));
     body.push_str(&format!("- parent state: `{}`\n", trajectory.parent_state_id));
     body.push_str(&format!("- PatchSet: `{patch_set_sha256}`\n"));
-    body.push_str(&format!("- candidate identity: `{candidate_sha256}`\n"));
+    body.push_str(&format!(
+        "- candidate identity: `{}`\n",
+        candidate.candidate_sha256()
+    ));
     body.push_str(&format!(
         "- compatibility fingerprint: `{compatibility_sha256}`\n\n"
     ));
@@ -686,18 +999,18 @@ fn render_pr_body(context: PrBodyContext<'_>) -> String {
     }
 
     body.push_str("\n## Benchmark evidence\n\n");
-    if trajectory.benchmarks.is_empty() {
-        body.push_str("- no benchmark required by this accepted FEATURE trajectory\n");
-    } else {
-        for benchmark in &trajectory.benchmarks {
-            body.push_str(&format!(
-                "- `{}`: {} {} ({} samples)\n",
-                benchmark.metric,
-                benchmark.summary,
-                benchmark.unit,
-                benchmark.samples.len()
-            ));
+    if let Some(promotion) = candidate.perf_promotion() {
+        body.push_str(&format!(
+            "- frozen PERF profile: `{}`\n- environment: `{}`\n- evidence: `{}`\n",
+            promotion.profile_sha256,
+            promotion.environment_fingerprint,
+            promotion.evidence_sha256
+        ));
+        for result in &promotion.report.cases {
+            append_perf_case(&mut body, result);
         }
+    } else {
+        body.push_str("- no PERF ranking required by this accepted FEATURE trajectory\n");
     }
 
     body.push_str("\n## Review and merge policy\n\n");
@@ -705,6 +1018,18 @@ fn render_pr_body(context: PrBodyContext<'_>) -> String {
         "This plan requests branch creation and pull-request creation only. It does not request or encode automatic merge. CI and human-review verdicts are external evidence appended to the engineering trajectory.\n",
     );
     body
+}
+
+fn append_perf_case(body: &mut String, result: &PerfCaseResult) {
+    body.push_str(&format!(
+        "- `{}`: improvement={}ppm, max_relative_mad={}ppm, winning_batches={}/{}, passed={}\n",
+        result.case_id,
+        result.improvement_ppm,
+        result.max_relative_mad_ppm,
+        result.winning_batches,
+        result.required_winning_batches,
+        result.passed
+    ));
 }
 
 fn admissibility_rows(
@@ -766,24 +1091,31 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), Autopilot
     Ok(())
 }
 
-fn validate_branch_component(
+/// Implements the core `git check-ref-format --branch` constraints relevant to
+/// generated/target branch names, including component-level `.lock`/dot rules.
+fn validate_git_branch_name(
     field: &'static str,
     value: &str,
 ) -> Result<(), AutopilotPrError> {
     validate_text(field, value)?;
-    let invalid = value.starts_with('/')
+    let forbidden = value == "@"
+        || value.starts_with('/')
         || value.ends_with('/')
+        || value.ends_with('.')
         || value.contains("..")
+        || value.contains("@{")
         || value.contains("//")
-        || value.contains(' ')
-        || value.contains('~')
-        || value.contains('^')
-        || value.contains(':')
-        || value.contains('?')
-        || value.contains('*')
-        || value.contains('[')
-        || value.contains('\\');
-    if invalid {
+        || value.bytes().any(|byte| byte <= b' ' || byte == 0x7f)
+        || value
+            .chars()
+            .any(|ch| matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\'))
+        || value.split('/').any(|component| {
+            component.is_empty()
+                || component.starts_with('.')
+                || component.ends_with('.')
+                || component.ends_with(".lock")
+        });
+    if forbidden {
         return Err(AutopilotPrError::InvalidBranch {
             field,
             value: value.to_string(),
@@ -827,13 +1159,15 @@ mod tests {
         AcceptanceCheck, AcceptanceCriterion, AutopilotSpecDraft, ExplorationObservation,
         ExplorationSource, ExploredObjective, RepositoryExploration, RepositoryScope, SpecBudget,
     };
+    use crate::autopilot_perf::{
+        AntiNoisePolicy, BenchmarkCase, BenchmarkCaseSpec, BenchmarkClass, BenchmarkEnvironment,
+        FrozenBenchmarkArtifact, MetricDirection, PerfBenchmarkApproval, PerfBenchmarkDraft,
+    };
     use crate::autopilot_task_dag::{
         AutopilotTask, AutopilotTaskDraft, HardGateProfile, TaskBudget, TaskDagPolicy,
         TaskEditAllowance,
     };
-    use crate::engineering_trajectory::{
-        AdmissibilityBreakdown, BenchmarkRecord, ProposerMetadata,
-    };
+    use crate::engineering_trajectory::{AdmissibilityBreakdown, ProposerMetadata};
 
     fn digest(hex: char) -> String {
         hex.to_string().repeat(64)
@@ -877,13 +1211,13 @@ mod tests {
                 .unwrap(),
             ],
             vec!["automatic merge".to_string()],
-            SpecBudget::new(10, 10_000, 10_000).unwrap(),
+            SpecBudget::new(20, 20_000, 20_000).unwrap(),
             vec![
                 RepositoryScope::new(
                     "rsi",
                     "Memorithm/RSI",
                     revision('a'),
-                    vec!["src".to_string()],
+                    vec!["benches".to_string(), "src".to_string()],
                 )
                 .unwrap(),
             ],
@@ -891,35 +1225,30 @@ mod tests {
         .unwrap()
     }
 
-    fn task(regime: TaskRegime) -> AutopilotTask {
+    fn task(id: &str, regime: TaskRegime, path: &str) -> AutopilotTask {
         AutopilotTask::new(AutopilotTaskDraft {
-            id: "implementation".to_string(),
-            description: "implement the accepted candidate".to_string(),
+            id: id.to_string(),
+            description: format!("execute {id}"),
             regime,
             repository_roles: vec!["rsi".to_string()],
             edit_allowances: vec![
                 TaskEditAllowance::new(
                     "rsi",
-                    vec!["src".to_string()],
+                    vec![path.to_string()],
                     vec![TaskOperation::Create, TaskOperation::ModifyExact],
                 )
                 .unwrap(),
             ],
             hard_gate_profile: HardGateProfile::engineering_strict(),
-            budget: TaskBudget::new(2, 4, 4_000, 4_000).unwrap(),
+            budget: TaskBudget::new(4, 8, 8_000, 8_000).unwrap(),
             dependencies: Vec::new(),
             done_criterion_id: "tests-pass".to_string(),
         })
         .unwrap()
     }
 
-    fn dag(spec: &FrozenAutopilotSpec, regime: TaskRegime) -> AutopilotTaskDag {
-        AutopilotTaskDag::new(
-            spec,
-            vec![task(regime)],
-            TaskDagPolicy::new(4, 4, 4).unwrap(),
-        )
-        .unwrap()
+    fn dag(spec: &FrozenAutopilotSpec, tasks: Vec<AutopilotTask>) -> AutopilotTaskDag {
+        AutopilotTaskDag::new(spec, tasks, TaskDagPolicy::new(8, 8, 16).unwrap()).unwrap()
     }
 
     fn gates() -> AdmissibilityBreakdown {
@@ -934,7 +1263,7 @@ mod tests {
         }
     }
 
-    fn trajectory(spec: &FrozenAutopilotSpec, with_benchmark: bool) -> EngineeringTrajectory {
+    fn trajectory(spec: &FrozenAutopilotSpec) -> EngineeringTrajectory {
         EngineeringTrajectory {
             task_spec_id: spec.spec_sha256().to_string(),
             compatibility: CompatibilitySet::new(
@@ -955,41 +1284,108 @@ mod tests {
             proposer: ProposerMetadata::new("sciagent", "engineering", "heldout-v1").unwrap(),
             compiler_test_device_evidence: vec!["cargo test: pass".to_string()],
             admissibility: gates(),
-            benchmarks: if with_benchmark {
-                vec![BenchmarkRecord::new("latency", "ns", vec![10.0, 9.0], 9.5).unwrap()]
-            } else {
-                Vec::new()
-            },
+            benchmarks: Vec::new(),
             verdict: EngineeringVerdict::Accepted,
             verdict_reason: "frozen acceptance criteria satisfied".to_string(),
             later_verdicts: Vec::new(),
         }
     }
 
+    fn bind_feature(
+        spec: &FrozenAutopilotSpec,
+        dag: &AutopilotTaskDag,
+        task_id: &str,
+        trajectory: EngineeringTrajectory,
+    ) -> TaskBoundEngineeringTrajectory {
+        TaskBoundEngineeringTrajectory::new(spec, dag, task_id, "rsi", trajectory, None).unwrap()
+    }
+
     fn plan(
         spec: &FrozenAutopilotSpec,
         dag: &AutopilotTaskDag,
-        trajectory: &EngineeringTrajectory,
+        candidate: &TaskBoundEngineeringTrajectory,
     ) -> AutopilotPullRequestPlan {
         AutopilotPullRequestPlan::new(
             spec,
             dag,
-            trajectory,
-            PullRequestPlanDraft::new(
-                "implementation",
-                "rsi",
-                "main",
-                "feat(autopilot): apply accepted candidate",
-            ),
+            candidate,
+            PullRequestPlanDraft::new("main", "feat(autopilot): apply accepted candidate"),
         )
         .unwrap()
+    }
+
+    fn perf_case() -> BenchmarkCase {
+        BenchmarkCase::new(BenchmarkCaseSpec {
+            id: "e2e-latency".to_string(),
+            repository_role: "rsi".to_string(),
+            command_kind: "bench_e2e".to_string(),
+            arguments: Vec::new(),
+            metric: "latency".to_string(),
+            unit: "ns".to_string(),
+            direction: MetricDirection::Minimize,
+            class: BenchmarkClass::EndToEnd,
+            promotion_gate: true,
+        })
+        .unwrap()
+    }
+
+    fn perf_profile(
+        spec: &FrozenAutopilotSpec,
+        dag: &AutopilotTaskDag,
+    ) -> FrozenPerfBenchmark {
+        FrozenPerfBenchmark::freeze(
+            spec,
+            dag,
+            "perf-task",
+            PerfBenchmarkDraft {
+                approval: PerfBenchmarkApproval::new("human-review", digest('d')).unwrap(),
+                environment: BenchmarkEnvironment::new(digest('e'), digest('f')).unwrap(),
+                policy: AntiNoisePolicy::new(5, 3, 20_000, 20_000, 3).unwrap(),
+                cases: vec![perf_case()],
+                artifacts: vec![
+                    FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('1')).unwrap(),
+                ],
+            },
+        )
+        .unwrap()
+    }
+
+    fn perf_batches(
+        profile: &FrozenPerfBenchmark,
+    ) -> (Vec<PerfMeasurementBatch>, Vec<PerfMeasurementBatch>) {
+        let mut baseline = Vec::new();
+        let mut candidate = Vec::new();
+        for id in ["a", "b", "c"] {
+            baseline.push(
+                PerfMeasurementBatch::new(
+                    "e2e-latency",
+                    id,
+                    profile.environment_fingerprint(),
+                    vec![100.0, 100.5, 99.5, 100.2, 99.8],
+                )
+                .unwrap(),
+            );
+            candidate.push(
+                PerfMeasurementBatch::new(
+                    "e2e-latency",
+                    id,
+                    profile.environment_fingerprint(),
+                    vec![90.0, 90.4, 89.6, 90.2, 89.8],
+                )
+                .unwrap(),
+            );
+        }
+        (baseline, candidate)
     }
 
     #[test]
     fn plan_requests_branch_then_pr_and_never_merge() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
         assert_eq!(
             plan.hosting_actions(),
@@ -1001,31 +1397,157 @@ mod tests {
     }
 
     #[test]
+    fn trajectory_binding_cannot_be_switched_at_pr_emission() {
+        let spec = spec();
+        let dag = dag(
+            &spec,
+            vec![
+                task("task-a", TaskRegime::feature(), "src"),
+                task("task-b", TaskRegime::feature(), "src"),
+            ],
+        );
+        let candidate = bind_feature(&spec, &dag, "task-a", trajectory(&spec));
+        let plan = plan(&spec, &dag, &candidate);
+        assert_eq!(candidate.task_id(), "task-a");
+        assert!(plan.body().contains("- task: `task-a`"));
+        assert!(!plan.body().contains("- task: `task-b`"));
+    }
+
+    #[test]
+    fn perf_candidate_requires_verified_frozen_profile_promotion() {
+        let spec = spec();
+        let dag = dag(
+            &spec,
+            vec![task(
+                "perf-task",
+                TaskRegime::perf("decode-v1").unwrap(),
+                "src",
+            )],
+        );
+        let candidate_trajectory = trajectory(&spec);
+        assert!(matches!(
+            TaskBoundEngineeringTrajectory::new(
+                &spec,
+                &dag,
+                "perf-task",
+                "rsi",
+                candidate_trajectory.clone(),
+                None,
+            ),
+            Err(AutopilotPrError::MissingPerfPromotion { .. })
+        ));
+
+        let profile = perf_profile(&spec, &dag);
+        let (baseline, candidate) = perf_batches(&profile);
+        let promotion = VerifiedPerfPromotion::evaluate(
+            &profile,
+            &candidate_trajectory,
+            &baseline,
+            &candidate,
+        )
+        .unwrap();
+        let bound = TaskBoundEngineeringTrajectory::new(
+            &spec,
+            &dag,
+            "perf-task",
+            "rsi",
+            candidate_trajectory,
+            Some(promotion),
+        )
+        .unwrap();
+        let plan = plan(&spec, &dag, &bound);
+        assert!(plan.body().contains(profile.profile_sha256()));
+        assert!(plan.body().contains("e2e-latency"));
+    }
+
+    #[test]
+    fn rejected_perf_comparison_cannot_create_promotion_evidence() {
+        let spec = spec();
+        let dag = dag(
+            &spec,
+            vec![task(
+                "perf-task",
+                TaskRegime::perf("decode-v1").unwrap(),
+                "src",
+            )],
+        );
+        let profile = perf_profile(&spec, &dag);
+        let candidate_trajectory = trajectory(&spec);
+        let (baseline, mut candidate) = perf_batches(&profile);
+        for batch in &mut candidate {
+            batch.samples = vec![110.0, 110.5, 109.5, 110.2, 109.8];
+        }
+        assert!(matches!(
+            VerifiedPerfPromotion::evaluate(
+                &profile,
+                &candidate_trajectory,
+                &baseline,
+                &candidate,
+            ),
+            Err(AutopilotPrError::PerfCandidateNotPromotable)
+        ));
+    }
+
+    #[test]
+    fn invalid_generated_git_branch_is_rejected() {
+        let spec = spec();
+        let dag = dag(
+            &spec,
+            vec![task("bad.lock", TaskRegime::feature(), "src")],
+        );
+        let candidate = bind_feature(&spec, &dag, "bad.lock", trajectory(&spec));
+        assert!(matches!(
+            AutopilotPullRequestPlan::new(
+                &spec,
+                &dag,
+                &candidate,
+                PullRequestPlanDraft::new("main", "candidate")
+            ),
+            Err(AutopilotPrError::InvalidBranch {
+                field: "generated_branch",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn body_contains_exact_compatibility_and_evidence() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
-        assert!(plan.body().contains(&candidate.compatibility.fingerprint()));
-        assert!(plan.body().contains(&candidate.compatibility.to_json_string()));
+        assert!(plan
+            .body()
+            .contains(&candidate.trajectory().compatibility.fingerprint()));
+        assert!(plan
+            .body()
+            .contains(&candidate.trajectory().compatibility.to_json_string()));
         assert!(plan.body().contains("numerical_parity: `pass`"));
         assert!(plan.body().contains("cargo test: pass"));
         plan.verify().unwrap();
     }
 
     #[test]
-    fn inadmissible_candidate_cannot_emit_pr() {
+    fn inadmissible_candidate_cannot_be_bound() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = trajectory(&spec);
         candidate.admissibility.policy_checks = GateStatus::Fail;
         candidate.verdict = EngineeringVerdict::Rejected;
         assert!(matches!(
-            AutopilotPullRequestPlan::new(
+            TaskBoundEngineeringTrajectory::new(
                 &spec,
                 &dag,
-                &candidate,
-                PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
+                "implementation",
+                "rsi",
+                candidate,
+                None,
             ),
             Err(AutopilotPrError::TrajectoryNotAccepted)
                 | Err(AutopilotPrError::InvalidTrajectory(_))
@@ -1033,36 +1555,23 @@ mod tests {
     }
 
     #[test]
-    fn perf_candidate_requires_recorded_benchmark() {
-        let spec = spec();
-        let dag = dag(&spec, TaskRegime::perf("perf-v1").unwrap());
-        let unmeasured = trajectory(&spec, false);
-        assert!(matches!(
-            AutopilotPullRequestPlan::new(
-                &spec,
-                &dag,
-                &unmeasured,
-                PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
-            ),
-            Err(AutopilotPrError::PerfTrajectoryMissingBenchmark)
-        ));
-        let measured = trajectory(&spec, true);
-        plan(&spec, &dag, &measured).verify().unwrap();
-    }
-
-    #[test]
     fn patchset_must_stay_inside_task_allowance() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = trajectory(&spec);
         candidate.patch_set =
             PatchSet::new(vec![FileOperation::create("docs/out.md", "x")]).unwrap();
         assert!(matches!(
-            AutopilotPullRequestPlan::new(
+            TaskBoundEngineeringTrajectory::new(
                 &spec,
                 &dag,
-                &candidate,
-                PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
+                "implementation",
+                "rsi",
+                candidate,
+                None,
             ),
             Err(AutopilotPrError::PatchOutsideTaskAllowance { .. })
         ));
@@ -1071,8 +1580,11 @@ mod tests {
     #[test]
     fn ci_and_human_review_are_appended_to_same_trajectory() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let ci = ExternalPrVerdict::new(
@@ -1094,10 +1606,10 @@ mod tests {
         .unwrap();
         append_external_pr_verdict(&plan, &receipt, &review, &mut candidate).unwrap();
 
-        assert_eq!(candidate.later_verdicts.len(), 2);
-        assert!(candidate.later_verdicts[0].accepted);
-        assert!(!candidate.later_verdicts[1].accepted);
-        assert!(candidate.later_verdicts[1]
+        assert_eq!(candidate.trajectory().later_verdicts.len(), 2);
+        assert!(candidate.trajectory().later_verdicts[0].accepted);
+        assert!(!candidate.trajectory().later_verdicts[1].accepted);
+        assert!(candidate.trajectory().later_verdicts[1]
             .source
             .contains("github:human-review:Memorithm/RSI#42@"));
     }
@@ -1105,8 +1617,11 @@ mod tests {
     #[test]
     fn duplicate_external_verdict_is_rejected() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let ci = ExternalPrVerdict::new(
@@ -1127,8 +1642,11 @@ mod tests {
     #[test]
     fn verdict_for_other_head_is_rejected() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let mut verdict = ExternalPrVerdict::new(
@@ -1149,8 +1667,11 @@ mod tests {
     #[test]
     fn post_plan_candidate_mutation_is_rejected() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = bind_feature(&spec, &dag, "implementation", trajectory(&spec));
         let plan = plan(&spec, &dag, &candidate);
         let receipt = PullRequestEmissionReceipt::new(&plan, 42, revision('d')).unwrap();
         let ci = ExternalPrVerdict::new(
@@ -1161,7 +1682,7 @@ mod tests {
             digest('e'),
         )
         .unwrap();
-        candidate.compiler_test_device_evidence[0] = "mutated evidence".to_string();
+        candidate.trajectory.compiler_test_device_evidence[0] = "mutated evidence".to_string();
         assert!(matches!(
             append_external_pr_verdict(&plan, &receipt, &ci, &mut candidate),
             Err(AutopilotPrError::TrajectoryCandidateMismatch { .. })
@@ -1171,8 +1692,11 @@ mod tests {
     #[test]
     fn compatibility_must_match_frozen_repository_revision() {
         let spec = spec();
-        let dag = dag(&spec, TaskRegime::feature());
-        let mut candidate = trajectory(&spec, false);
+        let dag = dag(
+            &spec,
+            vec![task("implementation", TaskRegime::feature(), "src")],
+        );
+        let mut candidate = trajectory(&spec);
         candidate.compatibility = CompatibilitySet::new(
             vec![RepositoryRevision::new("Memorithm/RSI", revision('9'), "rsi").unwrap()],
             "stable",
@@ -1180,11 +1704,13 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            AutopilotPullRequestPlan::new(
+            TaskBoundEngineeringTrajectory::new(
                 &spec,
                 &dag,
-                &candidate,
-                PullRequestPlanDraft::new("implementation", "rsi", "main", "candidate")
+                "implementation",
+                "rsi",
+                candidate,
+                None,
             ),
             Err(AutopilotPrError::CompatibilityScopeMismatch { .. })
         ));

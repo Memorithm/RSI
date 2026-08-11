@@ -311,12 +311,49 @@ struct QualificationHost;
 impl EvaluationCommandHost for QualificationHost {
     fn resolve(
         &self,
-        _command_kind: &str,
-        _candidate_arguments: &[String],
-        _repository_root: &Path,
+        command_kind: &str,
+        candidate_arguments: &[String],
+        repository_root: &Path,
         _cargo_override_config: Option<&Path>,
     ) -> Result<ResolvedCommand, String> {
-        Ok(ResolvedCommand::new("git", vec!["--version".to_string()]))
+        if !candidate_arguments.is_empty() {
+            return Err("P9 fixture commands do not accept candidate-controlled arguments".into());
+        }
+        if !repository_root.join("Cargo.toml").is_file()
+            || !repository_root.join("src/lib.rs").is_file()
+        {
+            return Err("P9 fixture repository is missing its frozen Cargo source".into());
+        }
+        let arguments = match command_kind {
+            "build" => vec!["check", "--quiet", "--offline"],
+            "tests" => vec!["test", "--quiet", "--offline", "--all-targets"],
+            "parity" => vec![
+                "test",
+                "--quiet",
+                "--offline",
+                "numerical_parity_contract",
+            ],
+            "provenance" => vec!["metadata", "--no-deps", "--format-version", "1", "--offline"],
+            "determinism" => vec![
+                "test",
+                "--quiet",
+                "--offline",
+                "determinism_contract",
+            ],
+            "resources" => vec![
+                "test",
+                "--quiet",
+                "--offline",
+                "resource_budget_contract",
+            ],
+            "policy" => vec!["test", "--quiet", "--offline", "policy_contract"],
+            "paired-e2e" => vec!["test", "--quiet", "--offline", "benchmark_contract"],
+            other => return Err(format!("unknown P9 fixture command kind: {other}")),
+        }
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        Ok(ResolvedCommand::new("cargo", arguments))
     }
 }
 
@@ -367,7 +404,7 @@ fn prove_cross_repo_flat_scirust(
     )
     .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?;
 
-    let plan_policy = EvaluationPlanPolicy::new(8, 2_000, 1_024, 1, 64)
+    let plan_policy = EvaluationPlanPolicy::new(8, 30_000, 8_192, 1, 64)
         .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?;
     let hard_kinds = [
         ("scirust", "build", EvidenceKind::Build),
@@ -381,7 +418,7 @@ fn prove_cross_repo_flat_scirust(
     let hard_steps = hard_kinds
         .into_iter()
         .map(|(role, command, kind)| {
-            EvaluationStep::new(role, command, Vec::new(), 1_000, 256, kind)
+            EvaluationStep::new(role, command, Vec::new(), 20_000, 4_096, kind)
                 .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -392,8 +429,8 @@ fn prove_cross_repo_flat_scirust(
             "flat",
             "paired-e2e",
             Vec::new(),
-            1_000,
-            256,
+            20_000,
+            4_096,
             EvidenceKind::Benchmark,
         )
         .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?],
@@ -430,7 +467,7 @@ fn build_trajectory(
         compiler_test_device_evidence: vec![
             "P9 cumulative lineage: pass".to_string(),
             "P9 COGNO high-score invalid rejection: pass".to_string(),
-            "P9 cross-repo FLAT+SciRust local evaluator: pass".to_string(),
+            "P9 cross-repo FLAT+SciRust hard-gate fixture commands: pass".to_string(),
             "P9 exact compatibility lock replay: pass".to_string(),
             "P9 live source tree mutation: none".to_string(),
         ],
@@ -492,12 +529,54 @@ impl QualificationFixture {
         run_git(&root, &["config", "user.name", "RSI P9"])?;
         std::fs::write(
             root.join("Cargo.toml"),
-            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n"),
+            format!(
+                "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+            ),
         )?;
-        std::fs::write(
-            root.join("src/lib.rs"),
-            format!("pub const COMPONENT: &str = \"{name}\";\n"),
-        )?;
+        let source = format!(
+            r#"pub const COMPONENT: &str = "{name}";
+
+pub fn deterministic_value(input: u64) -> u64 {{
+    input.wrapping_mul(31).wrapping_add(7)
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn numerical_parity_contract() {{
+        assert_eq!(deterministic_value(3), 100);
+    }}
+
+    #[test]
+    fn determinism_contract() {{
+        assert_eq!(deterministic_value(41), deterministic_value(41));
+    }}
+
+    #[test]
+    fn resource_budget_contract() {{
+        assert!(core::mem::size_of::<(u64, u64)>() <= 16);
+    }}
+
+    #[test]
+    fn policy_contract() {{
+        assert!(!COMPONENT.is_empty());
+        assert!(COMPONENT.bytes().all(|byte| byte.is_ascii_lowercase()));
+    }}
+
+    #[test]
+    fn benchmark_contract() {{
+        let mut checksum = 0_u64;
+        for index in 0..1024_u64 {{
+            checksum = deterministic_value(checksum ^ index);
+        }}
+        assert_ne!(checksum, 0);
+    }}
+}}
+"#
+        );
+        std::fs::write(root.join("src/lib.rs"), source)?;
         run_git(&root, &["add", "."])?;
         run_git(&root, &["commit", "-qm", "P9 fixture"])?;
         let revision = git_output(&root, &["rev-parse", "HEAD"])?;

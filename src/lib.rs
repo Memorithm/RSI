@@ -46,6 +46,7 @@ pub mod agent;
 pub mod api;
 pub mod ascent;
 pub mod audit;
+pub mod autopilot_intake;
 pub mod candidate_state;
 #[cfg(feature = "ccos")]
 pub mod ccos_audit;
@@ -111,6 +112,12 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
+pub use autopilot_intake::{
+    AUTOPILOT_SPEC_SCHEMA_VERSION, AcceptanceCheck, AcceptanceCriterion, AutopilotIntakeError,
+    AutopilotSpecDraft, ExplorationObservation, ExplorationSource, ExploredObjective,
+    FrozenAutopilotSpec, IntakeQuestion, IntakeQuestionnaire, QuestionAnswer, RepositoryExploration,
+    RepositoryScope, ResolvedIntake, ResolvedQuestion, SpecBudget,
+};
 pub use candidate_state::{
     CandidateState, CandidateStateError, CandidateStoragePolicy, TreeUsage,
 };

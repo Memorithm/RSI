@@ -61,6 +61,7 @@ pub mod dgm;
 pub mod dynamics;
 pub mod engineering_evaluator;
 pub mod engineering_proposal;
+pub mod engineering_trajectory;
 pub mod evaluation_pipeline;
 pub mod flat_attention_evaluator;
 #[cfg(feature = "forge")]
@@ -138,6 +139,11 @@ pub use engineering_evaluator::{
     EngineeringRanker, RankingEvidence,
 };
 pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
+pub use engineering_trajectory::{
+    AdmissibilityBreakdown, BenchmarkRecord, ENGINEERING_TRAJECTORY_SCHEMA_VERSION,
+    EngineeringTrajectory, EngineeringTrajectoryError, EngineeringVerdict, GateStatus, LaterVerdict,
+    ProposerMetadata,
+};
 pub use evaluation_pipeline::{
     BoundedEvidencePipeline, EvaluationCommandHost, EvaluationEvidence, EvaluationPipelineError,
     EvaluationPlan, EvaluationPlanPolicy, EvaluationStep, EvidenceKind, ResolvedCommand,

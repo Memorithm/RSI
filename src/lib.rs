@@ -93,6 +93,7 @@ pub mod patchset;
 pub mod patchset_trajectory;
 pub mod plot;
 pub mod prompt;
+pub mod release_compatibility;
 pub mod report;
 pub mod rng;
 pub mod schedule;
@@ -204,6 +205,10 @@ pub use octasoma_memory::OctaSomaMemory;
 pub use patchset::{FileOperation, PatchSet, PatchSetError, PatchSetSnapshot};
 pub use patchset_trajectory::{
     PatchSetTrajectory, PatchSetTrajectoryError, PATCHSET_TRAJECTORY_SCHEMA_VERSION,
+};
+pub use release_compatibility::{
+    CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON, RELEASE_COMPATIBILITY_LOCK_SCHEMA_VERSION,
+    ReleaseCompatibilityError, ReleaseCompatibilityLock, current_release_compatibility_lock,
 };
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};

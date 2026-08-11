@@ -46,12 +46,14 @@ jobs:
           ref: 311f6b89e001d69f53cddcd2f9ba396a6f80c746
           path: flat
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install exact RSI qualification toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          toolchain: 1.97.1
 
-      - name: Install locked MSRV and lavapipe
+      - name: Install exact SciRust Clippy, MSRV and lavapipe
         run: |
+          rustup toolchain install nightly-2026-07-02 --profile minimal --component clippy
           rustup toolchain install 1.89.0 --profile minimal
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers
@@ -61,6 +63,9 @@ jobs:
           test "$(git -C rsi rev-parse HEAD)" = "$RSI_QUALIFICATION_HEAD"
           test "$(git -C scirust rev-parse HEAD)" = "$SCIRUST_LOCKED"
           test "$(git -C flat rev-parse HEAD)" = "$FLAT_LOCKED"
+          test "$(rustc +1.97.1 --version | awk '{print $2}')" = "1.97.1"
+          test "$(rustc +1.89.0 --version | awk '{print $2}')" = "1.89.0"
+          rustc +nightly-2026-07-02 --version
           python3 - <<'PY'
           import json, os, pathlib
           lock = json.loads(pathlib.Path("rsi/compatibility/SCIRUST_RSI_P10_COMPATIBILITY_LOCK.json").read_text())
@@ -73,6 +78,7 @@ jobs:
           }
           assert revisions == expected, (revisions, expected)
           assert lock["cogno_contract_version"] == "cogno-core@0.1.0"
+          assert lock["compatibility"]["toolchain"] == "rustc 1.97.1 (RSI qualification); clippy nightly-2026-07-02 (SciRust); MSRV 1.89.0"
           required = {
               "cogno:hard-gates",
               "flat-attention:m24-caller-owned-grouped-forward",
@@ -97,14 +103,14 @@ jobs:
 
       - name: Validate P10 lock through RSI parser
         working-directory: rsi
-        run: cargo test --locked --test p10_release_lock -- --nocapture
+        run: cargo +1.97.1 test --locked --test p10_release_lock -- --nocapture
 
       - name: Replay RSI local hard-gate qualification and export trajectory
         working-directory: rsi
         run: |
-          cargo test --locked release_qualification -- --nocapture
+          cargo +1.97.1 test --locked release_qualification -- --nocapture
           rm -rf /tmp/rsi-p10
-          cargo run --quiet --locked --bin rsi-release-qualify -- /tmp/rsi-p10
+          cargo +1.97.1 run --quiet --locked --bin rsi-release-qualify -- /tmp/rsi-p10
           python3 - <<'PY'
           import json, pathlib
           report = json.loads(pathlib.Path("/tmp/rsi-p10/qualification-report.json").read_text())
@@ -159,7 +165,7 @@ jobs:
         working-directory: scirust
         run: |
           cargo +1.89.0 test -p scirust --locked --features autotune autotune::tests -- --nocapture
-          cargo +stable clippy -p scirust --all-targets --locked --features autotune -- -D warnings
+          cargo +nightly-2026-07-02 clippy -p scirust --all-targets --locked --features autotune -- -D warnings
 
       - name: Replay exact FLAT M24 WGPU device qualification
         working-directory: flat

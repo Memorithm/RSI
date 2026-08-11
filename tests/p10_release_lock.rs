@@ -26,7 +26,7 @@ fn p10_lock_is_canonical_replayable_and_exact() {
     assert_eq!(lock.cogno_contract_version(), "cogno-core@0.1.0");
     assert_eq!(
         lock.compatibility().toolchain(),
-        "rustc 1.97.1 (qualification); MSRV 1.89"
+        "rustc 1.97.1 (RSI qualification); clippy nightly-2026-07-02 (SciRust); MSRV 1.89.0"
     );
     assert_eq!(lock.to_json_string(), P10_LOCK_JSON.trim());
     assert_eq!(lock.fingerprint().len(), 64);
@@ -72,7 +72,7 @@ fn p10_evidence_records_all_slices_without_promoting_an_sgemm_winner() {
         .iter()
         .find(|record| record.starts_with("scirust:p10.5:"))
         .expect("missing P10.5 SGEMM evidence");
-    assert!(sgemmm_has_no_promoted_winner(sgemm));
+    assert!(sgemm_has_no_promoted_winner(sgemm));
 
     assert!(
         evidence.iter().any(|record| record.starts_with("flat:m24:")),
@@ -84,6 +84,6 @@ fn p10_evidence_records_all_slices_without_promoting_an_sgemm_winner() {
     );
 }
 
-fn sgemmm_has_no_promoted_winner(record: &str) -> bool {
+fn sgemm_has_no_promoted_winner(record: &str) -> bool {
     record.split(':').any(|field| field == "winner=none")
 }

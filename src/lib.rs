@@ -62,6 +62,7 @@ pub mod dynamics;
 pub mod engineering_evaluator;
 pub mod engineering_proposal;
 pub mod evaluation_pipeline;
+pub mod flat_attention_evaluator;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
@@ -141,6 +142,9 @@ pub use evaluation_pipeline::{
     BoundedEvidencePipeline, EvaluationCommandHost, EvaluationEvidence, EvaluationPipelineError,
     EvaluationPlan, EvaluationPlanPolicy, EvaluationStep, EvidenceKind, ResolvedCommand,
     StepEvidence,
+};
+pub use flat_attention_evaluator::{
+    FlatAttentionEvaluation, FlatAttentionEvaluationError, FlatAttentionEvaluator,
 };
 #[cfg(feature = "forge")]
 pub use forge_meta::ForgeMetaSearch;

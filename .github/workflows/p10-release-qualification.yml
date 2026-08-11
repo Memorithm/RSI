@@ -1,0 +1,195 @@
+name: P10 Release Qualification
+
+on:
+  pull_request:
+    paths:
+      - "src/release_compatibility.rs"
+      - "src/release_qualification.rs"
+      - "src/bin/rsi-release-qualify.rs"
+      - "compatibility/SCIRUST_RSI_P10_COMPATIBILITY_LOCK.json"
+      - "tests/p10_release_lock.rs"
+      - ".github/workflows/p10-release-qualification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-lineage-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RSI_QUALIFICATION_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      RSI_LOCKED: 530b5e3b7c86e01c51b05927f6fad44d3c455cdc
+      SCIRUST_LOCKED: 4c4e71ffc73c00138a34c648b6ad954b24316184
+      SCIRUST_RSI_LOCKED: 8af0801b8bc0c69630797db82bb2dd3416cc8f0a
+      FLAT_LOCKED: 311f6b89e001d69f53cddcd2f9ba396a6f80c746
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+    steps:
+      - name: Checkout exact RSI P10 qualification head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: rsi
+
+      - name: Checkout exact qualified SciRust P10 revision
+        uses: actions/checkout@v4
+        with:
+          repository: Memorithm/scirust
+          ref: 4c4e71ffc73c00138a34c648b6ad954b24316184
+          path: scirust
+
+      - name: Checkout exact qualified FLAT M24
+        uses: actions/checkout@v4
+        with:
+          repository: Memorithm/FLAT-ATTENTION
+          ref: 311f6b89e001d69f53cddcd2f9ba396a6f80c746
+          path: flat
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install locked MSRV and lavapipe
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+
+      - name: Verify immutable P10 lock and exact checkout revisions
+        run: |
+          test "$(git -C rsi rev-parse HEAD)" = "$RSI_QUALIFICATION_HEAD"
+          test "$(git -C scirust rev-parse HEAD)" = "$SCIRUST_LOCKED"
+          test "$(git -C flat rev-parse HEAD)" = "$FLAT_LOCKED"
+          python3 - <<'PY'
+          import json, os, pathlib
+          lock = json.loads(pathlib.Path("rsi/compatibility/SCIRUST_RSI_P10_COMPATIBILITY_LOCK.json").read_text())
+          revisions = {entry["role"]: entry["revision"] for entry in lock["compatibility"]["revisions"]}
+          expected = {
+              "rsi": os.environ["RSI_LOCKED"],
+              "scirust": os.environ["SCIRUST_LOCKED"],
+              "scirust-rsi": os.environ["SCIRUST_RSI_LOCKED"],
+              "flat": os.environ["FLAT_LOCKED"],
+          }
+          assert revisions == expected, (revisions, expected)
+          assert lock["cogno_contract_version"] == "cogno-core@0.1.0"
+          required = {
+              "cogno:hard-gates",
+              "flat-attention:m24-caller-owned-grouped-forward",
+              "flat-attention:wgpu",
+              "rsi:public-features",
+              "rsi:scirust",
+              "scirust-gpu:flat-attention",
+              "scirust-gpu:p10.3-resident-grouped-training",
+              "scirust-sciagent:flat-attention",
+              "scirust-sciagent:id-opt-shared-rule-table",
+              "scirust-sgemm:elastic-measured-evidence",
+              "scirust-sgemm:no-unqualified-winner",
+              "tokenizer:canonical-parity",
+          }
+          assert set(lock["compatibility"]["feature_contract"]) == required
+          sgemm = [item for item in lock["qualification_evidence"] if item.startswith("scirust:p10.5:")]
+          assert len(sgemm) == 1, sgemm
+          assert "winner=none" in sgemm[0], sgemm[0]
+          assert not any("winner=" in item and "winner=none" not in item for item in lock["qualification_evidence"])
+          print("immutable P10 compatibility lock and exact qualification head verified")
+          PY
+
+      - name: Validate P10 lock through RSI parser
+        working-directory: rsi
+        run: cargo test --locked --test p10_release_lock -- --nocapture
+
+      - name: Replay RSI local hard-gate qualification and export trajectory
+        working-directory: rsi
+        run: |
+          cargo test --locked release_qualification -- --nocapture
+          rm -rf /tmp/rsi-p10
+          cargo run --quiet --locked --bin rsi-release-qualify -- /tmp/rsi-p10
+          python3 - <<'PY'
+          import json, pathlib
+          report = json.loads(pathlib.Path("/tmp/rsi-p10/qualification-report.json").read_text())
+          assert report["local_contract_passed"] is True, report
+          assert report["external_sciagent_ingestion_required"] is True, report
+          assert report["external_final_head_ci_required"] is True, report
+          trajectory = json.loads(pathlib.Path("/tmp/rsi-p10/engineering-trajectory.json").read_text())
+          assert trajectory["schema_version"] == 3, trajectory
+          assert trajectory["verdict"] == "accepted", trajectory
+          print("RSI local hard gates and trajectory export verified")
+          PY
+
+      - name: Inject ephemeral P10 SciAgent ingestion test
+        run: |
+          cat > scirust/scirust-sciagent/tests/p10_external_ingest.rs <<'RS'
+          use scirust_sciagent::engineering_trajectory_ingest::{
+              EngineeringDataset, EngineeringIngestConfig,
+          };
+
+          #[test]
+          fn ingests_exact_rsi_p10_trajectory() {
+              let path = std::env::var("RSI_P10_TRAJECTORY").expect("RSI_P10_TRAJECTORY");
+              let record = std::fs::read_to_string(path).expect("read RSI P10 trajectory");
+              let dataset = EngineeringDataset::ingest_json_records(
+                  [record.as_str()],
+                  EngineeringIngestConfig::default(),
+              )
+              .expect("SciAgent must ingest RSI v3 P10 trajectory");
+              assert_eq!(dataset.manifest.source_schema_version, 3);
+              assert_eq!(dataset.manifest.source_records, 1);
+              assert_eq!(dataset.manifest.unique_examples, 1);
+              assert_eq!(dataset.manifest.rejected_examples, 0);
+              assert_eq!(dataset.train.len() + dataset.eval.len(), 1);
+          }
+          RS
+
+      - name: SciAgent consumes exported RSI trajectory at exact P10 revision
+        working-directory: scirust
+        env:
+          RSI_P10_TRAJECTORY: /tmp/rsi-p10/engineering-trajectory.json
+        run: cargo +1.89.0 test -p scirust-sciagent --locked --test p10_external_ingest -- --nocapture
+
+      - name: Verify SciRust still pins exact qualified FLAT M24
+        run: |
+          grep -F 'rev = "311f6b89e001d69f53cddcd2f9ba396a6f80c746"' scirust/scirust-gpu/Cargo.toml
+
+      - name: Replay P10.4 SciAgent ID-OPT parity and sharing tests
+        working-directory: scirust
+        run: cargo +1.89.0 test -p scirust-sciagent --locked --lib -- --nocapture
+
+      - name: Replay P10.5 SGEMM Elastic correctness and fail-closed contract
+        working-directory: scirust
+        run: |
+          cargo +1.89.0 test -p scirust --locked --features autotune autotune::tests -- --nocapture
+          cargo +1.89.0 clippy -p scirust --all-targets --locked --features autotune -- -D warnings
+
+      - name: Replay exact FLAT M24 WGPU device qualification
+        working-directory: flat
+        env:
+          FLAT_REQUIRE_WGPU: "1"
+          WGPU_BACKEND: vulkan
+        run: cargo +1.89.0 test --features wgpu --tests -- --nocapture
+
+      - name: Replay P10.3 resident grouped training parity on lavapipe
+        working-directory: scirust
+        env:
+          WGPU_BACKEND: vulkan
+          SCIRUST_REQUIRE_FLAT_GROUPED_WGPU: "1"
+        run: cargo +1.89.0 test -p scirust-gpu --locked --features flat-attention flat_training -- --nocapture
+
+      - name: Replay SciRust FLAT compile-time contract
+        working-directory: scirust
+        run: cargo +1.89.0 test -p scirust-sciagent --locked --features flat-attention --test flat_feature_contract
+
+      - name: Replay SciRust FLAT runtime numerical parity
+        working-directory: scirust
+        env:
+          WGPU_BACKEND: vulkan
+        run: cargo +1.89.0 test -p scirust-sciagent --locked --features flat-attention --test flat_runtime_decode -- --nocapture
+
+      - name: Final P10 release qualification statement
+        run: |
+          echo "P10.7 exact-revision replay passed"
+          echo "RSI qualification head: $(git -C rsi rev-parse HEAD)"
+          echo "RSI frozen predecessor: $RSI_LOCKED"
+          echo "SciRust locked: $(git -C scirust rev-parse HEAD)"
+          echo "FLAT locked: $(git -C flat rev-parse HEAD)"
+          echo "SGEMM winner promotion: none"

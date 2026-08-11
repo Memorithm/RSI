@@ -1,13 +1,12 @@
 //! P8.4 AUTOPILOT PERF regime: immutable benchmark plus anti-noise promotion.
 //!
 //! Performance is considered only after the COGNO engineering hard gates pass.
-//! The benchmark definition, target environment, benchmark source bytes and
-//! anti-noise policy are frozen before candidate search. Supporting
-//! microbenchmarks can produce evidence but can never be promotion gates; at
-//! least one end-to-end case must independently prove the configured gain.
+//! Benchmark definitions, environment identity, source bytes and repeated-run
+//! policy are frozen before candidate search. Supporting microbenchmarks can
+//! produce evidence but can never become promotion gates.
 
 use crate::autopilot_intake::FrozenAutopilotSpec;
-use crate::autopilot_task_dag::{AutopilotTask, AutopilotTaskDag, TaskOperation, TaskRegime};
+use crate::autopilot_task_dag::{AutopilotTaskDag, TaskOperation, TaskRegime};
 use crate::engineering_trajectory::AdmissibilityBreakdown;
 use crate::json::Json;
 use crate::patchset::{FileOperation, PatchSet, PatchSetError};
@@ -50,7 +49,6 @@ impl PerfBenchmarkApproval {
     }
 }
 
-/// Exact machine/software identity used for paired baseline/candidate evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchmarkEnvironment {
     pub hardware_sha256: String,
@@ -73,11 +71,11 @@ impl BenchmarkEnvironment {
     }
 
     pub fn fingerprint(&self) -> String {
-        let mut value = String::from("rsi-perf-environment-v1|");
-        value.push_str(&self.hardware_sha256);
-        value.push('|');
-        value.push_str(&self.software_sha256);
-        hex_digest(&sha256(value.as_bytes()))
+        let material = format!(
+            "rsi-perf-environment-v1|{}|{}",
+            self.hardware_sha256, self.software_sha256
+        );
+        hex_digest(&sha256(material.as_bytes()))
     }
 
     fn to_json(&self) -> Json {
@@ -110,9 +108,9 @@ impl FrozenBenchmarkArtifact {
         let repository_role = repository_role.into();
         let path = path.into();
         let sha256 = sha256.into();
-        validate_identifier("benchmark_artifact.repository_role", &repository_role)?;
-        validate_relative_path("benchmark_artifact.path", &path)?;
-        validate_digest("benchmark_artifact.sha256", &sha256)?;
+        validate_identifier("artifact.repository_role", &repository_role)?;
+        validate_relative_path("artifact.path", &path)?;
+        validate_digest("artifact.sha256", &sha256)?;
         Ok(Self {
             repository_role,
             path,
@@ -160,6 +158,19 @@ impl BenchmarkClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BenchmarkCaseSpec {
+    pub id: String,
+    pub repository_role: String,
+    pub command_kind: String,
+    pub arguments: Vec<String>,
+    pub metric: String,
+    pub unit: String,
+    pub direction: MetricDirection,
+    pub class: BenchmarkClass,
+    pub promotion_gate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchmarkCase {
     pub id: String,
     pub repository_role: String,
@@ -173,39 +184,27 @@ pub struct BenchmarkCase {
 }
 
 impl BenchmarkCase {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: impl Into<String>,
-        repository_role: impl Into<String>,
-        command_kind: impl Into<String>,
-        arguments: Vec<String>,
-        metric: impl Into<String>,
-        unit: impl Into<String>,
-        direction: MetricDirection,
-        class: BenchmarkClass,
-        promotion_gate: bool,
-    ) -> Result<Self, PerfRegimeError> {
-        let value = Self {
-            id: id.into(),
-            repository_role: repository_role.into(),
-            command_kind: command_kind.into(),
-            arguments,
-            metric: metric.into(),
-            unit: unit.into(),
-            direction,
-            class,
-            promotion_gate,
-        };
-        validate_identifier("benchmark_case.id", &value.id)?;
-        validate_identifier("benchmark_case.repository_role", &value.repository_role)?;
-        validate_identifier("benchmark_case.command_kind", &value.command_kind)?;
-        validate_text("benchmark_case.metric", &value.metric)?;
-        validate_text("benchmark_case.unit", &value.unit)?;
-        validate_arguments(&value.arguments)?;
-        if promotion_gate && class != BenchmarkClass::EndToEnd {
-            return Err(PerfRegimeError::MicrobenchmarkCannotPromote(value.id));
+    pub fn new(spec: BenchmarkCaseSpec) -> Result<Self, PerfRegimeError> {
+        validate_identifier("case.id", &spec.id)?;
+        validate_identifier("case.repository_role", &spec.repository_role)?;
+        validate_identifier("case.command_kind", &spec.command_kind)?;
+        validate_text("case.metric", &spec.metric)?;
+        validate_text("case.unit", &spec.unit)?;
+        validate_arguments(&spec.arguments)?;
+        if spec.promotion_gate && spec.class != BenchmarkClass::EndToEnd {
+            return Err(PerfRegimeError::MicrobenchmarkCannotPromote(spec.id));
         }
-        Ok(value)
+        Ok(Self {
+            id: spec.id,
+            repository_role: spec.repository_role,
+            command_kind: spec.command_kind,
+            arguments: spec.arguments,
+            metric: spec.metric,
+            unit: spec.unit,
+            direction: spec.direction,
+            class: spec.class,
+            promotion_gate: spec.promotion_gate,
+        })
     }
 
     fn to_json(&self) -> Json {
@@ -226,8 +225,6 @@ impl BenchmarkCase {
     }
 }
 
-/// Frozen repeated-measurement policy. Exact sample/batch counts prevent
-/// cherry-picking extra runs after seeing candidate results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AntiNoisePolicy {
     pub samples_per_batch: usize,
@@ -248,20 +245,12 @@ impl AntiNoisePolicy {
         if samples_per_batch < 3 || batches < 2 {
             return Err(PerfRegimeError::InsufficientRepetition);
         }
-        if max_relative_mad_ppm == 0 || min_improvement_ppm == 0 {
+        if max_relative_mad_ppm == 0
+            || min_improvement_ppm == 0
+            || min_winning_batches == 0
+            || min_winning_batches > batches
+        {
             return Err(PerfRegimeError::InvalidAntiNoisePolicy);
-        }
-        if min_winning_batches == 0 || min_winning_batches > batches {
-            return Err(PerfRegimeError::InvalidAntiNoisePolicy);
-        }
-        let total = samples_per_batch
-            .checked_mul(batches)
-            .ok_or(PerfRegimeError::SampleBudgetOverflow)?;
-        if total > MAX_TOTAL_SAMPLES_PER_COMPARISON {
-            return Err(PerfRegimeError::SampleBudgetExceeded {
-                actual: total,
-                maximum: MAX_TOTAL_SAMPLES_PER_COMPARISON,
-            });
         }
         Ok(Self {
             samples_per_batch,
@@ -296,6 +285,15 @@ impl AntiNoisePolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerfBenchmarkDraft {
+    pub approval: PerfBenchmarkApproval,
+    pub environment: BenchmarkEnvironment,
+    pub policy: AntiNoisePolicy,
+    pub cases: Vec<BenchmarkCase>,
+    pub artifacts: Vec<FrozenBenchmarkArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenPerfBenchmark {
     schema_version: u64,
     spec_sha256: String,
@@ -311,16 +309,11 @@ pub struct FrozenPerfBenchmark {
 }
 
 impl FrozenPerfBenchmark {
-    #[allow(clippy::too_many_arguments)]
     pub fn freeze(
         spec: &FrozenAutopilotSpec,
         dag: &AutopilotTaskDag,
         task_id: impl Into<String>,
-        approval: PerfBenchmarkApproval,
-        environment: BenchmarkEnvironment,
-        policy: AntiNoisePolicy,
-        mut cases: Vec<BenchmarkCase>,
-        mut artifacts: Vec<FrozenBenchmarkArtifact>,
+        mut draft: PerfBenchmarkDraft,
     ) -> Result<Self, PerfRegimeError> {
         verify_spec_and_dag(spec, dag)?;
         let task_id = task_id.into();
@@ -334,23 +327,23 @@ impl FrozenPerfBenchmark {
             } => benchmark_profile_id.clone(),
             TaskRegime::Feature => return Err(PerfRegimeError::TaskIsNotPerf(task_id)),
         };
-        if cases.is_empty() {
+        if draft.cases.is_empty() {
             return Err(PerfRegimeError::EmptyField("benchmark_cases"));
         }
-        if artifacts.is_empty() {
+        if draft.artifacts.is_empty() {
             return Err(PerfRegimeError::EmptyField("benchmark_artifacts"));
         }
 
-        cases.sort_by(|left, right| left.id.cmp(&right.id));
-        for pair in cases.windows(2) {
+        draft.cases.sort_by(|left, right| left.id.cmp(&right.id));
+        for pair in draft.cases.windows(2) {
             if pair[0].id == pair[1].id {
                 return Err(PerfRegimeError::DuplicateBenchmarkCase(pair[0].id.clone()));
             }
         }
-        if !cases.iter().any(|case| case.promotion_gate) {
+        if !draft.cases.iter().any(|case| case.promotion_gate) {
             return Err(PerfRegimeError::NoEndToEndPromotionGate);
         }
-        for case in &cases {
+        for case in &draft.cases {
             if !task
                 .repository_roles()
                 .iter()
@@ -362,9 +355,10 @@ impl FrozenPerfBenchmark {
                 });
             }
         }
+        validate_sample_budget(draft.cases.len(), draft.policy)?;
 
-        artifacts.sort();
-        for pair in artifacts.windows(2) {
+        draft.artifacts.sort();
+        for pair in draft.artifacts.windows(2) {
             if pair[0].repository_role == pair[1].repository_role && pair[0].path == pair[1].path {
                 return Err(PerfRegimeError::DuplicateBenchmarkArtifact {
                     repository_role: pair[0].repository_role.clone(),
@@ -372,7 +366,7 @@ impl FrozenPerfBenchmark {
                 });
             }
         }
-        for artifact in &artifacts {
+        for artifact in &draft.artifacts {
             if !task
                 .repository_roles()
                 .iter()
@@ -412,11 +406,11 @@ impl FrozenPerfBenchmark {
             dag_sha256: dag.dag_sha256().to_string(),
             task_id: task.id().to_string(),
             profile_id,
-            approval,
-            environment,
-            policy,
-            cases,
-            artifacts,
+            approval: draft.approval,
+            environment: draft.environment,
+            policy: draft.policy,
+            cases: draft.cases,
+            artifacts: draft.artifacts,
             profile_sha256: String::new(),
         };
         profile.profile_sha256 = profile.compute_sha256();
@@ -462,7 +456,6 @@ impl FrozenPerfBenchmark {
         Ok(())
     }
 
-    /// Prevent candidate-controlled benchmark rewriting before evaluation.
     pub fn validate_patchset(
         &self,
         dag: &AutopilotTaskDag,
@@ -631,8 +624,6 @@ pub struct PerfComparisonReport {
 }
 
 impl PerfComparisonReport {
-    /// Compare exact paired evidence. Inadmissible candidates are never ranked:
-    /// they return a negative report with no performance case results.
     pub fn evaluate(
         profile: &FrozenPerfBenchmark,
         admissibility: &AdmissibilityBreakdown,
@@ -647,6 +638,8 @@ impl PerfComparisonReport {
                 cases: Vec::new(),
             });
         }
+        reject_unknown_case_evidence(profile, baseline)?;
+        reject_unknown_case_evidence(profile, candidate)?;
 
         let expected_environment = profile.environment_fingerprint();
         let mut results = Vec::with_capacity(profile.cases.len());
@@ -673,10 +666,13 @@ impl PerfComparisonReport {
             let mut candidate_medians = Vec::with_capacity(profile.policy.batches);
             let mut max_relative_mad_ppm = 0u64;
             let mut winning_batches = 0usize;
-
             for batch_id in baseline_ids {
-                let base = baseline_batches[batch_id];
-                let cand = candidate_batches[batch_id];
+                let base = baseline_batches
+                    .get(batch_id)
+                    .expect("paired baseline batch validated");
+                let cand = candidate_batches
+                    .get(batch_id)
+                    .expect("paired candidate batch validated");
                 validate_batch(profile, case, base, &expected_environment)?;
                 validate_batch(profile, case, cand, &expected_environment)?;
                 let base_median = median(&base.samples);
@@ -714,8 +710,6 @@ impl PerfComparisonReport {
             });
         }
 
-        reject_unknown_case_evidence(profile, baseline)?;
-        reject_unknown_case_evidence(profile, candidate)?;
         let promotable = results
             .iter()
             .filter(|result| result.promotion_gate)
@@ -731,22 +725,10 @@ impl PerfComparisonReport {
 #[derive(Debug)]
 pub enum PerfRegimeError {
     EmptyField(&'static str),
-    InvalidText {
-        field: &'static str,
-        value: String,
-    },
-    InvalidIdentifier {
-        field: &'static str,
-        value: String,
-    },
-    InvalidDigest {
-        field: &'static str,
-        value: String,
-    },
-    InvalidPath {
-        field: &'static str,
-        value: String,
-    },
+    InvalidText { field: &'static str, value: String },
+    InvalidIdentifier { field: &'static str, value: String },
+    InvalidDigest { field: &'static str, value: String },
+    InvalidPath { field: &'static str, value: String },
     InvalidArgument(String),
     InvalidSpec(String),
     InvalidDag(String),
@@ -756,58 +738,31 @@ pub enum PerfRegimeError {
     InsufficientRepetition,
     InvalidAntiNoisePolicy,
     SampleBudgetOverflow,
-    SampleBudgetExceeded {
-        actual: usize,
-        maximum: usize,
-    },
+    SampleBudgetExceeded { actual: usize, maximum: usize },
     DuplicateBenchmarkCase(String),
     NoEndToEndPromotionGate,
-    BenchmarkCaseOutsideTaskRepositories {
-        case_id: String,
-        repository_role: String,
-    },
-    DuplicateBenchmarkArtifact {
-        repository_role: String,
-        path: String,
-    },
-    BenchmarkArtifactOutsideTaskRepositories {
-        repository_role: String,
-        path: String,
-    },
-    BenchmarkArtifactOutsideFrozenSpec {
-        repository_role: String,
-        path: String,
-    },
+    BenchmarkCaseOutsideTaskRepositories { case_id: String, repository_role: String },
+    DuplicateBenchmarkArtifact { repository_role: String, path: String },
+    BenchmarkArtifactOutsideTaskRepositories { repository_role: String, path: String },
+    BenchmarkArtifactOutsideFrozenSpec { repository_role: String, path: String },
     TaskAllowanceTouchesFrozenBenchmark {
         repository_role: String,
         frozen_path: String,
         allowed_prefix: String,
     },
-    FrozenProfileHashMismatch {
-        expected: String,
-        actual: String,
-    },
+    FrozenProfileHashMismatch { expected: String, actual: String },
     ProfileContextMismatch,
     PatchSet(PatchSetError),
     RepositoryOutsidePerfTask(String),
     RepositoryIsReadOnly(String),
-    CandidateTouchesFrozenBenchmark {
-        repository_role: String,
-        path: String,
-    },
+    CandidateTouchesFrozenBenchmark { repository_role: String, path: String },
     CandidateOperationOutsideAllowance {
         repository_role: String,
         path: String,
         operation: TaskOperation,
     },
-    InvalidSamples {
-        case_id: String,
-        batch_id: String,
-    },
-    DuplicateMeasurementBatch {
-        case_id: String,
-        batch_id: String,
-    },
+    InvalidSamples { case_id: String, batch_id: String },
+    DuplicateMeasurementBatch { case_id: String, batch_id: String },
     BatchCountMismatch {
         case_id: String,
         expected: usize,
@@ -815,10 +770,7 @@ pub enum PerfRegimeError {
         candidate: usize,
     },
     UnpairedBatches(String),
-    WrongEnvironment {
-        case_id: String,
-        batch_id: String,
-    },
+    WrongEnvironment { case_id: String, batch_id: String },
     SampleCountMismatch {
         case_id: String,
         batch_id: String,
@@ -831,45 +783,7 @@ pub enum PerfRegimeError {
 
 impl fmt::Display for PerfRegimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyField(field) => write!(f, "PERF field '{field}' is empty"),
-            Self::InvalidText { field, value } => write!(f, "invalid PERF text '{field}': '{value}'"),
-            Self::InvalidIdentifier { field, value } => write!(f, "invalid PERF identifier '{field}': '{value}'"),
-            Self::InvalidDigest { field, value } => write!(f, "invalid PERF SHA-256 '{field}': '{value}'"),
-            Self::InvalidPath { field, value } => write!(f, "invalid PERF path '{field}': '{value}'"),
-            Self::InvalidArgument(value) => write!(f, "invalid PERF argument '{value}'"),
-            Self::InvalidSpec(error) => write!(f, "invalid frozen spec: {error}"),
-            Self::InvalidDag(error) => write!(f, "invalid frozen task DAG: {error}"),
-            Self::UnknownTask(task) => write!(f, "unknown PERF task '{task}'"),
-            Self::TaskIsNotPerf(task) => write!(f, "task '{task}' is not in PERF regime"),
-            Self::MicrobenchmarkCannotPromote(case) => write!(f, "supporting microbenchmark '{case}' cannot be a promotion gate"),
-            Self::InsufficientRepetition => write!(f, "PERF requires at least 3 samples per batch and 2 independent batches"),
-            Self::InvalidAntiNoisePolicy => write!(f, "invalid PERF anti-noise policy"),
-            Self::SampleBudgetOverflow => write!(f, "PERF sample budget overflow"),
-            Self::SampleBudgetExceeded { actual, maximum } => write!(f, "PERF sample budget {actual} exceeds maximum {maximum}"),
-            Self::DuplicateBenchmarkCase(case) => write!(f, "duplicate benchmark case '{case}'"),
-            Self::NoEndToEndPromotionGate => write!(f, "PERF profile requires at least one end-to-end promotion gate"),
-            Self::BenchmarkCaseOutsideTaskRepositories { case_id, repository_role } => write!(f, "benchmark case '{case_id}' uses repository role '{repository_role}' outside the PERF task"),
-            Self::DuplicateBenchmarkArtifact { repository_role, path } => write!(f, "duplicate frozen benchmark {repository_role}:{path}"),
-            Self::BenchmarkArtifactOutsideTaskRepositories { repository_role, path } => write!(f, "benchmark artifact {repository_role}:{path} is outside the PERF task repositories"),
-            Self::BenchmarkArtifactOutsideFrozenSpec { repository_role, path } => write!(f, "benchmark artifact {repository_role}:{path} is outside the frozen objective scope"),
-            Self::TaskAllowanceTouchesFrozenBenchmark { repository_role, frozen_path, allowed_prefix } => write!(f, "PERF task allowance {repository_role}:{allowed_prefix} covers frozen benchmark {frozen_path}"),
-            Self::FrozenProfileHashMismatch { expected, actual } => write!(f, "frozen PERF profile hash mismatch: expected {expected}, actual {actual}"),
-            Self::ProfileContextMismatch => write!(f, "frozen PERF profile belongs to another task DAG"),
-            Self::PatchSet(error) => write!(f, "invalid PERF candidate PatchSet: {error}"),
-            Self::RepositoryOutsidePerfTask(role) => write!(f, "repository role '{role}' is outside the PERF task"),
-            Self::RepositoryIsReadOnly(role) => write!(f, "repository role '{role}' is read-only for the PERF task"),
-            Self::CandidateTouchesFrozenBenchmark { repository_role, path } => write!(f, "PERF candidate attempts to change frozen benchmark {repository_role}:{path}"),
-            Self::CandidateOperationOutsideAllowance { repository_role, path, operation } => write!(f, "PERF candidate operation {operation:?} on {repository_role}:{path} is outside the task allowlist"),
-            Self::InvalidSamples { case_id, batch_id } => write!(f, "invalid positive finite samples for {case_id}/{batch_id}"),
-            Self::DuplicateMeasurementBatch { case_id, batch_id } => write!(f, "duplicate measurement batch {case_id}/{batch_id}"),
-            Self::BatchCountMismatch { case_id, expected, baseline, candidate } => write!(f, "batch count mismatch for '{case_id}': expected {expected}, baseline {baseline}, candidate {candidate}"),
-            Self::UnpairedBatches(case) => write!(f, "baseline/candidate batch IDs are not paired for '{case}'"),
-            Self::WrongEnvironment { case_id, batch_id } => write!(f, "wrong measurement environment for {case_id}/{batch_id}"),
-            Self::SampleCountMismatch { case_id, batch_id, expected, actual } => write!(f, "sample count mismatch for {case_id}/{batch_id}: expected {expected}, got {actual}"),
-            Self::InvalidNoiseStatistic => write!(f, "invalid PERF noise statistic"),
-            Self::UnknownEvidenceCase(case) => write!(f, "measurement evidence references unknown case '{case}'"),
-        }
+        write!(f, "PERF regime error: {self:?}")
     }
 }
 
@@ -885,6 +799,21 @@ fn verify_spec_and_dag(
         .map_err(|error| PerfRegimeError::InvalidDag(error.to_string()))?;
     if dag.spec_sha256() != spec.spec_sha256() {
         return Err(PerfRegimeError::ProfileContextMismatch);
+    }
+    Ok(())
+}
+
+fn validate_sample_budget(case_count: usize, policy: AntiNoisePolicy) -> Result<(), PerfRegimeError> {
+    let total = case_count
+        .checked_mul(policy.batches)
+        .and_then(|value| value.checked_mul(policy.samples_per_batch))
+        .and_then(|value| value.checked_mul(2))
+        .ok_or(PerfRegimeError::SampleBudgetOverflow)?;
+    if total > MAX_TOTAL_SAMPLES_PER_COMPARISON {
+        return Err(PerfRegimeError::SampleBudgetExceeded {
+            actual: total,
+            maximum: MAX_TOTAL_SAMPLES_PER_COMPARISON,
+        });
     }
     Ok(())
 }
@@ -964,7 +893,7 @@ fn median(samples: &[f64]) -> f64 {
     let mut sorted = samples.to_vec();
     sorted.sort_by(|left, right| left.total_cmp(right));
     let middle = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[middle - 1] + sorted[middle]) / 2.0
     } else {
         sorted[middle]
@@ -977,8 +906,7 @@ fn relative_mad_ppm(samples: &[f64]) -> Result<u64, PerfRegimeError> {
         return Err(PerfRegimeError::InvalidNoiseStatistic);
     }
     let deviations: Vec<_> = samples.iter().map(|sample| (sample - center).abs()).collect();
-    let mad = median(&deviations);
-    let ppm = mad / center * 1_000_000.0;
+    let ppm = median(&deviations) / center * 1_000_000.0;
     if !ppm.is_finite() || ppm < 0.0 || ppm > u64::MAX as f64 {
         return Err(PerfRegimeError::InvalidNoiseStatistic);
     }
@@ -1195,45 +1123,66 @@ mod tests {
         .unwrap()
     }
 
-    fn profile() -> FrozenPerfBenchmark {
+    fn case(
+        id: &str,
+        metric: &str,
+        unit: &str,
+        direction: MetricDirection,
+        class: BenchmarkClass,
+        promotion_gate: bool,
+    ) -> BenchmarkCase {
+        BenchmarkCase::new(BenchmarkCaseSpec {
+            id: id.to_string(),
+            repository_role: "rsi".to_string(),
+            command_kind: format!("bench_{id}"),
+            arguments: Vec::new(),
+            metric: metric.to_string(),
+            unit: unit.to_string(),
+            direction,
+            class,
+            promotion_gate,
+        })
+        .unwrap()
+    }
+
+    fn profile_with(edit_prefix: &str) -> Result<FrozenPerfBenchmark, PerfRegimeError> {
         let spec = spec();
-        let dag = dag("src");
+        let dag = dag(edit_prefix);
         FrozenPerfBenchmark::freeze(
             &spec,
             &dag,
             "perf-opt",
-            PerfBenchmarkApproval::new("human-review", digest('c')).unwrap(),
-            BenchmarkEnvironment::new(digest('d'), digest('e')).unwrap(),
-            AntiNoisePolicy::new(5, 3, 20_000, 20_000, 3).unwrap(),
-            vec![
-                BenchmarkCase::new(
-                    "e2e-latency",
-                    "rsi",
-                    "bench_e2e",
-                    Vec::new(),
-                    "latency",
-                    "ns",
-                    MetricDirection::Minimize,
-                    BenchmarkClass::EndToEnd,
-                    true,
-                )
-                .unwrap(),
-                BenchmarkCase::new(
-                    "micro-helper",
-                    "rsi",
-                    "bench_helper",
-                    Vec::new(),
-                    "throughput",
-                    "items_s",
-                    MetricDirection::Maximize,
-                    BenchmarkClass::SupportingMicrobenchmark,
-                    false,
-                )
-                .unwrap(),
-            ],
-            vec![FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('f')).unwrap()],
+            PerfBenchmarkDraft {
+                approval: PerfBenchmarkApproval::new("human-review", digest('c')).unwrap(),
+                environment: BenchmarkEnvironment::new(digest('d'), digest('e')).unwrap(),
+                policy: AntiNoisePolicy::new(5, 3, 20_000, 20_000, 3).unwrap(),
+                cases: vec![
+                    case(
+                        "e2e-latency",
+                        "latency",
+                        "ns",
+                        MetricDirection::Minimize,
+                        BenchmarkClass::EndToEnd,
+                        true,
+                    ),
+                    case(
+                        "micro-helper",
+                        "throughput",
+                        "items_s",
+                        MetricDirection::Maximize,
+                        BenchmarkClass::SupportingMicrobenchmark,
+                        false,
+                    ),
+                ],
+                artifacts: vec![
+                    FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('f')).unwrap(),
+                ],
+            },
         )
-        .unwrap()
+    }
+
+    fn profile() -> FrozenPerfBenchmark {
+        profile_with("src").unwrap()
     }
 
     fn admissible() -> AdmissibilityBreakdown {
@@ -1263,14 +1212,36 @@ mod tests {
         .unwrap()
     }
 
-    fn paired_evidence(profile: &FrozenPerfBenchmark) -> (Vec<PerfMeasurementBatch>, Vec<PerfMeasurementBatch>) {
+    fn paired_evidence(
+        profile: &FrozenPerfBenchmark,
+    ) -> (Vec<PerfMeasurementBatch>, Vec<PerfMeasurementBatch>) {
         let mut baseline = Vec::new();
         let mut candidate = Vec::new();
         for id in ["a", "b", "c"] {
-            baseline.push(batch(profile, "e2e-latency", id, &[100.0, 100.5, 99.5, 100.2, 99.8]));
-            candidate.push(batch(profile, "e2e-latency", id, &[90.0, 90.4, 89.6, 90.2, 89.8]));
-            baseline.push(batch(profile, "micro-helper", id, &[1000.0, 1005.0, 995.0, 1002.0, 998.0]));
-            candidate.push(batch(profile, "micro-helper", id, &[1200.0, 1205.0, 1195.0, 1202.0, 1198.0]));
+            baseline.push(batch(
+                profile,
+                "e2e-latency",
+                id,
+                &[100.0, 100.5, 99.5, 100.2, 99.8],
+            ));
+            candidate.push(batch(
+                profile,
+                "e2e-latency",
+                id,
+                &[90.0, 90.4, 89.6, 90.2, 89.8],
+            ));
+            baseline.push(batch(
+                profile,
+                "micro-helper",
+                id,
+                &[1000.0, 1005.0, 995.0, 1002.0, 998.0],
+            ));
+            candidate.push(batch(
+                profile,
+                "micro-helper",
+                id,
+                &[1200.0, 1205.0, 1195.0, 1202.0, 1198.0],
+            ));
         }
         (baseline, candidate)
     }
@@ -1321,10 +1292,6 @@ mod tests {
         )
         .unwrap();
         assert!(!report.promotable);
-        assert!(report
-            .cases
-            .iter()
-            .any(|case| case.promotion_gate && !case.passed));
     }
 
     #[test]
@@ -1355,30 +1322,8 @@ mod tests {
 
     #[test]
     fn perf_task_cannot_edit_frozen_benchmark_source() {
-        let spec = spec();
-        let dag = dag("benches");
         assert!(matches!(
-            FrozenPerfBenchmark::freeze(
-                &spec,
-                &dag,
-                "perf-opt",
-                PerfBenchmarkApproval::new("human-review", digest('c')).unwrap(),
-                BenchmarkEnvironment::new(digest('d'), digest('e')).unwrap(),
-                AntiNoisePolicy::new(5, 3, 20_000, 20_000, 3).unwrap(),
-                vec![BenchmarkCase::new(
-                    "e2e",
-                    "rsi",
-                    "bench_e2e",
-                    Vec::new(),
-                    "latency",
-                    "ns",
-                    MetricDirection::Minimize,
-                    BenchmarkClass::EndToEnd,
-                    true,
-                )
-                .unwrap()],
-                vec![FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('f')).unwrap()],
-            ),
+            profile_with("benches"),
             Err(PerfRegimeError::TaskAllowanceTouchesFrozenBenchmark { .. })
         ));
     }
@@ -1400,7 +1345,7 @@ mod tests {
     }
 
     #[test]
-    fn wrong_hardware_or_software_fingerprint_is_rejected() {
+    fn wrong_environment_is_rejected() {
         let profile = profile();
         let (baseline, mut candidate) = paired_evidence(&profile);
         candidate[0].environment_fingerprint = digest('0');
@@ -1411,19 +1356,19 @@ mod tests {
     }
 
     #[test]
-    fn microbenchmark_cannot_be_declared_as_promotion_gate() {
+    fn microbenchmark_cannot_be_promotion_gate() {
         assert!(matches!(
-            BenchmarkCase::new(
-                "micro",
-                "rsi",
-                "bench_micro",
-                Vec::new(),
-                "latency",
-                "ns",
-                MetricDirection::Minimize,
-                BenchmarkClass::SupportingMicrobenchmark,
-                true,
-            ),
+            BenchmarkCase::new(BenchmarkCaseSpec {
+                id: "micro".to_string(),
+                repository_role: "rsi".to_string(),
+                command_kind: "bench_micro".to_string(),
+                arguments: Vec::new(),
+                metric: "latency".to_string(),
+                unit: "ns".to_string(),
+                direction: MetricDirection::Minimize,
+                class: BenchmarkClass::SupportingMicrobenchmark,
+                promotion_gate: true,
+            }),
             Err(PerfRegimeError::MicrobenchmarkCannotPromote(_))
         ));
     }

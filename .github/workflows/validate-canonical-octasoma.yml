@@ -1,0 +1,45 @@
+name: Validate canonical OctaSoma integration
+
+on:
+  push:
+    branches: [arch/canonical-octasoma-v05]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: arch/canonical-octasoma-v05
+          fetch-depth: 0
+      - name: Install MSRV
+        run: rustup toolchain install 1.89.0 --profile minimal --component clippy
+      - name: Resolve canonical memory graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          final='145761aeb52ef8ded85dcf2b8c97690005284926'
+          test ! -e octasoma/Cargo.toml
+          cargo +1.89.0 check
+          cargo +1.89.0 check --features octasoma
+          cargo +1.89.0 test --features octasoma
+          cargo +1.89.0 clippy --all-targets --features octasoma -- -D warnings
+          grep -Fq "$final" Cargo.lock || { echo 'canonical OctaSoma revision missing from lock' >&2; exit 1; }
+          count="$(grep -c '^name = "octasoma"$' Cargo.lock)"
+          test "$count" -eq 1 || { echo "expected one OctaSoma package, found $count" >&2; exit 1; }
+      - name: Commit regenerated lock and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/validate-canonical-octasoma.yml
+          git config user.name 'MEMOPERF'
+          git config user.email 'contact@checkupauto.fr'
+          git add Cargo.lock .github/workflows/validate-canonical-octasoma.yml
+          git commit -m 'chore(memory): lock canonical OctaSoma v0.5'
+          git push origin HEAD:arch/canonical-octasoma-v05

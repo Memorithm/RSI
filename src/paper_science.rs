@@ -5,7 +5,7 @@
 //! RSI's empirical DGM evaluator remains authoritative for acceptance.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -45,10 +45,7 @@ impl ScientificPapersRunner {
         }
     }
 
-    pub fn with_binaries(
-        papers_bin: impl Into<String>,
-        contract_bin: impl Into<String>,
-    ) -> Self {
+    pub fn with_binaries(papers_bin: impl Into<String>, contract_bin: impl Into<String>) -> Self {
         Self {
             papers_bin: papers_bin.into(),
             contract_bin: contract_bin.into(),
@@ -284,16 +281,11 @@ impl ScientificBundle {
         let paper_id = require_string(paper, "id")?.to_string();
         let title = require_string(paper, "title")?.to_string();
 
-        let provenance_json = root
-            .get("provenance")
-            .ok_or("bundle.provenance manquant")?;
+        let provenance_json = root.get("provenance").ok_or("bundle.provenance manquant")?;
         let provenance = BundleProvenance {
             paper_id: require_string(provenance_json, "paper_id")?.to_string(),
             source: require_string(provenance_json, "source")?.to_string(),
-            extracted_content_sha256: require_sha256(
-                provenance_json,
-                "extracted_content_sha256",
-            )?,
+            extracted_content_sha256: require_sha256(provenance_json, "extracted_content_sha256")?,
             analysis_sha256: require_sha256(provenance_json, "analysis_sha256")?,
             generator: require_string(provenance_json, "generator")?.to_string(),
             generator_version: require_string(provenance_json, "generator_version")?.to_string(),
@@ -501,7 +493,7 @@ mod tests {
     fn companion_contract_binary_follows_explicit_papers_path() {
         assert_eq!(
             companion_contract_bin("/opt/papers/bin/papers"),
-            PathBuf::from("/opt/papers/bin/papers-contract")
+            std::path::PathBuf::from("/opt/papers/bin/papers-contract")
                 .display()
                 .to_string()
         );

@@ -89,7 +89,6 @@ pub mod obs;
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
 pub mod omega_tasks;
-pub mod paper_science;
 pub mod patchset;
 pub mod patchset_trajectory;
 pub mod plot;
@@ -119,9 +118,116 @@ pub use agent::{RSIAgent, StepReport};
 pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
-pub use paper_science::{BundleProvenance, ClaimState as ScientificClaimState, ScientificBundle, ScientificClaim, ScientificEvidence};
-
-// Remaining public re-exports stay defined in their modules and are intentionally
-// not duplicated here; this source file historically carries a long curated
-// re-export surface below in main. The paper-science types above are the only new
-// top-level additions required by this change.
+pub use autopilot_feature::{
+    FEATURE_IMPLEMENTATION_CONTRACT_SCHEMA_VERSION, FEATURE_TEST_MANIFEST_SCHEMA_VERSION,
+    FeatureImplementationContract, FeatureRegimeError, FeatureTestApproval, FrozenFeatureTests,
+    FrozenTestArtifact,
+};
+pub use autopilot_intake::{
+    AUTOPILOT_SPEC_SCHEMA_VERSION, AcceptanceCheck, AcceptanceCriterion, AutopilotIntakeError,
+    AutopilotSpecDraft, ExplorationObservation, ExplorationSource, ExploredObjective,
+    FrozenAutopilotSpec, IntakeQuestion, IntakeQuestionnaire, QuestionAnswer, RepositoryExploration,
+    RepositoryScope, ResolvedIntake, ResolvedQuestion, SpecBudget,
+};
+pub use autopilot_perf::{
+    PERF_BENCHMARK_SCHEMA_VERSION, AntiNoisePolicy, BenchmarkCase, BenchmarkCaseSpec,
+    BenchmarkClass, BenchmarkEnvironment, FrozenBenchmarkArtifact, FrozenPerfBenchmark,
+    MetricDirection, PerfBenchmarkApproval, PerfBenchmarkDraft, PerfCaseResult,
+    PerfComparisonReport, PerfMeasurementBatch, PerfRegimeError,
+};
+pub use autopilot_pr::{
+    AUTOPILOT_PR_PLAN_SCHEMA_VERSION, AutopilotPrError, AutopilotPullRequestPlan,
+    ExternalPrVerdict, ExternalVerdictKind, HostingAction, PullRequestEmissionReceipt,
+    PullRequestPlanDraft, append_external_pr_verdict,
+};
+pub use autopilot_task_dag::{
+    AUTOPILOT_TASK_DAG_SCHEMA_VERSION, AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError,
+    AutopilotTaskDraft, HardGateProfile, TaskBudget, TaskDagPolicy, TaskEditAllowance,
+    TaskOperation, TaskRegime,
+};
+pub use candidate_state::{
+    CandidateState, CandidateStateError, CandidateStoragePolicy, TreeUsage,
+};
+#[cfg(feature = "ccos")]
+pub use ccos_audit::CcosAudit;
+pub use checkpoint::Checkpoint;
+pub use cma::SepCmaEs;
+pub use compatibility::{
+    COMPATIBILITY_SCHEMA_VERSION, CompatibilityError, CompatibilitySet, RepositoryRevision,
+};
+pub use convergence::{ConvergenceDetector, Trend};
+pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
+pub use cross_repo_workspace::{
+    CargoPatchOverride, CrossRepoWorkspace, CrossRepoWorkspaceError, CrossRepoWorkspacePolicy,
+    CrossRepoWorkspaceResult, EffectiveCargoOverride, EffectiveRepositoryState,
+    LocalRepositorySource,
+};
+pub use cumulative_archive::{
+    CUMULATIVE_ARCHIVE_SCHEMA_VERSION, CumulativeArchive, CumulativeArchiveError,
+    CumulativeOutcome, CumulativeRecord, PromotionReceipt,
+};
+pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
+pub use engineering_evaluator::{
+    CargoEvidenceSource, CargoGateEvidence, CognoEngineeringEvaluator, EngineeringEvaluation,
+    EngineeringEvaluationError, EngineeringEvidenceAssembler, EngineeringEvidenceCollector,
+    EngineeringRanker, RankingEvidence,
+};
+pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
+pub use engineering_trajectory::{
+    AdmissibilityBreakdown, BenchmarkRecord, ENGINEERING_TRAJECTORY_SCHEMA_VERSION,
+    EngineeringTrajectory, EngineeringTrajectoryError, EngineeringVerdict, GateStatus, LaterVerdict,
+    ProposerMetadata,
+};
+pub use evaluation_pipeline::{
+    BoundedEvidencePipeline, EvaluationCommandHost, EvaluationEvidence, EvaluationPipelineError,
+    EvaluationPlan, EvaluationPlanPolicy, EvaluationStep, EvidenceKind, ResolvedCommand,
+    StepEvidence,
+};
+pub use flat_attention_evaluator::{
+    FlatAttentionEvaluation, FlatAttentionEvaluationError, FlatAttentionEvaluator,
+};
+#[cfg(feature = "forge")]
+pub use forge_meta::ForgeMetaSearch;
+#[cfg(feature = "forge")]
+pub use forge_substrate::ForgeSubstrate;
+pub use json::Json;
+pub use knowledge::{CorpusKnowledge, KnowledgeSource, PapersKnowledge};
+pub use loop_ctrl::{LoopConfig, LoopObserver, LoopOutcome, StopReason};
+pub use measured_substrate::MeasuredSubstrate;
+pub use memory::{ContextMemory, LinearContextMemory};
+pub use meta::{CmaEsMeta, DgmMetaParams, MetaOptimizer, MetaSearch, MetaStrategy};
+pub use meta_neuro_symbolic::{
+    compute_meta_ns_loss, AgentExecutionTrace, IntegritySha256Validator, MetaNSConfig, MetaNSState,
+    NoUnsafeValidator, PerTraceBuffer, SymbolicExprValidator, SymbolicValidator,
+    WorkspaceConstraintsValidator,
+};
+#[cfg(feature = "octasoma")]
+pub use octasoma_memory::OctaSomaMemory;
+pub use patchset::{FileOperation, PatchSet, PatchSetError, PatchSetSnapshot};
+pub use patchset_trajectory::{
+    PatchSetTrajectory, PatchSetTrajectoryError, PATCHSET_TRAJECTORY_SCHEMA_VERSION,
+};
+pub use release_compatibility::{
+    CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON, RELEASE_COMPATIBILITY_LOCK_SCHEMA_VERSION,
+    ReleaseCompatibilityError, ReleaseCompatibilityLock, current_release_compatibility_lock,
+};
+pub use release_qualification::{
+    RELEASE_QUALIFICATION_SCHEMA_VERSION, ReleaseQualificationArtifacts,
+    ReleaseQualificationError, ReleaseQualificationReport, run_local_release_qualification,
+};
+pub use rng::Rng;
+pub use schedule::{LoopSchedule, MetaMeta};
+pub use state::{CognitiveState, Dims};
+pub use substrate::Substrate;
+pub use surface::{
+    Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
+};
+pub use swarm::{run_swarm, run_swarm_demo, SwarmMember, SwarmResult};
+pub use synthesis::{
+    symbolic_equal, Conjecture, ConjectureGenerator, Expr, SymbolicSynthesis,
+};
+pub use tasks::{GroundedCapability, Task, TaskCorpus};
+pub use web_crawl::{
+    CrawledPage, CrawlLimits, CrawlerOptions, CrawlReport, DdgResult, DuckDuckGoSearch, SearchResult,
+    TextIndex, WebCrawler, WebCrawlerContext,
+};

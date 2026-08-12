@@ -1,0 +1,118 @@
+{
+  "schema": "memorithm.science/bundle-v1",
+  "paper": {
+    "id": "fixture-paper-1",
+    "title": "Canonical scientific interchange fixture",
+    "authors": ["Fixture Author"],
+    "publication_date": "2026-08-12",
+    "source": "fixture://scientific-bundle-v1",
+    "paper_url": null,
+    "github_url": null
+  },
+  "claims": [
+    {
+      "schema": "memorithm.science/claim-v1",
+      "id": "claim-fixture-1",
+      "paper_id": "fixture-paper-1",
+      "kind": "contribution",
+      "statement": "A tiled method is reported to reduce latency.",
+      "state": "inferred",
+      "evidence": [
+        {
+          "origin": "analysis_field",
+          "locator": "analysis.contributions[0]",
+          "section": null,
+          "page": null,
+          "text": "A tiled method is reported to reduce latency.",
+          "text_sha256": "c24db8d5cbf68e05f6c705a7626547ab99edb772387d75f8ecd20cf59eba845a"
+        }
+      ],
+      "assumptions": [],
+      "method": null,
+      "algorithm": null,
+      "baseline": null,
+      "dataset": null,
+      "metrics": [],
+      "expected_effect": null,
+      "reported_effect": null,
+      "limitations": [],
+      "falsification_criteria": [],
+      "confidence": null,
+      "provenance": {
+        "paper_id": "fixture-paper-1",
+        "source": "fixture://scientific-bundle-v1",
+        "extracted_content_sha256": "e378076afbd5a2ea09ef5e360699c804ae1b048d6a9effea9597aee2e26970f3",
+        "extracted_content_scope": "abstract",
+        "analysis_sha256": "f31a381397d535426affb74de3a0d698016ab6c4d5947cb53c696db2d1ac2816",
+        "generator": "fixture",
+        "generator_version": "1",
+        "generated_at": "2026-08-12T00:00:00Z",
+        "model": {
+          "provider": "ollama",
+          "model": "fixture-model",
+          "config_sha256": null
+        }
+      }
+    },
+    {
+      "schema": "memorithm.science/claim-v1",
+      "id": "method-fixture-1",
+      "paper_id": "fixture-paper-1",
+      "kind": "method",
+      "statement": "Method described by analysis: TiledMethod",
+      "state": "inferred",
+      "evidence": [
+        {
+          "origin": "analysis_field",
+          "locator": "analysis.algorithms[0]",
+          "section": null,
+          "page": null,
+          "text": "TiledMethod",
+          "text_sha256": "d4a16d6d3f0d941ab208e5e8f2a3add8106cc66c8254973be52ffdb9fad7c7b7"
+        }
+      ],
+      "assumptions": [],
+      "method": "TiledMethod",
+      "algorithm": "for tile in input: process(tile)",
+      "baseline": null,
+      "dataset": null,
+      "metrics": ["latency_ns"],
+      "expected_effect": "lower latency",
+      "reported_effect": null,
+      "limitations": [],
+      "falsification_criteria": ["No improvement against the frozen baseline"],
+      "confidence": null,
+      "provenance": {
+        "paper_id": "fixture-paper-1",
+        "source": "fixture://scientific-bundle-v1",
+        "extracted_content_sha256": "e378076afbd5a2ea09ef5e360699c804ae1b048d6a9effea9597aee2e26970f3",
+        "extracted_content_scope": "abstract",
+        "analysis_sha256": "f31a381397d535426affb74de3a0d698016ab6c4d5947cb53c696db2d1ac2816",
+        "generator": "fixture",
+        "generator_version": "1",
+        "generated_at": "2026-08-12T00:00:00Z",
+        "model": {
+          "provider": "ollama",
+          "model": "fixture-model",
+          "config_sha256": null
+        }
+      }
+    }
+  ],
+  "proposals": [],
+  "provenance": {
+    "paper_id": "fixture-paper-1",
+    "source": "fixture://scientific-bundle-v1",
+    "extracted_content_sha256": "e378076afbd5a2ea09ef5e360699c804ae1b048d6a9effea9597aee2e26970f3",
+    "extracted_content_scope": "abstract",
+    "analysis_sha256": "f31a381397d535426affb74de3a0d698016ab6c4d5947cb53c696db2d1ac2816",
+    "generator": "fixture",
+    "generator_version": "1",
+    "generated_at": "2026-08-12T00:00:00Z",
+    "model": {
+      "provider": "ollama",
+      "model": "fixture-model",
+      "config_sha256": null
+    }
+  }
+}

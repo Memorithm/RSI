@@ -89,6 +89,7 @@ pub mod obs;
 #[cfg(feature = "octasoma")]
 pub mod octasoma_memory;
 pub mod omega_tasks;
+pub mod paper_science;
 pub mod patchset;
 pub mod patchset_trajectory;
 pub mod plot;
@@ -203,6 +204,10 @@ pub use meta_neuro_symbolic::{
 };
 #[cfg(feature = "octasoma")]
 pub use octasoma_memory::OctaSomaMemory;
+pub use paper_science::{
+    BundleProvenance, ClaimState as ScientificClaimState, ScientificBundle, ScientificClaim,
+    ScientificEvidence,
+};
 pub use patchset::{FileOperation, PatchSet, PatchSetError, PatchSetSnapshot};
 pub use patchset_trajectory::{
     PatchSetTrajectory, PatchSetTrajectoryError, PATCHSET_TRAJECTORY_SCHEMA_VERSION,

@@ -102,6 +102,10 @@ path = "src/bin/rsi_scholar.rs"
 required-features = ["llm-ollama"]
 
 [[bin]]
+name = "rsi-science"
+path = "src/bin/rsi_science.rs"
+
+[[bin]]
 name = "rsi-simcal"
 path = "src/bin/rsi_simcal.rs"
 required-features = ["llm-ollama"]

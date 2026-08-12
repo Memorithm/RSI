@@ -390,10 +390,8 @@ pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
                     in_tag = false;
                     continue;
                 }
-            } else {
-                if in_script == 0 && in_style == 0 {
-                    text.push(c);
-                }
+            } else if in_script == 0 && in_style == 0 {
+                text.push(c);
             }
         } else {
             // dans une balise

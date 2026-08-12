@@ -12,11 +12,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Cargo résout également les dépendances git optionnelles. `scirust-rsi` est
-  # volontairement épinglé sur une révision immuable de Memorithm/scirust et
-  # fait partie des features qualifiées à chaque PR depuis P1.2.
+  # Les dépendances git Memorithm (`scirust-rsi`, `octasoma`) sont épinglées à
+  # des révisions immuables et leurs bridges font partie des features qualifiées
+  # à chaque PR.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq scirust"
+  PUBLIC_FEATURES: "wasm observability simd llm-ollama llm-claude-ureq scirust octasoma"
 
 jobs:
   check:
@@ -53,8 +53,8 @@ jobs:
       - name: Tests (défaut, + doctests)
         run: cargo test --locked
 
-      # Inclut `scirust`: ceci compile et teste le bridge contre la révision
-      # canonique exacte enregistrée dans Cargo.toml/Cargo.lock.
+      # Inclut les bridges SciRust et OctaSoma contre leurs révisions canoniques
+      # exactes enregistrées dans Cargo.toml/Cargo.lock.
       - name: Clippy (features publiques) — 0 warning
         run: cargo clippy --all-targets --locked --features "$PUBLIC_FEATURES" -- -D warnings
 

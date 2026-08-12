@@ -1,8 +1,0 @@
-[package]
-name = "octasoma"
-version = "0.10.0"
-edition = "2021"
-description = "Mémoire vectorielle fractale d'OctaSoma (k-NN) — remplacement local du crate git octasoma"
-license = "PolyForm-Noncommercial-1.0.0 OR LicenseRef-Commercial"
-
-[dependencies]

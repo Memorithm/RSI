@@ -29,7 +29,7 @@ fn project(embedding: &[f32], _dims: usize) -> [f32; 3] {
     }
     // normalisation par la norme L2 (stabilité), puis sigmoïde → (0,1)
     let norm = (acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]).sqrt().max(1e-9);
-    let sig = |x: f64| 1.0 / (1.0 + (-x / norm.max(1.0)).exp());
+    let sig = |x: f64| 1.0 / (1.0 + (-x / norm).exp());
     [
         sig(acc[0] / norm) as f32,
         sig(acc[1] / norm) as f32,
@@ -114,33 +114,40 @@ impl OctreeNode {
         idx
     }
 
-    fn insert(&mut self, p: OctoPoint) {
-        self.count += 1;
+    /// Enfant responsable de `pos` (créé à la volée s'il manque).
+    fn route(&mut self, pos: [f32; 3]) -> &mut OctreeNode {
+        let idx = self.child_index(pos);
+        let h = self.half / 2.0;
+        let c = self.center;
+        let children = self.children.as_mut().unwrap();
+        children[idx]
+            .get_or_insert_with(|| OctreeNode::new([c[0] + if idx & 1 != 0 { h } else { -h }, c[1] + if idx & 2 != 0 { h } else { -h }, c[2] + if idx & 4 != 0 { h } else { -h }], h))
+    }
+
+    /// Insertion avec **dédoublonnage** : si un point à la position projetée
+    /// identique existe déjà, son payload est remplacé et l'ancien est rendu
+    /// (`Some(ancien)`), sinon le point est inséré (`None`).
+    fn upsert(&mut self, p: OctoPoint) -> Option<Option<Vec<u8>>> {
         if self.is_leaf() {
+            if let Some(existing) = self.points.iter_mut().find(|q| q.pos == p.pos) {
+                return Some(std::mem::replace(&mut existing.payload, p.payload));
+            }
             // feuille pleine → subdiviser (capacité 16)
             if self.points.len() >= 16 && self.half > 1e-4 {
                 self.subdivide();
                 let pts = std::mem::take(&mut self.points);
                 for pt in pts {
-                    let idx = self.child_index(pt.pos);
-                    if let Some(child) = &mut self.children.as_mut().unwrap()[idx] {
-                        child.insert(pt);
-                    }
+                    self.route(pt.pos).upsert(pt);
                 }
             }
             if self.is_leaf() {
                 self.points.push(p);
             } else {
-                let idx = self.child_index(p.pos);
-                if let Some(child) = &mut self.children.as_mut().unwrap()[idx] {
-                    child.insert(p);
-                }
+                self.route(p.pos).upsert(p);
             }
+            None
         } else {
-            let idx = self.child_index(p.pos);
-            if let Some(child) = &mut self.children.as_mut().unwrap()[idx] {
-                child.insert(p);
-            }
+            self.route(p.pos).upsert(p)
         }
     }
 
@@ -212,19 +219,25 @@ impl FractalMemory3D {
         }
     }
 
-    /// Insère un embedding + payload optionnel. Retourne l'ancien payload si le
-    /// point était déjà présent, sinon le payload inséré (`Some`) pour
-    /// signaler une insertion effective (contrat consommé par
-    /// `rsi::octasoma_memory`, qui compte sur un `is_some()`).
+    /// Insère un embedding + payload optionnel, avec **dédoublonnage** :
+    /// - embedding jamais vu → point inséré, retourne le payload inséré
+    ///   (`Some`) pour signaler une insertion effective (contrat consommé par
+    ///   `rsi::octasoma_memory`, qui compte sur un `is_some()`) ;
+    /// - position projetée déjà occupée → payload **remplacé**, retourne
+    ///   l'ancien payload (le compteur [`FractalMemory3D::len`] n'augmente pas).
     pub fn insert(&mut self, embedding: &[f32], payload: Option<&[u8]>) -> Option<Vec<u8>> {
         let p = project(embedding, self.high_dim);
         let point = OctoPoint {
             pos: p,
             payload: payload.map(|b| b.to_vec()),
         };
-        self.count += 1;
-        self.root.insert(point);
-        payload.map(|b| b.to_vec())
+        match self.root.upsert(point) {
+            Some(old) => old.or_else(|| Some(Vec::new())),
+            None => {
+                self.count += 1;
+                payload.map(|b| b.to_vec())
+            }
+        }
     }
 
     /// k plus proches voisins (payloads), triés par distance croissante.
@@ -296,5 +309,32 @@ mod tests {
         }
         let q = embed(3.0, 8);
         assert_eq!(m1.query_k(&q, 5), m2.query_k(&q, 5));
+    }
+
+    #[test]
+    fn upsert_dedups_and_replaces_payload() {
+        // Même embedding deux fois : pas de doublon (len=1) et le payload est
+        // remplacé — l'ancien est retourné.
+        let mut m = FractalMemory3D::new(8, 9);
+        let e = embed(4.0, 8);
+        assert_eq!(m.insert(&e, Some(b"premier")), Some(b"premier".to_vec()));
+        assert_eq!(m.len(), 1);
+        let old = m.insert(&e, Some(b"second"));
+        assert_eq!(old.as_deref(), Some(&b"premier"[..]));
+        assert_eq!(m.len(), 1, "remplacement ne doit pas compter double");
+        assert_eq!(m.query_k(&e, 1), vec![b"second".to_vec()]);
+    }
+
+    #[test]
+    fn upsert_dedups_deep_tree() {
+        // >16 points → subdivision ; le dédoublonnage doit traverser l'arbre.
+        let mut m = FractalMemory3D::new(8, 11);
+        for i in 0..40 {
+            m.insert(&embed(i as f32 * 0.25, 8), Some(b"v"));
+        }
+        assert_eq!(m.len(), 40);
+        assert_eq!(m.insert(&embed(39.0 * 0.25, 8), Some(b"w")).as_deref(), Some(&b"v"[..]));
+        assert_eq!(m.len(), 40);
+        assert_eq!(m.query_k(&embed(39.0 * 0.25, 8), 1), vec![b"w".to_vec()]);
     }
 }

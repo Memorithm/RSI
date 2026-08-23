@@ -723,7 +723,17 @@ pub struct WebCrawler {
     visited: Arc<Mutex<HashSet<String>>>,
     queue: Arc<Mutex<VecDeque<(String, usize)>>>,
     stop: Arc<AtomicBool>,
-    counter: Arc<AtomicUsize>,
+    /// pages réellement indexées.
+    fetched: Arc<AtomicUsize>,
+    /// pages écartées (déjà vues, hors bornes, hôtes interdits, robots).
+    skipped: Arc<AtomicUsize>,
+    /// échecs de récupération (réseau, statut, taille…).
+    errors: Arc<AtomicUsize>,
+    /// fetches en cours — un worker ne s'arrête que file vide ET zéro en vol
+    /// (les autres workers peuvent encore pousser des liens).
+    in_flight: Arc<AtomicUsize>,
+    /// cache robots.txt par hôte (une requête par hôte et par session).
+    robots_cache: Arc<Mutex<HashMap<String, RobotsTxt>>>,
     last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
@@ -735,7 +745,11 @@ impl WebCrawler {
             visited: Arc::new(Mutex::new(HashSet::new())),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             stop: Arc::new(AtomicBool::new(false)),
-            counter: Arc::new(AtomicUsize::new(0)),
+            fetched: Arc::new(AtomicUsize::new(0)),
+            skipped: Arc::new(AtomicUsize::new(0)),
+            errors: Arc::new(AtomicUsize::new(0)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            robots_cache: Arc::new(Mutex::new(HashMap::new())),
             last_fetch: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -776,8 +790,27 @@ impl WebCrawler {
             v
         };
         report.pages = pages;
-        report.visited = self.counter.load(Ordering::Relaxed);
+        report.visited = self.fetched.load(Ordering::Relaxed);
+        report.skipped = self.skipped.load(Ordering::Relaxed);
+        report.errors = self.errors.load(Ordering::Relaxed);
         report
+    }
+
+    /// `robots.txt` d'un hôte, mis en cache pour toute la session de crawl
+    /// (une seule requête par hôte au lieu d'une par page). Le verrou n'est
+    /// jamais tenu pendant l'I/O réseau ; en cas de course, deux workers
+    /// peuvent charger le même robots.txt une fois — borne inchangée.
+    fn robots_for(&self, host: &str) -> RobotsTxt {
+        if let Some(r) = self.robots_cache.lock().unwrap().get(host) {
+            return r.clone();
+        }
+        let r = RobotsTxt::load(host, self.options.limits.timeout, self.options.limits.max_bytes);
+        self.robots_cache
+            .lock()
+            .unwrap()
+            .entry(host.to_string())
+            .or_insert(r)
+            .clone()
     }
 
     fn worker_loop(&self) {
@@ -790,77 +823,95 @@ impl WebCrawler {
                 q.pop_front()
             };
             let Some((url, depth)) = next else {
-                return; // file vide → ce worker s'arrête
+                // File vide : on ne s'arrête que si aucun autre worker n'est
+                // en train de fetcher (il pourrait encore pousser des liens).
+                if self.in_flight.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+                continue;
             };
 
-            // déjà visité ?
-            {
-                let mut v = self.visited.lock().unwrap();
-                if !v.insert(url.clone()) {
-                    continue;
-                }
-            }
-            let max_pages = self.options.limits.max_pages;
-            if max_pages > 0 && self.counter.load(Ordering::Relaxed) >= max_pages {
-                self.stop.store(true, Ordering::Relaxed);
+            self.in_flight.fetch_add(1, Ordering::SeqCst);
+            self.process(&url, depth);
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Traite une URL sortie de la file : filtres → fetch → index → liens.
+    fn process(&self, url: &str, depth: usize) {
+        // déjà visité ?
+        {
+            let mut v = self.visited.lock().unwrap();
+            if !v.insert(url.to_string()) {
+                self.skipped.fetch_add(1, Ordering::Relaxed);
                 return;
             }
-            // limite de profondeur
-            if self.options.limits.max_depth > 0 && depth > self.options.limits.max_depth {
-                continue;
-            }
-            // liste noire d'hôtes
-            if let Some((_, host, _, _)) = parse_url(&url) {
-                if self
-                    .options
-                    .deny_hosts
-                    .iter()
-                    .any(|d| host.ends_with(d.as_str()))
-                {
-                    continue;
-                }
-            }
+        }
+        let max_pages = self.options.limits.max_pages;
+        if max_pages > 0 && self.fetched.load(Ordering::Relaxed) >= max_pages {
+            self.stop.store(true, Ordering::Relaxed);
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // limite de profondeur
+        if self.options.limits.max_depth > 0 && depth > self.options.limits.max_depth {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // liste noire d'hôtes
+        let Some((_, host, _, path)) = parse_url(url) else {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if self
+            .options
+            .deny_hosts
+            .iter()
+            .any(|d| host.ends_with(d.as_str()))
+        {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
 
-            match self.fetch_and_index(&url, depth) {
-                Ok(()) => {
-                    self.counter.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    // erreur : comptée, pas fatale
-                    self.counter.fetch_add(1, Ordering::Relaxed);
-                    let _ = e;
-                }
+        // politesse : délai depuis la dernière requête vers cet hôte —
+        // indépendant du respect de robots.txt (deux préoccupations
+        // distinctes). Le créneau horaire est réservé sous verrou : le
+        // timestamp peut être dans le futur (slot pris par un autre worker).
+        if self.options.limits.politeness_delay > Duration::ZERO {
+            let wait = {
+                let mut last = self.last_fetch.lock().unwrap();
+                let now = Instant::now();
+                let earliest = last
+                    .get(&host)
+                    .map(|prev| *prev + self.options.limits.politeness_delay)
+                    .unwrap_or(now)
+                    .max(now);
+                last.insert(host.clone(), earliest);
+                earliest.saturating_duration_since(now)
+            };
+            if wait > Duration::ZERO {
+                std::thread::sleep(wait);
+            }
+        }
+
+        // robots.txt (mis en cache par hôte)
+        if self.options.respect_robots && !self.robots_for(&host).allows(&host, &path) {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        match self.fetch_and_index(url, &host, depth) {
+            Ok(()) => {
+                self.fetched.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(_e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
-    fn fetch_and_index(&self, url: &str, depth: usize) -> Result<(), WebError> {
-        let (_scheme, host, _port, _path) = parse_url(url).ok_or_else(|| WebError::InvalidUrl(url.into()))?;
-
-        // politesse : délai depuis la dernière requête vers cet hôte
-        if self.options.respect_robots {
-            let mut last = self.last_fetch.lock().unwrap();
-            if let Some(prev) = last.get(&host) {
-                let elapsed = prev.elapsed();
-                if elapsed < self.options.limits.politeness_delay {
-                    std::thread::sleep(self.options.limits.politeness_delay - elapsed);
-                }
-            }
-            last.insert(host.clone(), Instant::now());
-        }
-
-        // robots.txt
-        if self.options.respect_robots {
-            let robots = RobotsTxt::load(
-                &host,
-                self.options.limits.timeout,
-                self.options.limits.max_bytes,
-            );
-            if !robots.allows(&host, &_path) {
-                return Err(WebError::Http("bloqué par robots.txt".into()));
-            }
-        }
-
+    fn fetch_and_index(&self, url: &str, _host: &str, depth: usize) -> Result<(), WebError> {
         let t0 = Instant::now();
         let (status, body) = http_get(url, self.options.limits.timeout, self.options.limits.max_bytes)?;
         if status != 200 {

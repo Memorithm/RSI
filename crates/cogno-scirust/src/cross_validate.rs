@@ -201,7 +201,8 @@ pub fn compare_after_optim_step(
 ) -> CognoResult<bool> {
     use crate::adamw::AdamW;
     let run = || -> CognoResult<Vec<f64>> {
-        let mut opt = AdamW::new(config, params.len());
+        let mut opt = AdamW::new(config, params.len())
+            .map_err(cogno_core::error::CognoError::InvalidInput)?;
         let mut p = params.to_vec();
         opt.step(&mut p, grad).map_err(cogno_core::error::CognoError::InvalidInput)?;
         Ok(p)

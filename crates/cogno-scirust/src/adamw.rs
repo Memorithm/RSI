@@ -27,6 +27,35 @@ impl Default for AdamWConfig {
     }
 }
 
+impl AdamWConfig {
+    /// Valide la configuration : lr fini > 0 ; β₁,β₂ ∈ [0,1) (sinon
+    /// `1 − β^t` s'annule → division par zéro) ; eps fini > 0 ;
+    /// weight_decay ≥ 0 ; clip (s'il est activé) > 0.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.lr.is_finite() || self.lr <= 0.0 {
+            return Err("adamw: lr doit être fini et > 0");
+        }
+        if !self.beta1.is_finite() || !(0.0..1.0).contains(&self.beta1) {
+            return Err("adamw: beta1 doit appartenir à [0, 1)");
+        }
+        if !self.beta2.is_finite() || !(0.0..1.0).contains(&self.beta2) {
+            return Err("adamw: beta2 doit appartenir à [0, 1)");
+        }
+        if !self.eps.is_finite() || self.eps <= 0.0 {
+            return Err("adamw: eps doit être fini et > 0");
+        }
+        if !self.weight_decay.is_finite() || self.weight_decay < 0.0 {
+            return Err("adamw: weight_decay doit être fini et >= 0");
+        }
+        if let Some(c) = self.grad_clip {
+            if !c.is_finite() || c <= 0.0 {
+                return Err("adamw: grad_clip doit être fini et > 0");
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Optimiseur AdamW (découplage du weight decay, cf. Loshchilov & Hutter 2019).
 ///
 /// Déterministe : pas d'aléa, mises à jour dans l'ordre des paramètres.
@@ -39,13 +68,18 @@ pub struct AdamW {
 
 impl AdamW {
     /// Prépare l'optimiseur pour `n_params` paramètres (état zéro).
-    pub fn new(config: AdamWConfig, n_params: usize) -> Self {
-        AdamW {
+    ///
+    /// La configuration est validée (`AdamWConfig::validate`) — une config
+    /// incohérente (β=1 ⇒ division par zéro dans la correction de biais)
+    /// échoue ici plutôt qu'au premier pas.
+    pub fn new(config: AdamWConfig, n_params: usize) -> Result<Self, &'static str> {
+        config.validate()?;
+        Ok(AdamW {
             config,
             m: vec![0.0; n_params],
             v: vec![0.0; n_params],
             t: 0,
-        }
+        })
     }
 
     pub fn config(&self) -> AdamWConfig {
@@ -106,7 +140,7 @@ mod tests {
     fn adamw_descents_on_quadratic() {
         let mut p = vec![1.0, 1.0];
         // f(p) = p0² + p1² → grad = 2p
-        let mut opt = AdamW::new(AdamWConfig { lr: 0.1, ..Default::default() }, 2);
+        let mut opt = AdamW::new(AdamWConfig { lr: 0.1, ..Default::default() }, 2).unwrap();
         for _ in 0..200 {
             let g = vec![2.0 * p[0], 2.0 * p[1]];
             opt.step(&mut p, &g).unwrap();
@@ -124,7 +158,8 @@ mod tests {
                 ..Default::default()
             },
             1,
-        );
+        )
+        .unwrap();
         let huge = vec![1e9];
         let norm_before = AdamW::grad_norm(&huge);
         opt.step(&mut p, &huge).unwrap();
@@ -136,7 +171,21 @@ mod tests {
     #[test]
     fn rejects_length_mismatch() {
         let mut p = vec![0.0];
-        let mut opt = AdamW::new(AdamWConfig::default(), 1);
+        let mut opt = AdamW::new(AdamWConfig::default(), 1).unwrap();
         assert!(opt.step(&mut p, &[1.0, 2.0]).is_err());
+    }
+
+    /// Config incohérente rejetée à la construction (β=1 → div/0 dans
+    /// `1 − β^t` ; lr/eps non positifs ; clip non positif).
+    #[test]
+    fn rejects_invalid_configs() {
+        assert!(AdamW::new(AdamWConfig { beta1: 1.0, ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(AdamWConfig { beta2: 1.5, ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(AdamWConfig { lr: 0.0, ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(AdamWConfig { eps: -1e-8, ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(AdamWConfig { weight_decay: -0.1, ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(AdamWConfig { grad_clip: Some(0.0), ..Default::default() }, 1).is_err());
+        // désactiver le clip reste valide
+        assert!(AdamW::new(AdamWConfig { grad_clip: None, ..Default::default() }, 1).is_ok());
     }
 }

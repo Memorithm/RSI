@@ -736,6 +736,10 @@ impl WorkspaceSnapshot {
         if patch.is_noop() {
             return Err(DgmError::Apply("patch is a no-op".to_string()));
         }
+        // Empêche l'évasion hors de la racine (`..`, chemins absolus…).
+        if target_escapes_root(&patch.target) {
+            return Err(DgmError::PathNotAllowed(patch.target.clone()));
+        }
         let target = self.resolve(&patch.target);
         // Empêche l'évasion hors de la racine (`..`, chemins absolus…).
         let canon_root = self
@@ -758,17 +762,31 @@ impl Drop for WorkspaceSnapshot {
     }
 }
 
+/// Cible interdite : absolue ou contenant une remontée `..`. Vérification de
+/// composants — nécessaire en complément de la canonicalisation, car
+/// `canonicalize` échoue sur un fichier inexistant et laisse alors un chemin
+/// brut `a/../b` passer un simple `starts_with`.
+fn target_escapes_root(target: &str) -> bool {
+    let p = Path::new(target);
+    p.is_absolute()
+        || p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// Applique un patch accepté à l'arbre **vivant**, avec sauvegarde, et rend l'id
 /// de sauvegarde. C'est la **seule** fonction qui mute le vrai code source ; les
 /// appelants la gardent par une évaluation passante et tout-au-vert.
 ///
 /// Défense en profondeur : même garde de chemin que [`WorkspaceSnapshot::apply`]
-/// (canonicalisation + ancrage sous `live_root`) — une cible `../x`, absolue ou
-/// symbolique ne peut pas sortir de la racine, même si l'appelant omet sa propre
-/// liste blanche.
+/// (composants `..`/absolus interdits, puis canonicalisation + ancrage sous
+/// `live_root`) — une cible `../x`, absolue ou symbolique ne peut pas sortir de
+/// la racine, même si l'appelant omet sa propre liste blanche.
 pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Result<String> {
     if patch.is_noop() {
         return Err(DgmError::Apply("patch is a no-op".to_string()));
+    }
+    if target_escapes_root(&patch.target) {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
     }
     let target = live_root.join(&patch.target);
     let canon_root = live_root.canonicalize().unwrap_or_else(|_| live_root.to_path_buf());
@@ -2044,6 +2062,21 @@ mod tests {
         write(&live, "a.rs", "x");
         let snap = WorkspaceSnapshot::create(&live).unwrap();
         assert!(snap.apply(&Patch::new("a.rs", "x", "x")).is_err());
+        let _ = std::fs::remove_dir_all(&live);
+    }
+
+    #[test]
+    fn snapshot_rejects_path_escape() {
+        // Même défense que promote_to_live : `..` et chemins absolus rejetés
+        // sur les composants, y compris quand la cible n'existe pas.
+        let live = fresh_dir("esc-snap");
+        write(&live, "a.rs", "value = 1");
+        let snap = WorkspaceSnapshot::create(&live).unwrap();
+        let err = snap.apply(&Patch::new("../escaped.rs", "value = 1", "value = 2"));
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        let err = snap.apply(&Patch::new("/etc/passwd", "root", "x"));
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        assert!(!snap.resolve("escaped.rs").exists());
         let _ = std::fs::remove_dir_all(&live);
     }
 

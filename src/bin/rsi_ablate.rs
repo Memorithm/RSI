@@ -131,8 +131,11 @@ struct Metrics {
 fn run_once(a: &Ablation, seed: u64, corpus: &TaskCorpus, steps: usize) -> Metrics {
     let mut agent = build(a, seed, corpus);
     let reports = agent.run(steps);
-    let last = reports.last().unwrap();
-    let n = reports.len() as f64;
+    let Some(last) = reports.last() else {
+        // steps == 0 : métriques neutres (le main rejette déjà ce cas)
+        return Metrics::default();
+    };
+    let n = reports.len().max(1) as f64;
 
     let si_end = last.si_global;
     let auc = reports.iter().map(|r| r.si_global).sum::<f64>() / n;
@@ -166,6 +169,14 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let steps: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(45);
     let n_seeds: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
+    if steps == 0 {
+        eprintln!("erreur : steps=0 (aucune mesure possible) — fournir un nombre de pas ≥ 1");
+        std::process::exit(2);
+    }
+    if n_seeds == 0 {
+        eprintln!("erreur : n_seeds=0 (aucune moyenne possible) — fournir un nombre de graines ≥ 1");
+        std::process::exit(2);
+    }
     let corpus = TaskCorpus::extended();
 
     println!("╔══════════════════════════════════════════════════════════════════════════════╗");

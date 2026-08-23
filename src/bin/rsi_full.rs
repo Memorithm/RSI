@@ -143,11 +143,14 @@ fn run_single(
             r.frac_limited_by_substrate * 100.0,
         );
     }
-    let end = reports.last().unwrap();
+    let Some(end) = reports.last() else {
+        println!("Aucun pas exécuté (steps = 0). SI_global initial : {start_si:.4}");
+        return;
+    };
     println!("{}", "─".repeat(82));
     println!(
         "SI_global : {start_si:.4} → {:.4}  ({:+.1} %)   |   SI_safe final : {:.4}   |   P_eff : {:.4}",
-        end.si_global, (end.si_global - start_si) / start_si * 100.0, end.si_safe, end.p_eff,
+        end.si_global, pct(end.si_global - start_si, start_si), end.si_safe, end.p_eff,
     );
 
     println!(
@@ -227,12 +230,14 @@ fn run_compare(
         );
     }
     println!("{}", "─".repeat(78));
-    let en = rn.last().unwrap();
-    let ef = rf.last().unwrap();
+    let (Some(en), Some(ef)) = (rn.last(), rf.last()) else {
+        println!("Aucun pas exécuté (steps = 0) — comparatif impossible.");
+        return;
+    };
     println!(
         "Final NU         : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
         en.si_global,
-        (en.si_global - n0) / n0 * 100.0,
+        pct(en.si_global - n0, n0),
         en.p_eff,
         en.risk_global,
         en.si_safe
@@ -240,7 +245,7 @@ fn run_compare(
     println!(
         "Final INTÉGRÉ     : SI {:.4} (+{:.0}%)  P_eff {:.4}  risk {:.4}  SI_safe {:.4}",
         ef.si_global,
-        (ef.si_global - f0) / f0 * 100.0,
+        pct(ef.si_global - f0, f0),
         ef.p_eff,
         ef.risk_global,
         ef.si_safe
@@ -250,6 +255,15 @@ fn run_compare(
     println!("réponses de sûreté actives (réalignement V / plancher anti-wireheading) absentes du run nu.");
 
     export(&rf);
+}
+
+/// Pourcentage de variation sûr : 0.0 si la base est nulle (évite NaN/∞).
+fn pct(delta: f64, base: f64) -> f64 {
+    if base.abs() < f64::EPSILON {
+        0.0
+    } else {
+        delta / base * 100.0
+    }
 }
 
 fn export(reports: &[StepReport]) {

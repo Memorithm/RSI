@@ -639,13 +639,15 @@ impl TextIndex {
     }
 
     /// Extrait un extrait de ~200 caractères autour du premier terme trouvé.
+    /// Slicing **sûr UTF-8** : les bornes sont alignées sur des frontières de
+    /// caractères (les termes indexés peuvent être multi-octets).
     fn snippet(&self, doc_id: usize, terms: &[String]) -> String {
         let text = self.docs[doc_id].terms.join(" ");
         let lower = text.to_lowercase();
         for t in terms {
             if let Some(pos) = lower.find(t) {
-                let start = pos.saturating_sub(80);
-                let end = (pos + 160).min(text.len());
+                let start = floor_char_boundary(&text, pos.saturating_sub(80));
+                let end = ceil_char_boundary(&text, (pos + 160).min(text.len()));
                 let mut s = if start > 0 {
                     format!("…{}", &text[start..end])
                 } else {
@@ -659,6 +661,24 @@ impl TextIndex {
         }
         text.chars().take(200).collect()
     }
+}
+
+/// Plus grande frontière de caractère ≤ `i` (slicing UTF-8 sûr).
+fn floor_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Plus petite frontière de caractère ≥ `i` (slicing UTF-8 sûr).
+fn ceil_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 /// Résultat de recherche.
@@ -1171,6 +1191,23 @@ mod tests {
         let r = idx.search("rust", 5);
         assert!(!r.is_empty());
         assert!(r[0].url.contains("rust"), "top={}", r[0].url);
+    }
+
+    #[test]
+    fn snippet_never_panics_on_multibyte() {
+        // Texte accentué (multi-octets) : les bornes du snippet tombent en
+        // plein caractère — le slicing doit rester sûr (régression E3).
+        let mut idx = TextIndex::new();
+        idx.add(
+            "http://fr/é",
+            "Français",
+            &"café élève hôtel où à côté ".repeat(30),
+        );
+        for q in ["hôtel", "café", "élève"] {
+            let r = idx.search(q, 1);
+            assert_eq!(r.len(), 1, "q={q}");
+            assert!(r[0].snippet.contains(q) || !r[0].snippet.is_empty());
+        }
     }
 
     #[cfg(not(feature = "web"))]

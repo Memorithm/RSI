@@ -259,7 +259,6 @@ impl SubstrateImprover for ForgeSubstrate {
             population: self.population,
             survivors: (self.population / 3).max(2),
             base_seed,
-            worker_addresses: None,
         };
 
         // ancre l'efficience analytique de départ au premier appel

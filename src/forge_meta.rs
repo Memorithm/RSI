@@ -225,7 +225,6 @@ impl MetaSearch for ForgeMetaSearch {
             population: self.population,
             survivors: (self.population / 3).max(2),
             base_seed,
-            worker_addresses: None, // local uniquement (pas de réseau)
         };
 
         // baseline = meilleure entre stratégie courante et graine mémoire retenue

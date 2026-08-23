@@ -122,8 +122,6 @@ pub struct Config {
     pub population: usize,
     pub survivors: usize,
     pub base_seed: u64,
-    /// Adresses de workers distants (non utilisé localement — `None`).
-    pub worker_addresses: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -133,7 +131,6 @@ impl Default for Config {
             population: 24,
             survivors: 8,
             base_seed: 42,
-            worker_addresses: None,
         }
     }
 }
@@ -205,6 +202,10 @@ impl<D: Domain> Engine<D> {
     /// Exécute la campagne. Évaluation séquentielle (déterministe bit-à-bit) ;
     /// la parallélisation bit-exacte est réalisée au niveau RSI pour les
     /// évaluations pures.
+    ///
+    /// Robustesse : un seed initial refusé par `verify` est **écarté** (et non
+    /// fatal) — la campagne démarre avec ce qui est valide, tant qu'il reste
+    /// au moins un individu ; sinon `Err`.
     pub fn run(&self) -> Result<Report<D::Cand>> {
         let gens = self.config.generations.max(1);
         let pop_size = self.config.population.max(2);
@@ -216,13 +217,19 @@ impl<D: Domain> Engine<D> {
             .ok();
 
         let mut rng = StdRng::seed_from_u64(self.config.base_seed);
+        // écarte les seeds invalides au lieu d'abandonner toute la campagne
         let mut population: Vec<Individual<D::Cand>> = (0..pop_size)
-            .map(|i| {
+            .filter_map(|i| {
                 let cand = self.domain.seed(&mut rng);
                 let seed = self.config.base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9);
-                self.evaluate(&cand, seed)
+                self.evaluate(&cand, seed).ok()
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
+        if population.is_empty() {
+            return Err(ForgeError::Config(
+                "aucun seed initial valide : campagne impossible".to_string(),
+            ));
+        }
 
         for gen in 0..gens {
             self.sort_best(&mut population);
@@ -307,7 +314,6 @@ mod tests {
             population: 20,
             survivors: 5,
             base_seed: 7,
-            worker_addresses: None,
         };
         let rep = Engine::new(QuadDomain, cfg).run().unwrap();
         let best = rep.best.unwrap();
@@ -323,7 +329,6 @@ mod tests {
             population: 12,
             survivors: 4,
             base_seed: 99,
-            worker_addresses: None,
         };
         let a = Engine::new(QuadDomain, cfg()).run().unwrap();
         let b = Engine::new(QuadDomain, cfg()).run().unwrap();

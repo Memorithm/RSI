@@ -761,11 +761,21 @@ impl Drop for WorkspaceSnapshot {
 /// Applique un patch accepté à l'arbre **vivant**, avec sauvegarde, et rend l'id
 /// de sauvegarde. C'est la **seule** fonction qui mute le vrai code source ; les
 /// appelants la gardent par une évaluation passante et tout-au-vert.
+///
+/// Défense en profondeur : même garde de chemin que [`WorkspaceSnapshot::apply`]
+/// (canonicalisation + ancrage sous `live_root`) — une cible `../x`, absolue ou
+/// symbolique ne peut pas sortir de la racine, même si l'appelant omet sa propre
+/// liste blanche.
 pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Result<String> {
     if patch.is_noop() {
         return Err(DgmError::Apply("patch is a no-op".to_string()));
     }
     let target = live_root.join(&patch.target);
+    let canon_root = live_root.canonicalize().unwrap_or_else(|_| live_root.to_path_buf());
+    let canon_target = target.canonicalize().unwrap_or_else(|_| target.clone());
+    if !canon_target.starts_with(&canon_root) {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
+    }
     patch_file_with_backup(&target, &patch.find, &patch.replace, backup_dir)
 }
 
@@ -2104,6 +2114,45 @@ mod tests {
         let after = std::fs::read_to_string(live.join("a.rs")).unwrap();
         assert_eq!(after, "value = 2");
         let _ = std::fs::remove_dir_all(&live);
+        let _ = std::fs::remove_dir_all(&backups);
+    }
+
+    #[test]
+    fn promote_rejects_path_escape() {
+        // Défense en profondeur : une cible hors racine est rejetée AVANT
+        // toute écriture, même sans liste blanche côté appelant.
+        let live = fresh_dir("promote-esc");
+        let outside = fresh_dir("promote-victim");
+        std::fs::write(outside.join("victim.txt"), "value = 1").unwrap();
+        let backups = fresh_dir("promote-esc-bak");
+
+        let rel_escape = format!("../{}/victim.txt", outside.file_name().unwrap().to_string_lossy());
+        let err = promote_to_live(
+            &live,
+            &Patch::new(&rel_escape, "value = 1", "value = 2"),
+            &backups,
+        );
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        // la victime n'a pas été touchée
+        assert_eq!(
+            std::fs::read_to_string(outside.join("victim.txt")).unwrap(),
+            "value = 1"
+        );
+        // cible absolue : rejetée aussi
+        let abs = outside.join("victim.txt");
+        let err = promote_to_live(
+            &live,
+            &Patch::new(abs.to_string_lossy().as_ref(), "value = 1", "value = 3"),
+            &backups,
+        );
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("victim.txt")).unwrap(),
+            "value = 1"
+        );
+
+        let _ = std::fs::remove_dir_all(&live);
+        let _ = std::fs::remove_dir_all(&outside);
         let _ = std::fs::remove_dir_all(&backups);
     }
 

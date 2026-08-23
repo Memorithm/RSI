@@ -161,6 +161,10 @@ pub mod event_log {
         }
 
         /// Ajoute un événement. Retourne le hash du nouveau maillon (tête).
+        ///
+        /// Le hash couvre `(prev_hash ‖ seq ‖ event_type ‖ type_tag ‖ payload)`
+        /// : altérer le type d'événement ou permuter les variantes de payload
+        /// est donc détecté par [`EventLog::verify_integrity`].
         pub fn append(&mut self, event_type: EventType, payload: EventPayload) -> String {
             let seq = self.entries.len() as u64;
             let prev = self
@@ -168,11 +172,13 @@ pub mod event_log {
                 .last()
                 .map(|e| e.hash.clone())
                 .unwrap_or_else(|| GENESIS.to_string());
-            let payload_bytes = payload_bytes(&payload);
-            let mut buf = Vec::with_capacity(prev.len() + payload_bytes.len() + 16);
+            let pbytes = payload_bytes(&payload);
+            let mut buf = Vec::with_capacity(prev.len() + pbytes.len() + 24);
             buf.extend_from_slice(prev.as_bytes());
             buf.extend_from_slice(&seq.to_be_bytes());
-            buf.extend_from_slice(&payload_bytes);
+            buf.extend_from_slice(event_type.as_str().as_bytes());
+            buf.extend_from_slice(&type_tag(&payload));
+            buf.extend_from_slice(&pbytes);
             let hash = hex(&sha256(&buf));
             self.entries.push(EventEntry {
                 seq,
@@ -205,6 +211,8 @@ pub mod event_log {
                 let mut buf = Vec::new();
                 buf.extend_from_slice(prev.as_bytes());
                 buf.extend_from_slice(&e.seq.to_be_bytes());
+                buf.extend_from_slice(event_type_str(&e.event_type).as_bytes());
+                buf.extend_from_slice(&type_tag(&e.payload));
                 buf.extend_from_slice(&payload_bytes(&e.payload));
                 let expect = hex(&sha256(&buf));
                 if e.prev_hash != prev || e.hash != expect {
@@ -226,6 +234,34 @@ pub mod event_log {
 
         pub fn session_id(&self) -> &str {
             &self.session_id
+        }
+    }
+
+    /// Étiquette de type d'événement, incluse dans le hash du maillon.
+    fn event_type_str(t: &EventType) -> &'static str {
+        match t {
+            EventType::AgentAction => "agent_action",
+            EventType::AgentState => "agent_state",
+            EventType::Environment => "environment",
+            EventType::Custom => "custom",
+        }
+    }
+
+    impl EventType {
+        /// Identifiant stable du type (ingrédient du hash de chaîne).
+        pub fn as_str(&self) -> &'static str {
+            event_type_str(self)
+        }
+    }
+
+    /// Tag de variante du payload, inclus dans le hash : `Text("a")`,
+    /// `Bytes(b"a")` et `Custom{key:"a",value:""}` produisent des flux
+    /// distincts même à contenu identique.
+    fn type_tag(p: &EventPayload) -> [u8; 1] {
+        match p {
+            EventPayload::Custom { .. } => *b"c",
+            EventPayload::Text(_) => *b"t",
+            EventPayload::Bytes(_) => *b"b",
         }
     }
 
@@ -276,6 +312,36 @@ pub mod event_log {
             // altération d'une entrée → intégrité cassée
             log.entries[0].payload = EventPayload::Text("tampered".into());
             assert!(!log.verify_integrity().valid);
+        }
+
+        #[test]
+        fn event_type_tamper_detected() {
+            // altérer UNIQUEMENT le type d'événement doit casser la chaîne
+            let mut log = EventLog::new("s4");
+            log.append(EventType::AgentAction, EventPayload::Text("a".into()));
+            log.append(EventType::Environment, EventPayload::Text("b".into()));
+            assert!(log.verify_integrity().valid);
+            log.entries[0].event_type = EventType::Custom;
+            assert!(!log.verify_integrity().valid);
+        }
+
+        #[test]
+        fn payload_variants_never_collide() {
+            // Text("a") / Bytes(b"a") / Custom{a,""} : mêmes octets utiles,
+            // tags différents ⇒ hashes distincts (pas d'ambiguïté de schéma).
+            let hash_of = |p: &EventPayload| {
+                let mut log = EventLog::new("s5");
+                log.append(EventType::Custom, p.clone())
+            };
+            let h1 = hash_of(&EventPayload::Text("a".into()));
+            let h2 = hash_of(&EventPayload::Bytes(b"a".to_vec()));
+            let h3 = hash_of(&EventPayload::Custom {
+                key: "a".into(),
+                value: String::new(),
+            });
+            assert_ne!(h1, h2);
+            assert_ne!(h1, h3);
+            assert_ne!(h2, h3);
         }
 
         #[test]

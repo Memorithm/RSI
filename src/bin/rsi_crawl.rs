@@ -148,17 +148,18 @@ fn cmd_crawl(args: &[String]) {
         report.visited, report.errors, report.skipped
     );
 
-    // export JSONL des pages
+    // export JSONL des pages — sérialisation via `crate::json` (échappement
+    // complet : \n, \t, contrôles <0x20, unicode) ; l'ancienne esc() maison
+    // produisait du JSONL invalide dès qu'une page contenait un retour ligne.
     if let Some(out) = &o.out {
         let mut s = String::new();
         for p in &report.pages {
-            let esc = |x: &str| x.replace('\\', "\\\\").replace('"', "\\\"");
-            s.push_str(&format!(
-                "{{\"url\":\"{}\",\"title\":\"{}\",\"text\":\"{}\"}}\n",
-                esc(&p.url),
-                esc(&p.title),
-                esc(&p.text)
-            ));
+            let mut o = rsi::json::Json::obj();
+            o.set("url", rsi::json::Json::Str(p.url.clone()))
+                .set("title", rsi::json::Json::Str(p.title.clone()))
+                .set("text", rsi::json::Json::Str(p.text.clone()));
+            s.push_str(&o.to_string());
+            s.push('\n');
         }
         if let Err(e) = std::fs::write(out, s) {
             eprintln!("écriture {out:?} impossible : {e}");
@@ -226,14 +227,20 @@ fn cmd_search(args: &[String]) {
     let mut idx = TextIndex::new();
     let mut count = 0usize;
     for line in data.lines() {
-        // format JSONL simple {url,title,text}
-        if let Some(u) = field(line, "url") {
-            if let Some(t) = field(line, "title") {
-                if let Some(x) = field(line, "text") {
-                    idx.add(&u, &t, &x);
-                    count += 1;
-                }
-            }
+        if line.trim().is_empty() {
+            continue;
+        }
+        // format JSONL {url,title,text} — parsé par le vrai parseur JSON
+        // (l'extracteur naïf maison cassait sur `\"` échappé et sur l'ordre
+        // de déséchappement).
+        let Ok(j) = rsi::json::Json::parse(line) else {
+            eprintln!("ligne ignorée (JSON invalide) : {:.60}", line);
+            continue;
+        };
+        let get = |k: &str| j.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        if let (Some(u), Some(t), Some(x)) = (get("url"), get("title"), get("text")) {
+            idx.add(&u, &t, &x);
+            count += 1;
         }
     }
     println!("index : {count} documents");
@@ -245,15 +252,6 @@ fn cmd_search(args: &[String]) {
     if results.is_empty() {
         println!("  (aucun résultat)");
     }
-}
-
-/// Extrait un champ JSON brut (sans vraie dépendance JSON).
-fn field(line: &str, name: &str) -> Option<String> {
-    let pat = format!("\"{name}\":\"");
-    let start = line.find(&pat)? + pat.len();
-    let rest = &line[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].replace("\\\"", "\"").replace("\\\\", "\\"))
 }
 
 fn truncate(s: &str, n: usize) -> String {

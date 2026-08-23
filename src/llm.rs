@@ -462,6 +462,29 @@ fn build_request(
 
 // ════════════════ Connexion automatique (découverte de modèles) ══════════ //
 
+
+/// Plafond d'octets lus sur une réponse HTTP Ollama (anti-OOM : l'ancien
+/// `read_to_string` faisait confiance au serveur pour fermer la connexion).
+const MAX_HTTP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Lit une réponse TCP jusqu'à EOF ou au plafond [`MAX_HTTP_RESPONSE_BYTES`].
+fn read_response_bounded<S: std::io::Read>(stream: &mut S) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(64 * 1024);
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() >= MAX_HTTP_RESPONSE_BYTES {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// Liste les modèles installés sur un serveur Ollama (`GET /api/tags`).
 ///
 /// Brique de la **connexion automatique** : au lieu d'exiger `--model`,
@@ -490,10 +513,8 @@ pub fn ollama_installed_models(
     stream
         .write_all(req.as_bytes())
         .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
-    let mut raw = String::new();
-    stream
-        .read_to_string(&mut raw)
-        .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
+    let raw =
+        read_response_bounded(&mut stream).map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
     parse_tags_response(&raw)
 }
 
@@ -752,11 +773,7 @@ impl OllamaClient {
             .write_all(req.as_bytes())
             .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
 
-        let mut raw = String::new();
-        stream
-            .read_to_string(&mut raw)
-            .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
-        Ok(raw)
+        read_response_bounded(&mut stream).map_err(|e| LlmError::Backend(format!("lecture: {e}")))
     }
 
     /// Dump debug de la réponse HTTP brute si `RSI_DGM_DEBUG` est défini.

@@ -121,25 +121,32 @@ impl From<std::io::Error> for WebError {
 // --------------------------------------------------------------------- //
 
 /// Découpe une URL en `(schéma, hôte, port, chemin)`.
+///
+/// Le port par défaut dépend du schéma (80 en http, **443 en https**) —
+/// l'ancien défaut unique à 80 rendait toute URL https sans port explicite
+/// erronée dès qu'on la résolvait.
 pub fn parse_url(url: &str) -> Option<(String, String, u16, String)> {
-    let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://"))?;
+    let scheme = if url.starts_with("https://") {
+        "https"
+    } else if url.starts_with("http://") {
+        "http"
+    } else {
+        return None;
+    };
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    let rest = &url[scheme.len() + 3..];
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let (host, port) = match authority.find(':') {
+    let (host, port) = match authority.rfind(':') {
         Some(i) => {
             let p: u16 = authority[i + 1..].parse().ok()?;
             (&authority[..i], p)
         }
-        None => (authority, 80),
+        None => (authority, default_port),
     };
-    let scheme = if url.starts_with("https://") {
-        "https".to_string()
-    } else {
-        "http".to_string()
-    };
-    Some((scheme, host.to_string(), port, path.to_string()))
+    Some((scheme.to_string(), host.to_string(), port, path.to_string()))
 }
 
 /// Résout un lien relatif contre une base absolue.
@@ -156,7 +163,9 @@ pub fn resolve_url(base: &str, link: &str) -> Option<String> {
     }
     let (_, host, port, base_path) = parse_url(base)?;
     let scheme = if base.starts_with("https://") { "https" } else { "http" };
-    let port_str = if port == 80 { String::new() } else { format!(":{port}") };
+    // omet le port s'il s'agit du port par défaut du schéma
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    let port_str = if port == default_port { String::new() } else { format!(":{port}") };
     if link.starts_with('/') {
         return Some(format!("{scheme}://{host}{port_str}{link}"));
     }
@@ -344,8 +353,7 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
 
 /// Extrait le texte visible d'un HTML (enlève scripts/styles/balises, décode
 /// entités de base) et les liens `href`/`src` absolus résolus.
-pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
-    // titre
+pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {    // titre
     let mut title = String::new();
     if let Some(start) = raw.to_lowercase().find("<title>") {
         let after = &raw[start + 7..];
@@ -409,9 +417,11 @@ pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
                 } else if t.starts_with("/style") {
                     in_style = in_style.saturating_sub(1);
                 }
-                // extraction href/src
+                // extraction href/src — attributs repérés aux FRONTIÈRES DE
+                // MOT (l'ancien find("href") matchait aussi « data-href »)
                 for attr in ["href", "src"] {
-                    if let Some(pos) = tag.to_lowercase().find(attr) {
+                    let lower_tag = tag.to_lowercase();
+                    if let Some(pos) = find_attr(&lower_tag, attr) {
                         let after = &tag[pos + attr.len()..];
                         if let Some(eq) = after.find('=') {
                             let val = after[eq + 1..].trim();
@@ -440,7 +450,29 @@ pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
     (words.join(" "), links, title)
 }
 
-/// Décode les entités HTML de base.
+/// Décode les entités HTML de base (nommées, numériques décimales **et
+/// hexadécimales** — `&#x27;` était rendu littérallement avant).
+/// Décode les entités HTML (nommées, décimales et hexadécimales).
+fn find_attr(tag_lower: &str, attr: &str) -> Option<usize> {
+    // occurrence de `attr` délimitée par des frontières d'attribut :
+    // début de chaîne, espace, ou '/' — jamais un '-' (exclut data-href)
+    let bytes = tag_lower.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = tag_lower[from..].find(attr) {
+        let pos = from + rel;
+        let before_ok = pos == 0
+            || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r' | b'/');
+        if before_ok {
+            return Some(pos);
+        }
+        from = pos + 1;
+        if from >= tag_lower.len() {
+            break;
+        }
+    }
+    None
+}
+
 fn decode_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -452,7 +484,7 @@ fn decode_entities(s: &str) -> String {
                     let _ = chars.next();
                     break;
                 }
-                if n == '&' {
+                if n == '&' || ent.len() > 32 {
                     break;
                 }
                 ent.push(n);
@@ -467,13 +499,19 @@ fn decode_entities(s: &str) -> String {
                 "nbsp" => ' ',
                 _ => {
                     if let Some(num) = ent.strip_prefix('#') {
-                        if let Ok(code) = num.parse::<u32>() {
-                            char::from_u32(code).unwrap_or('?')
+                        let code = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+                            u32::from_str_radix(hex, 16).ok()
                         } else {
-                            '?'
-                        }
+                            num.parse::<u32>().ok()
+                        };
+                        char::from_u32(code.unwrap_or(u32::MAX)).unwrap_or('?')
                     } else {
-                        '&'
+                        // entité non reconnue : restituée telle quelle
+                        out.push('&');
+                        for ch in ent.chars() {
+                            out.push(ch);
+                        }
+                        continue;
                     }
                 }
             });
@@ -1277,6 +1315,43 @@ mod tests {
         );
         assert!(!r.allows("example.com", "/private/x"));
         assert!(r.allows("example.com", "/public"));
+    }
+
+    /// Régression m1 : le port par défaut dépend du schéma (https → 443).
+    #[test]
+    fn parse_url_default_port_by_scheme() {
+        let (_, _, p80, _) = parse_url("http://a.b/x").unwrap();
+        let (_, _, p443, _) = parse_url("https://a.b/x").unwrap();
+        assert_eq!(p80, 80);
+        assert_eq!(p443, 443);
+        // port explicite conservé
+        let (_, _, p, _) = parse_url("https://a.b:8443/x").unwrap();
+        assert_eq!(p, 8443);
+    }
+
+    /// Régression m2 : `data-href` ne doit pas être pris pour un `href`.
+    #[test]
+    fn parse_html_ignores_non_word_boundary_attrs() {
+        let (text, links, _) = parse_html(
+            "<a data-href=\"/decoy\" href=\"/real\">x</a>",
+            "http://base/",
+        );
+        assert_eq!(text, "x");
+        assert!(
+            links.iter().any(|l| l.ends_with("/real")) && links.len() == 1,
+            "links={links:?}"
+        );
+    }
+
+    /// Régression m3 : entités numériques hexadécimales décodées.
+    #[test]
+    fn decode_entities_handles_hex() {
+        let (text, _, _) = parse_html("<p>l&#x27;été &#65; &amp; &inconnue;</p>", "http://b/");
+        assert!(text.contains("l'été"), "text={text}");
+        assert!(text.contains('A'), "text={text}");
+        assert!(text.contains('&'), "text={text}");
+        // l'entité inconnue est restituée telle quelle
+        assert!(text.contains("&inconnue"), "text={text}");
     }
 
     #[test]

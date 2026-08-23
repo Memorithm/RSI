@@ -278,7 +278,7 @@ fn main() {
                         fitness.tests_passed,
                         fitness.tests_failed,
                         fitness.score,
-                        &variant_id[..8.min(variant_id.len())],
+                        &short_id(variant_id),
                     );
                 }
             }
@@ -318,7 +318,7 @@ fn main() {
                 .unwrap_or_else(|| "—".into()),
             r.best_variant
                 .as_deref()
-                .map(|v| &v[..8.min(v.len())])
+                .map(|v| short_id(v))
                 .unwrap_or("—"),
         ));
     }
@@ -404,6 +404,13 @@ fn first_positional(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Aperçu d'un id de variante : 8 **caractères** (slicing octets paniquait
+/// sur un id multi-octets — théorique mais gratuit à corriger).
+fn short_id(id: &str) -> &str {
+    let end = id.char_indices().nth(8).map(|(i, _)| i).unwrap_or(id.len());
+    &id[..end]
 }
 
 fn usage() {

@@ -160,6 +160,8 @@ fn main() {
         max_llm_calls: parse_or(&args, "--max-calls", 60),
         max_wall_clock: flag_value(&args, "--max-seconds")
             .and_then(|v| v.parse::<f64>().ok())
+            // garde : "nan"/négatif passeraient from_secs_f64 → panic
+            .filter(|s| s.is_finite() && *s > 0.0)
             .map(Duration::from_secs_f64),
         max_overfit_gap: flag_value(&args, "--max-overfit").and_then(|v| v.parse().ok()),
     };

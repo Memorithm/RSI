@@ -42,8 +42,9 @@
 
           # Le cœur est SANS dépendance externe ⇒ build 100 % hors-ligne,
           # compatible avec le bac à sable Nix scellé (zéro accès réseau).
-          # Cargo.lock est .gitignore (lock trivial : graphe de deps vide) ;
-          # `--offline` garantit qu'aucune requête registre n'est tentée.
+          # Cargo.lock est VERSIONNÉ et riche (deps optionnelles) : `--locked`
+          # fige la résolution ; `--offline` garantit qu'aucune requête
+          # registre n'est tentée.
           CARGO_NET_OFFLINE = "true";
 
           buildPhase = ''

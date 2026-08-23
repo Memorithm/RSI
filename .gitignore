@@ -21,6 +21,9 @@ rsi_full_trajectory.*
 /.rsi_scholar/
 /.rsi_simcal_report.md
 
+# état de session du CLI rsi-refine (défaut CWD)
+/.rsi-refine.json
+
 # datasets flywheel (axe 4) — artefacts d'exécution, jamais versionnés
 /*.jsonl
 

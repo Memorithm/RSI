@@ -526,12 +526,26 @@ impl Archive {
     ///
     /// La sélection est ouverte : chaque variante a une chance non nulle, mais
     /// les meilleures variantes et les lignées **sous-explorées** (peu d'enfants
-    /// jusqu'ici) sont favorisées — une pondération qualité-diversité légère.
-    /// Déterministe pour un état de RNG donné.
+    /// jusqu'ici) sont favorisées — une pondération qualité-diversité légère où
+    /// la *qualité* est continue : tout-au-vert = base 0.6 à 1.0 selon le score
+    /// relatif au meilleur de l'archive, sinon 0.1 (cassée). Déterministe pour
+    /// un état de RNG donné.
     pub fn select_parent(&self, rng: &mut Rng) -> Option<&Variant> {
         if self.variants.is_empty() {
             return None;
         }
+        // bornes de score parmi les variantes tout-au-vert (pour normaliser)
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for v in &self.variants {
+            if let Some(f) = &v.fitness {
+                if f.all_green() && f.score.is_finite() {
+                    lo = lo.min(f.score);
+                    hi = hi.max(f.score);
+                }
+            }
+        }
+        let span = (hi - lo).max(1e-9);
         let weights: Vec<f64> = self
             .variants
             .iter()
@@ -541,12 +555,17 @@ impl Archive {
                     .iter()
                     .filter(|c| c.parent.as_deref() == Some(v.id.as_str()))
                     .count() as f64;
-                let quality = v
-                    .fitness
-                    .as_ref()
-                    .map(|f| if f.compiles { 1.0 } else { 0.1 })
-                    .unwrap_or(0.1);
                 let novelty = 1.0 / (1.0 + children);
+                let quality = match &v.fitness {
+                    Some(f) if f.all_green() && f.score.is_finite() => {
+                        if hi <= lo + 1e-9 {
+                            1.0
+                        } else {
+                            0.6 + 0.4 * ((f.score - lo) / span).clamp(0.0, 1.0)
+                        }
+                    }
+                    _ => 0.1,
+                };
                 quality * novelty + f64::EPSILON
             })
             .collect();
@@ -701,6 +720,11 @@ pub trait Evaluator {
 
 /// Répertoires jamais utiles à copier dans un snapshot (gros et régénérés).
 const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules"];
+
+/// Budget total d'octets copiables dans un snapshot : au-delà, la création
+/// échoue proprement (un dépôt contenant de gros artefacts non exclus ne doit
+/// pas remplir le disque /tmp silencieusement).
+const COPY_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 
 static SNAP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -913,6 +937,11 @@ fn unique_tmp_dir() -> PathBuf {
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+    let mut budget = COPY_BUDGET_BYTES;
+    copy_tree_bounded(src, dst, &mut budget)
+}
+
+fn copy_tree_bounded(src: &Path, dst: &Path, budget: &mut u64) -> Result<()> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -924,8 +953,17 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
                 continue;
             }
             std::fs::create_dir_all(&to)?;
-            copy_tree(&entry.path(), &to)?;
+            copy_tree_bounded(&entry.path(), &to, budget)?;
         } else if ty.is_file() {
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if len > *budget {
+                return Err(DgmError::Io(format!(
+                    "snapshot trop volumineux : budget de {} Mio dépassé \
+                     (excluez les gros artefacts ou augmentez COPY_BUDGET_BYTES)",
+                    COPY_BUDGET_BYTES / (1024 * 1024)
+                )));
+            }
+            *budget -= len;
             std::fs::copy(entry.path(), &to)?;
         }
         // liens symboliques et autres types de nœuds intentionnellement ignorés.

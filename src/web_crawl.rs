@@ -524,52 +524,83 @@ fn decode_entities(s: &str) -> String {
 // robots.txt (politesse)
 // --------------------------------------------------------------------- //
 
-/// Politesse simple : respecte `robots.txt` (disallow), délai entre requêtes.
+/// Politesse : respecte `robots.txt` — règles `Disallow` **et** `Allow`
+/// (priorité au motif le plus long, convention Google ; égalité → autorise),
+/// `Crawl-delay` lu et appliqué. Best-effort (échec de chargement = tout
+/// autorisé, délai 0).
 #[derive(Debug, Clone, Default)]
 pub struct RobotsTxt {
     disallowed: HashMap<String, Vec<String>>,
+    allowed: HashMap<String, Vec<String>>,
+    crawl_delay_secs: HashMap<String, f64>,
 }
 
 impl RobotsTxt {
     /// Charge `robots.txt` pour un hôte (best-effort ; échec = tout autorisé).
     pub fn load(host: &str, timeout: Duration, max_bytes: usize) -> Self {
         let url = format!("http://{host}/robots.txt");
-        let mut disallowed = Vec::new();
+        let mut txt = RobotsTxt::default();
         if let Ok((status, body)) = http_get(&url, timeout, max_bytes) {
             if status == 200 {
-                let txt = String::from_utf8_lossy(&body);
+                let content = String::from_utf8_lossy(&body);
                 let mut user_agent = String::new();
-                for line in txt.lines() {
+                for line in content.lines() {
                     let line = line.trim();
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
                     if let Some(ua) = line.to_lowercase().strip_prefix("user-agent:") {
                         user_agent = ua.trim().to_string();
+                    } else if user_agent != "*" && !user_agent.contains("rsi") {
+                        // règle d'un autre groupe d'agents : ignorée
+                        continue;
                     } else if let Some(d) = line.to_lowercase().strip_prefix("disallow:") {
-                        // applique si le user-agent courant est `*` ou rsi
-                        if user_agent == "*" || user_agent.contains("rsi") {
-                            disallowed.push(d.trim().to_string());
+                        txt.disallowed
+                            .entry(host.to_string())
+                            .or_default()
+                            .push(d.trim().to_string());
+                    } else if let Some(a) = line.to_lowercase().strip_prefix("allow:") {
+                        txt.allowed
+                            .entry(host.to_string())
+                            .or_default()
+                            .push(a.trim().to_string());
+                    } else if let Some(cd) = line.to_lowercase().strip_prefix("crawl-delay:") {
+                        if let Ok(secs) = cd.trim().parse::<f64>() {
+                            txt.crawl_delay_secs.insert(host.to_string(), secs.max(0.0));
                         }
                     }
                 }
             }
         }
-        let mut m = HashMap::new();
-        m.insert(host.to_string(), disallowed);
-        RobotsTxt { disallowed: m }
+        txt
     }
 
-    /// true si le chemin est autorisé (aucune règle Disallow ne le bloque).
+    /// Délai minimum entre deux requêtes vers cet hôte demandé par robots.txt.
+    pub fn crawl_delay(&self, host: &str) -> Option<Duration> {
+        self.crawl_delay_secs
+            .get(host)
+            .map(|&s| Duration::from_secs_f64(s))
+    }
+
+    /// true si le chemin est autorisé : le motif **le plus long** parmi les
+    /// règles Disallow/Allow gagne (égalité → autorisé) ; `Disallow:` vide =
+    /// tout autorisé.
     fn allows(&self, host: &str, path: &str) -> bool {
-        let rules = self.disallowed.get(host).cloned().unwrap_or_default();
-        rules.iter().all(|r| {
-            if r.is_empty() {
-                true // Disallow: vide = tout autorisé
-            } else {
-                !path.starts_with(r.as_str())
-            }
-        })
+        let dis = self.disallowed.get(host).cloned().unwrap_or_default();
+        let allow = self.allowed.get(host).cloned().unwrap_or_default();
+        let best_dis = dis
+            .iter()
+            .filter(|r| !r.is_empty() && path.starts_with(r.as_str()))
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0);
+        let best_allow = allow
+            .iter()
+            .filter(|r| !r.is_empty() && path.starts_with(r.as_str()))
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0);
+        best_dis == 0 || best_allow >= best_dis
     }
 }
 
@@ -739,6 +770,11 @@ pub struct CrawlerOptions {
     pub respect_robots: bool,
     /// hôtes à ne jamais visiter (liste noire).
     pub deny_hosts: Vec<String>,
+    /// Anti-SSRF : bloque les hôtes qui résolvent vers une IP privée /
+    /// loopback / link-local (`127.0.0.0/8`, `10/8`, `172.16/12`,
+    /// `192.168/16`, `169.254/16`, `::1`, `fc00::/7`, `fe80::/10`).
+    /// **true par défaut** — opt-out explicite pour crawler du localhost.
+    pub allow_private_hosts: bool,
 }
 
 impl Default for CrawlerOptions {
@@ -748,7 +784,45 @@ impl Default for CrawlerOptions {
             user_agent: "RSI-Bot/0.10".to_string(),
             respect_robots: true,
             deny_hosts: Vec::new(),
+            allow_private_hosts: false,
         }
+    }
+}
+
+/// Vrai si `ip` est une adresse privée/non routable (anti-SSRF).
+pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr::{V4, V6};
+    match ip {
+        V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation() // 192.0.2/24, 198.51.100/24, 203.0.113/24
+                || o[0] == 10
+                || o[0] == 127
+                || (o[0] == 172 && (16..=31).contains(&o[1]))
+                || (o[0] == 192 && o[1] == 168)
+                || (o[0] == 169 && o[1] == 254)
+        }
+        // v4-mapped ::ffff:a.b.c.d → évalue la partie v4
+        V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                is_private_ip(V4(v4))
+            } else {
+                v6.is_loopback() || v6.is_unspecified() || v6.is_unique_local() || v6.is_unicast_link_local()
+            }
+        }
+    }
+}
+
+/// Résout `host:port` et renvoie true si UNE des adresses est privée.
+/// Erreur de résolution ⇒ false (le fetch échouera de lui-même).
+fn host_resolves_private(host: &str, port: u16) -> bool {
+    use std::net::ToSocketAddrs;
+    match (host, port).to_socket_addrs() {
+        Ok(mut addrs) => addrs.any(|sa| is_private_ip(sa.ip())),
+        Err(_) => false,
     }
 }
 
@@ -910,31 +984,49 @@ impl WebCrawler {
             return;
         }
 
-        // politesse : délai depuis la dernière requête vers cet hôte —
-        // indépendant du respect de robots.txt (deux préoccupations
-        // distinctes). Le créneau horaire est réservé sous verrou : le
-        // timestamp peut être dans le futur (slot pris par un autre worker).
-        if self.options.limits.politeness_delay > Duration::ZERO {
-            let wait = {
-                let mut last = self.last_fetch.lock().unwrap();
-                let now = Instant::now();
-                let earliest = last
-                    .get(&host)
-                    .map(|prev| *prev + self.options.limits.politeness_delay)
-                    .unwrap_or(now)
-                    .max(now);
-                last.insert(host.clone(), earliest);
-                earliest.saturating_duration_since(now)
-            };
-            if wait > Duration::ZERO {
-                std::thread::sleep(wait);
+        // anti-SSRF : hôtes privés/loopback bloqués sauf opt-out explicite
+        let port = parse_url(url).map(|(_, _, p, _)| p).unwrap_or(80);
+        if !self.options.allow_private_hosts && host_resolves_private(&host, port) {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        // robots.txt (mis en cache par hôte) — AVANT la politesse : le
+        // Crawl-delay demandé par l'hôte s'ajoute au délai configuré.
+        let robots = self.options.respect_robots.then(|| self.robots_for(&host));
+        if let Some(r) = &robots {
+            if !r.allows(&host, &path) {
+                self.skipped.fetch_add(1, Ordering::Relaxed);
+                return;
             }
         }
 
-        // robots.txt (mis en cache par hôte)
-        if self.options.respect_robots && !self.robots_for(&host).allows(&host, &path) {
-            self.skipped.fetch_add(1, Ordering::Relaxed);
-            return;
+        // politesse : délai depuis la dernière requête vers cet hôte —
+        // indépendant du respect de robots.txt (deux préoccupations
+        // distinctes), mais on prend le MAX avec le Crawl-delay demandé.
+        // Le créneau est réservé sous verrou : le timestamp peut être dans
+        // le futur (slot pris par un autre worker).
+        {
+            let robots_delay = robots.as_ref().and_then(|r| r.crawl_delay(&host));
+            let delay = robots_delay
+                .map(|d| d.max(self.options.limits.politeness_delay))
+                .unwrap_or(self.options.limits.politeness_delay);
+            if delay > Duration::ZERO {
+                let wait = {
+                    let mut last = self.last_fetch.lock().unwrap();
+                    let now = Instant::now();
+                    let earliest = last
+                        .get(&host)
+                        .map(|prev| *prev + delay)
+                        .unwrap_or(now)
+                        .max(now);
+                    last.insert(host.clone(), earliest);
+                    earliest.saturating_duration_since(now)
+                };
+                if wait > Duration::ZERO {
+                    std::thread::sleep(wait);
+                }
+            }
         }
 
         match self.fetch_and_index(url, &host, depth) {
@@ -1313,6 +1405,44 @@ mod tests {
         );
         assert!(!r.allows("example.com", "/private/x"));
         assert!(r.allows("example.com", "/public"));
+    }
+
+    /// A3 — Allow prioritaire au motif le plus long ; Crawl-delay lu.
+    #[test]
+    fn robots_allow_longest_match_and_crawl_delay() {
+        let mut r = RobotsTxt::default();
+        r.disallowed
+            .insert("h".into(), vec!["/private".into()]);
+        r.allowed
+            .entry("h".into())
+            .or_default()
+            .push("/private/public".into());
+        // motif Allow plus long → autorisé malgré le Disallow parent
+        assert!(r.allows("h", "/private/public/data"));
+        assert!(!r.allows("h", "/private/secret"));
+
+        // Disallow vide = tout autorisé
+        let mut e = RobotsTxt::default();
+        e.disallowed.insert("h".into(), vec![String::new()]);
+        assert!(e.allows("h", "/n'importe/quoi"));
+
+        // Crawl-delay
+        r.crawl_delay_secs.insert("h".into(), 1.5);
+        assert_eq!(r.crawl_delay("h"), Some(Duration::from_millis(1500)));
+        assert_eq!(r.crawl_delay("autre"), None);
+    }
+
+    /// A2 — détection d'IP privées / loopback (anti-SSRF).
+    #[test]
+    fn private_ip_detection() {
+        use std::net::IpAddr;
+        let p = |s: &str| is_private_ip(s.parse::<IpAddr>().unwrap());
+        assert!(p("127.0.0.1") && p("10.0.0.5") && p("172.16.0.1"));
+        assert!(p("192.168.1.1") && p("169.254.1.1") && p("::1"));
+        assert!(p("fd00::1") && p("fe80::1") && p("::ffff:192.168.0.9"));
+        assert!(!p("8.8.8.8") && !p("1.1.1.1") && !p("2606:4700::1111"));
+        // frontière : 172.32 est PUBLIC, 172.15 aussi
+        assert!(!p("172.32.0.1") && !p("172.15.255.255"));
     }
 
     /// Régression m1 : le port par défaut dépend du schéma (https → 443).

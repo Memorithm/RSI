@@ -47,6 +47,7 @@ struct CliOpts {
     timeout_secs: u64,
     delay_ms: u64,
     respect_robots: bool,
+    allow_private: bool,
     out: Option<PathBuf>,
     query: Option<String>,
     seeds: Vec<String>,
@@ -60,6 +61,7 @@ fn parse_opts(args: &[String]) -> CliOpts {
         timeout_secs: 10,
         delay_ms: 200,
         respect_robots: true,
+        allow_private: false,
         out: None,
         query: None,
         seeds: Vec::new(),
@@ -92,6 +94,11 @@ fn parse_opts(args: &[String]) -> CliOpts {
             }
             "--no-robots" => {
                 o.respect_robots = false;
+                i += 1;
+            }
+            "--allow-private" => {
+                // opt-out explicite de l'anti-SSRF (crawl localhost/réseau interne)
+                o.allow_private = true;
                 i += 1;
             }
             "--out" => {
@@ -133,6 +140,8 @@ fn cmd_crawl(args: &[String]) {
         user_agent: "RSI-Bot/0.10".into(),
         respect_robots: o.respect_robots,
         deny_hosts: Vec::new(),
+        // anti-SSRF par défaut ; --allow-private pour crawler localhost
+        allow_private_hosts: o.allow_private,
     };
     let crawler = WebCrawler::new(options);
     println!(

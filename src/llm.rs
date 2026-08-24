@@ -465,9 +465,11 @@ fn build_request(
 
 /// Plafond d'octets lus sur une réponse HTTP Ollama (anti-OOM : l'ancien
 /// `read_to_string` faisait confiance au serveur pour fermer la connexion).
+#[cfg(feature = "llm-ollama")]
 const MAX_HTTP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Lit une réponse TCP jusqu'à EOF ou au plafond [`MAX_HTTP_RESPONSE_BYTES`].
+#[cfg(feature = "llm-ollama")]
 fn read_response_bounded<S: std::io::Read>(stream: &mut S) -> std::io::Result<String> {
     let mut buf = Vec::with_capacity(64 * 1024);
     let mut chunk = [0u8; 8192];

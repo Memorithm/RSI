@@ -278,7 +278,7 @@ fn main() {
                         fitness.tests_passed,
                         fitness.tests_failed,
                         fitness.score,
-                        &short_id(variant_id),
+                        short_id(variant_id),
                     );
                 }
             }

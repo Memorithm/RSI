@@ -33,7 +33,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 
     // traitement par blocs de 64 octets
     let mut w = [0u32; 64];
-    for block in msg.chunks_exact(64) {
+    for block in msg.as_chunks::<64>().0 {
         for (i, wi) in w.iter_mut().enumerate().take(16) {
             let j = i * 4;
             *wi = u32::from_be_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);

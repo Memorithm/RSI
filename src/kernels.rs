@@ -95,10 +95,8 @@ pub fn transpose(src: &[f32], dst: &mut [f32], n: usize) {
 /// **tous** les éléments comptent — le reste de `chunks_exact` est traité,
 /// les tailles non multiples de 8 des tests l'exigent.
 pub fn sum(v: &[f64]) -> f64 {
-    const CHUNK_SIZE: usize = 8;
     let mut acc = 0.0f64;
-    let chunks = v.chunks_exact(CHUNK_SIZE);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = v.as_chunks::<8>();
     for chunk in chunks {
         acc += chunk.iter().sum::<f64>();
     }

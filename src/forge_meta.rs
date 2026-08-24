@@ -195,7 +195,7 @@ impl MetaSearch for ForgeMetaSearch {
         let cur_si = current.projected_si(state, substrate, surface);
         let mut center_strat = current.clone();
         let mut center_si = cur_si;
-        for s in self.seeds.drain(..).collect::<Vec<_>>() {
+        for s in std::mem::take(&mut self.seeds) {
             if s.software_edit.len() == n_software {
                 let si = s.projected_si(state, substrate, surface);
                 if si > center_si {

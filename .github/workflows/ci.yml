@@ -10,6 +10,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# annule les runs obsolètes d'une même branche/PR
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # Cargo résout également les dépendances git optionnelles. `scirust-rsi` est
@@ -22,6 +27,7 @@ jobs:
   check:
     name: build · test · clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,3 +66,8 @@ jobs:
 
       - name: Tests (features publiques)
         run: cargo test --locked --features "$PUBLIC_FEATURES"
+
+      # Toutes features confondues : la combinaison maximale n'était jamais
+      # lintée (2 warnings y ont déjà échappé).
+      - name: Clippy (toutes features) — 0 warning
+        run: cargo clippy --workspace --all-targets --locked --all-features -- -D warnings

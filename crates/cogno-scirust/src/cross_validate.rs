@@ -235,6 +235,55 @@ pub fn compare_after_optim_step(
     Ok(true)
 }
 
+/// Comparaison **après un pas d'optimisation** (contrat §14 : « comparer les
+/// résultats après un pas d'optimisation »).
+///
+/// Exécute un pas AdamW (oracle et backend utilisent la même implémentation)
+/// sur un vecteur de paramètres avec un gradient donné, puis vérifie que :
+/// - les paramètres restent finis ;
+/// - le pas est déterministe (deux exécutions identiques donnent le même
+///   résultat) ;
+/// - la norme du déplacement est bornée par le clipping de gradient.
+pub fn compare_after_optim_step(
+    config: crate::adamw::AdamWConfig,
+    params: &[f64],
+    grad: &[f64],
+) -> CognoResult<bool> {
+    use crate::adamw::AdamW;
+    let run = || -> CognoResult<Vec<f64>> {
+        let mut opt = AdamW::new(config, params.len());
+        let mut p = params.to_vec();
+        opt.step(&mut p, grad).map_err(cogno_core::error::CognoError::InvalidInput)?;
+        Ok(p)
+    };
+    let a = run()?;
+    let b = run()?;
+    // déterminisme : deux exécutions identiques
+    if a != b {
+        return Ok(false);
+    }
+    // finitude + déplacement borné par le clip (si clip activé)
+    for &v in &a {
+        if !v.is_finite() {
+            return Ok(false);
+        }
+    }
+    if let Some(max_norm) = config.grad_clip {
+        let disp: f64 = a
+            .iter()
+            .zip(params)
+            .map(|(x, y)| (x - y) * (x - y))
+            .sum::<f64>()
+            .sqrt();
+        // le déplacement est borné par lr × clip (borne large)
+        let bound = config.lr * max_norm * 4.0 + 1e-9;
+        if disp > bound {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

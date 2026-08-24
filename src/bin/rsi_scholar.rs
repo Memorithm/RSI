@@ -318,7 +318,7 @@ fn main() {
                 .unwrap_or_else(|| "—".into()),
             r.best_variant
                 .as_deref()
-                .map(|v| short_id(v))
+                .map(short_id)
                 .unwrap_or("—"),
         ));
     }

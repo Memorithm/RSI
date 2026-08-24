@@ -56,8 +56,6 @@ struct OctreeNode {
     points: Vec<OctoPoint>,
     /// enfants (présents si le nœud a été subdivisé)
     children: Option<Box<[Option<OctreeNode>; 8]>>,
-    /// nombre total de points dans ce sous-arbre (prunning)
-    count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +71,6 @@ impl OctreeNode {
             half,
             points: Vec::new(),
             children: None,
-            count: 0,
         }
     }
 

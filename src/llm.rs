@@ -469,7 +469,6 @@ const MAX_HTTP_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Lit une réponse TCP jusqu'à EOF ou au plafond [`MAX_HTTP_RESPONSE_BYTES`].
 fn read_response_bounded<S: std::io::Read>(stream: &mut S) -> std::io::Result<String> {
-    use std::io::Read;
     let mut buf = Vec::with_capacity(64 * 1024);
     let mut chunk = [0u8; 8192];
     loop {
@@ -496,7 +495,7 @@ pub fn ollama_installed_models(
     port: u16,
     timeout: std::time::Duration,
 ) -> Result<Vec<String>, LlmError> {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::net::{TcpStream, ToSocketAddrs};
 
     let addr = format!("{host}:{port}");
@@ -745,7 +744,7 @@ impl OllamaClient {
     /// Aller-retour HTTP `/api/generate` : rend la réponse HTTP **brute**
     /// (en-têtes + corps). Partagé par `propose` et `complete_raw`.
     fn http_roundtrip(&self, prompt: &str) -> Result<String, LlmError> {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::net::{TcpStream, ToSocketAddrs};
 
         let addr = format!("{}:{}", self.host, self.port);

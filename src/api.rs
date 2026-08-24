@@ -1348,8 +1348,7 @@ mod tests {
         let mk = |t: usize| {
             let mut a = RSIAgent::demo(1);
             a.t = t;
-            let r = a.step();
-            r
+            a.step()
         };
         clamp_history(&mut h, 5, (0..12).map(mk));
         assert_eq!(h.len(), 5);

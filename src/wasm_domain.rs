@@ -28,6 +28,81 @@ const MAX_WAT_BYTES: usize = 64 * 1024;
 /// Budget d'instructions par appel (fuel) — borne la terminaison.
 const FUEL_PER_CALL: u64 = 5_000_000;
 
+// ═══════════════ Évaluateur DGM bac à sable WASM (A6) ═══════════════ //
+
+/// Évaluateur DGM **bac à sable WASM** : l'alternative à [`crate::dgm::
+/// CargoEvaluator`] pour les workspaces dont la cible est un module
+/// WebAssembly textuel. Au lieu de lancer `cargo build+test` sur du code
+/// arbitraire (**réservé au code de confiance**), il lit le `.wat` candidat
+/// du snapshot et l'exécute dans `wasmi` :
+///
+/// - **zéro import host** ⇒ le code ne peut que calculer ;
+/// - **fuel borné** ⇒ terminaison garantie ;
+/// - **déterministe** ⇒ fitness reproductible.
+///
+/// Barrières alignées sur [`crate::dgm::Fitness`] : WAT non compilable =
+/// `Fitness::broken` ; chaque vecteur de test raté compte comme un test
+/// échoué ; le score combine fraction réussie et pénalité de taille.
+pub struct WasmEvaluator {
+    /// Fichier `.wat` candidat, relatif à la racine du workspace snapshot.
+    pub target: String,
+    /// Vecteurs de test `(entrée, sortie attendue)` sur `run(i64) -> i64`.
+    pub cases: Vec<(i64, i64)>,
+    /// Pénalité de score par 100 octets de WAT (favorise la concision).
+    pub size_penalty: f64,
+}
+
+impl WasmEvaluator {
+    /// Évaluateur pour une fonction cible échantillonnée sur `inputs`,
+    /// lisant `target` dans le snapshot.
+    pub fn for_target(
+        target: impl Into<String>,
+        f: impl Fn(i64) -> i64,
+        inputs: impl IntoIterator<Item = i64>,
+    ) -> Self {
+        WasmEvaluator {
+            target: target.into(),
+            cases: inputs.into_iter().map(|x| (x, f(x))).collect(),
+            size_penalty: 0.0005,
+        }
+    }
+}
+
+impl crate::dgm::Evaluator for WasmEvaluator {
+    fn evaluate(&self, workspace: &std::path::Path) -> crate::dgm::Result<crate::dgm::Fitness> {
+        let path = workspace.join(&self.target);
+        let wat = std::fs::read_to_string(&path).map_err(|e| {
+            crate::dgm::DgmError::Evaluation(format!("lecture {} : {e}", path.display()))
+        })?;
+
+        // Barrière de compilation : WAT invalide = plancher absolu.
+        let (engine, module) = match WasmSynthesis::compile(&wat) {
+            Ok(em) => em,
+            Err(msg) => return Ok(crate::dgm::Fitness::broken(msg)),
+        };
+
+        let mut passed = 0u32;
+        let mut failed = 0u32;
+        for (x, expected) in &self.cases {
+            match WasmSynthesis::run_once(&engine, &module, *x) {
+                Ok(got) if got == *expected => passed += 1,
+                _ => failed += 1,
+            }
+        }
+        let frac = passed as f64 / self.cases.len().max(1) as f64;
+        Ok(crate::dgm::Fitness {
+            compiles: true,
+            tests_passed: passed,
+            tests_failed: failed,
+            score: frac - self.size_penalty * (wat.len() as f64 / 100.0),
+            notes: format!(
+                "{passed}/{} cas passés en bac à sable wasmi",
+                passed + failed
+            ),
+        })
+    }
+}
+
 /// Tâche de synthèse de code WASM : trouver un module exportant
 /// `run: (i64) -> i64` qui calcule la fonction cible sur des entiers.
 pub struct WasmSynthesis {
@@ -245,5 +320,106 @@ mod tests {
         assert!(report.accepted > 0);
         assert_eq!(t.pass_fraction(&best), 1.0, "best ne calcule pas x²+1");
         assert_eq!(report.stop, LlmStop::Target);
+    }
+
+    // ─── A6 — WasmEvaluator branché dans la boucle DGM ───────────────────── //
+
+    use crate::dgm::{Archive, DgmConfig, DgmEngine, Patch, Proposal, Proposer};
+    use crate::rng::Rng;
+    use std::path::Path;
+
+    fn write_ws(tag: &str, wat: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rsi-wasmeval-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("candidate.wat"), wat).unwrap();
+        dir
+    }
+
+    /// Évaluateur WASM sur un workspace : module correct → tout-au-vert.
+    #[test]
+    fn wasm_evaluator_scores_workspace() {
+        let ws = write_ws("good", SQUARE_PLUS_ONE);
+        let ev = WasmEvaluator::for_target("candidate.wat", |x| x * x + 1, [-2, 0, 3]);
+        let fit = crate::dgm::Evaluator::evaluate(&ev, &ws).unwrap();
+        assert!(fit.compiles && fit.all_green());
+        assert!(fit.score > 0.95);
+
+        // WAT cassé → barrière de compilation
+        let bad = write_ws("bad", "(module (func");
+        let fit = crate::dgm::Evaluator::evaluate(&ev, &bad).unwrap();
+        assert!(!fit.compiles);
+
+        // boucle infinie → compile mais fuel épuisé ⇒ tests échoués
+        let looper = write_ws(
+            "loop",
+            "(module (func (export \"run\") (param i64) (result i64) (loop (br 0)) (i64.const 0)))",
+        );
+        let fit = crate::dgm::Evaluator::evaluate(&ev, &looper).unwrap();
+        assert!(fit.compiles && !fit.all_green() && fit.tests_failed == 3);
+
+        for d in [ws, bad, looper] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    /// Proposeur déterministe qui améliore `candidate.wat` pas à pas
+    /// (`run(x)=0` → `x²+1`).
+    struct WatImprover;
+    impl Proposer for WatImprover {
+        fn propose(
+            &self,
+            ctx: &crate::dgm::ImprovementContext<'_>,
+            _rng: &mut Rng,
+        ) -> crate::dgm::Result<Option<Proposal>> {
+            let cur = ctx.read("candidate.wat").unwrap_or_default();
+            if cur.contains("(i64.const 0)))") {
+                return Ok(Some(Proposal {
+                    patch: Patch::new(
+                        "candidate.wat",
+                        "(i64.const 0)",
+                        "(i64.add (i64.mul (local.get 0) (local.get 0)) (i64.const 1))",
+                    ),
+                    rationale: "compute x*x+1".into(),
+                }));
+            }
+            Ok(None)
+        }
+    }
+
+    /// Boucle DGM complète avec l'évaluateur WASM : le patch n'est archivé
+    /// que s'il prouve son amélioration EN BAC À SABLE (aucun cargo lancé).
+    #[test]
+    fn dgm_loop_uses_wasm_sandbox_evaluator() {
+        let seed_wat = "(module (func (export \"run\") (param i64) (result i64) (i64.const 0)))";
+        let ws = write_ws("dgm", seed_wat);
+        let baseline = crate::dgm::Fitness {
+            compiles: true,
+            tests_passed: 0,
+            tests_failed: 6,
+            score: 0.0,
+            notes: "baseline run(x)=0".into(),
+        };
+        let eval = WasmEvaluator::for_target("candidate.wat", |x| x * x + 1, [-3, -1, 0, 2, 4, 5]);
+        let mut eng = DgmEngine::new(
+            Archive::with_root(baseline),
+            WatImprover,
+            eval,
+            DgmConfig::new(&ws, "make run compute the target"),
+            7,
+        );
+        eng.run(3).unwrap();
+        let best = eng.best().unwrap().fitness.as_ref().unwrap();
+        assert!(best.all_green(), "le candidat corrigé doit être tout-au-vert");
+        assert_eq!(best.tests_failed, 0);
+        assert_eq!(eng.archive().len(), 2, "seed + 1 variante acceptée");
+        // l'arbre vivant n'a jamais été touché
+        assert!(
+            std::fs::read_to_string(ws.join("candidate.wat"))
+                .unwrap()
+                .contains("(i64.const 0)")
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+        let _ = Path::new(&ws).exists();
     }
 }

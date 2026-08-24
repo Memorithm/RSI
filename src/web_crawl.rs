@@ -121,25 +121,32 @@ impl From<std::io::Error> for WebError {
 // --------------------------------------------------------------------- //
 
 /// Découpe une URL en `(schéma, hôte, port, chemin)`.
+///
+/// Le port par défaut dépend du schéma (80 en http, **443 en https**) —
+/// l'ancien défaut unique à 80 rendait toute URL https sans port explicite
+/// erronée dès qu'on la résolvait.
 pub fn parse_url(url: &str) -> Option<(String, String, u16, String)> {
-    let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://"))?;
+    let scheme = if url.starts_with("https://") {
+        "https"
+    } else if url.starts_with("http://") {
+        "http"
+    } else {
+        return None;
+    };
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    let rest = &url[scheme.len() + 3..];
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let (host, port) = match authority.find(':') {
+    let (host, port) = match authority.rfind(':') {
         Some(i) => {
             let p: u16 = authority[i + 1..].parse().ok()?;
             (&authority[..i], p)
         }
-        None => (authority, 80),
+        None => (authority, default_port),
     };
-    let scheme = if url.starts_with("https://") {
-        "https".to_string()
-    } else {
-        "http".to_string()
-    };
-    Some((scheme, host.to_string(), port, path.to_string()))
+    Some((scheme.to_string(), host.to_string(), port, path.to_string()))
 }
 
 /// Résout un lien relatif contre une base absolue.
@@ -156,7 +163,9 @@ pub fn resolve_url(base: &str, link: &str) -> Option<String> {
     }
     let (_, host, port, base_path) = parse_url(base)?;
     let scheme = if base.starts_with("https://") { "https" } else { "http" };
-    let port_str = if port == 80 { String::new() } else { format!(":{port}") };
+    // omet le port s'il s'agit du port par défaut du schéma
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    let port_str = if port == default_port { String::new() } else { format!(":{port}") };
     if link.starts_with('/') {
         return Some(format!("{scheme}://{host}{port_str}{link}"));
     }
@@ -344,8 +353,7 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
 
 /// Extrait le texte visible d'un HTML (enlève scripts/styles/balises, décode
 /// entités de base) et les liens `href`/`src` absolus résolus.
-pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
-    // titre
+pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {    // titre
     let mut title = String::new();
     if let Some(start) = raw.to_lowercase().find("<title>") {
         let after = &raw[start + 7..];
@@ -407,9 +415,11 @@ pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
                 } else if t.starts_with("/style") {
                     in_style = in_style.saturating_sub(1);
                 }
-                // extraction href/src
+                // extraction href/src — attributs repérés aux FRONTIÈRES DE
+                // MOT (l'ancien find("href") matchait aussi « data-href »)
                 for attr in ["href", "src"] {
-                    if let Some(pos) = tag.to_lowercase().find(attr) {
+                    let lower_tag = tag.to_lowercase();
+                    if let Some(pos) = find_attr(&lower_tag, attr) {
                         let after = &tag[pos + attr.len()..];
                         if let Some(eq) = after.find('=') {
                             let val = after[eq + 1..].trim();
@@ -438,7 +448,29 @@ pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
     (words.join(" "), links, title)
 }
 
-/// Décode les entités HTML de base.
+/// Décode les entités HTML de base (nommées, numériques décimales **et
+/// hexadécimales** — `&#x27;` était rendu littérallement avant).
+/// Décode les entités HTML (nommées, décimales et hexadécimales).
+fn find_attr(tag_lower: &str, attr: &str) -> Option<usize> {
+    // occurrence de `attr` délimitée par des frontières d'attribut :
+    // début de chaîne, espace, ou '/' — jamais un '-' (exclut data-href)
+    let bytes = tag_lower.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = tag_lower[from..].find(attr) {
+        let pos = from + rel;
+        let before_ok = pos == 0
+            || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r' | b'/');
+        if before_ok {
+            return Some(pos);
+        }
+        from = pos + 1;
+        if from >= tag_lower.len() {
+            break;
+        }
+    }
+    None
+}
+
 fn decode_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -450,7 +482,7 @@ fn decode_entities(s: &str) -> String {
                     let _ = chars.next();
                     break;
                 }
-                if n == '&' {
+                if n == '&' || ent.len() > 32 {
                     break;
                 }
                 ent.push(n);
@@ -465,13 +497,19 @@ fn decode_entities(s: &str) -> String {
                 "nbsp" => ' ',
                 _ => {
                     if let Some(num) = ent.strip_prefix('#') {
-                        if let Ok(code) = num.parse::<u32>() {
-                            char::from_u32(code).unwrap_or('?')
+                        let code = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+                            u32::from_str_radix(hex, 16).ok()
                         } else {
-                            '?'
-                        }
+                            num.parse::<u32>().ok()
+                        };
+                        char::from_u32(code.unwrap_or(u32::MAX)).unwrap_or('?')
                     } else {
-                        '&'
+                        // entité non reconnue : restituée telle quelle
+                        out.push('&');
+                        for ch in ent.chars() {
+                            out.push(ch);
+                        }
+                        continue;
                     }
                 }
             });
@@ -486,52 +524,83 @@ fn decode_entities(s: &str) -> String {
 // robots.txt (politesse)
 // --------------------------------------------------------------------- //
 
-/// Politesse simple : respecte `robots.txt` (disallow), délai entre requêtes.
+/// Politesse : respecte `robots.txt` — règles `Disallow` **et** `Allow`
+/// (priorité au motif le plus long, convention Google ; égalité → autorise),
+/// `Crawl-delay` lu et appliqué. Best-effort (échec de chargement = tout
+/// autorisé, délai 0).
 #[derive(Debug, Clone, Default)]
 pub struct RobotsTxt {
     disallowed: HashMap<String, Vec<String>>,
+    allowed: HashMap<String, Vec<String>>,
+    crawl_delay_secs: HashMap<String, f64>,
 }
 
 impl RobotsTxt {
     /// Charge `robots.txt` pour un hôte (best-effort ; échec = tout autorisé).
     pub fn load(host: &str, timeout: Duration, max_bytes: usize) -> Self {
         let url = format!("http://{host}/robots.txt");
-        let mut disallowed = Vec::new();
+        let mut txt = RobotsTxt::default();
         if let Ok((status, body)) = http_get(&url, timeout, max_bytes) {
             if status == 200 {
-                let txt = String::from_utf8_lossy(&body);
+                let content = String::from_utf8_lossy(&body);
                 let mut user_agent = String::new();
-                for line in txt.lines() {
+                for line in content.lines() {
                     let line = line.trim();
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
                     if let Some(ua) = line.to_lowercase().strip_prefix("user-agent:") {
                         user_agent = ua.trim().to_string();
+                    } else if user_agent != "*" && !user_agent.contains("rsi") {
+                        // règle d'un autre groupe d'agents : ignorée
+                        continue;
                     } else if let Some(d) = line.to_lowercase().strip_prefix("disallow:") {
-                        // applique si le user-agent courant est `*` ou rsi
-                        if user_agent == "*" || user_agent.contains("rsi") {
-                            disallowed.push(d.trim().to_string());
+                        txt.disallowed
+                            .entry(host.to_string())
+                            .or_default()
+                            .push(d.trim().to_string());
+                    } else if let Some(a) = line.to_lowercase().strip_prefix("allow:") {
+                        txt.allowed
+                            .entry(host.to_string())
+                            .or_default()
+                            .push(a.trim().to_string());
+                    } else if let Some(cd) = line.to_lowercase().strip_prefix("crawl-delay:") {
+                        if let Ok(secs) = cd.trim().parse::<f64>() {
+                            txt.crawl_delay_secs.insert(host.to_string(), secs.max(0.0));
                         }
                     }
                 }
             }
         }
-        let mut m = HashMap::new();
-        m.insert(host.to_string(), disallowed);
-        RobotsTxt { disallowed: m }
+        txt
     }
 
-    /// true si le chemin est autorisé (aucune règle Disallow ne le bloque).
+    /// Délai minimum entre deux requêtes vers cet hôte demandé par robots.txt.
+    pub fn crawl_delay(&self, host: &str) -> Option<Duration> {
+        self.crawl_delay_secs
+            .get(host)
+            .map(|&s| Duration::from_secs_f64(s))
+    }
+
+    /// true si le chemin est autorisé : le motif **le plus long** parmi les
+    /// règles Disallow/Allow gagne (égalité → autorisé) ; `Disallow:` vide =
+    /// tout autorisé.
     fn allows(&self, host: &str, path: &str) -> bool {
-        let rules = self.disallowed.get(host).cloned().unwrap_or_default();
-        rules.iter().all(|r| {
-            if r.is_empty() {
-                true // Disallow: vide = tout autorisé
-            } else {
-                !path.starts_with(r.as_str())
-            }
-        })
+        let dis = self.disallowed.get(host).cloned().unwrap_or_default();
+        let allow = self.allowed.get(host).cloned().unwrap_or_default();
+        let best_dis = dis
+            .iter()
+            .filter(|r| !r.is_empty() && path.starts_with(r.as_str()))
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0);
+        let best_allow = allow
+            .iter()
+            .filter(|r| !r.is_empty() && path.starts_with(r.as_str()))
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0);
+        best_dis == 0 || best_allow >= best_dis
     }
 }
 
@@ -637,13 +706,15 @@ impl TextIndex {
     }
 
     /// Extrait un extrait de ~200 caractères autour du premier terme trouvé.
+    /// Slicing **sûr UTF-8** : les bornes sont alignées sur des frontières de
+    /// caractères (les termes indexés peuvent être multi-octets).
     fn snippet(&self, doc_id: usize, terms: &[String]) -> String {
         let text = self.docs[doc_id].terms.join(" ");
         let lower = text.to_lowercase();
         for t in terms {
             if let Some(pos) = lower.find(t) {
-                let start = pos.saturating_sub(80);
-                let end = (pos + 160).min(text.len());
+                let start = floor_char_boundary(&text, pos.saturating_sub(80));
+                let end = ceil_char_boundary(&text, (pos + 160).min(text.len()));
                 let mut s = if start > 0 {
                     format!("…{}", &text[start..end])
                 } else {
@@ -657,6 +728,24 @@ impl TextIndex {
         }
         text.chars().take(200).collect()
     }
+}
+
+/// Plus grande frontière de caractère ≤ `i` (slicing UTF-8 sûr).
+fn floor_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Plus petite frontière de caractère ≥ `i` (slicing UTF-8 sûr).
+fn ceil_char_boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 /// Résultat de recherche.
@@ -681,6 +770,11 @@ pub struct CrawlerOptions {
     pub respect_robots: bool,
     /// hôtes à ne jamais visiter (liste noire).
     pub deny_hosts: Vec<String>,
+    /// Anti-SSRF : bloque les hôtes qui résolvent vers une IP privée /
+    /// loopback / link-local (`127.0.0.0/8`, `10/8`, `172.16/12`,
+    /// `192.168/16`, `169.254/16`, `::1`, `fc00::/7`, `fe80::/10`).
+    /// **true par défaut** — opt-out explicite pour crawler du localhost.
+    pub allow_private_hosts: bool,
 }
 
 impl Default for CrawlerOptions {
@@ -690,7 +784,45 @@ impl Default for CrawlerOptions {
             user_agent: "RSI-Bot/0.10".to_string(),
             respect_robots: true,
             deny_hosts: Vec::new(),
+            allow_private_hosts: false,
         }
+    }
+}
+
+/// Vrai si `ip` est une adresse privée/non routable (anti-SSRF).
+pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr::{V4, V6};
+    match ip {
+        V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation() // 192.0.2/24, 198.51.100/24, 203.0.113/24
+                || o[0] == 10
+                || o[0] == 127
+                || (o[0] == 172 && (16..=31).contains(&o[1]))
+                || (o[0] == 192 && o[1] == 168)
+                || (o[0] == 169 && o[1] == 254)
+        }
+        // v4-mapped ::ffff:a.b.c.d → évalue la partie v4
+        V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                is_private_ip(V4(v4))
+            } else {
+                v6.is_loopback() || v6.is_unspecified() || v6.is_unique_local() || v6.is_unicast_link_local()
+            }
+        }
+    }
+}
+
+/// Résout `host:port` et renvoie true si UNE des adresses est privée.
+/// Erreur de résolution ⇒ false (le fetch échouera de lui-même).
+fn host_resolves_private(host: &str, port: u16) -> bool {
+    use std::net::ToSocketAddrs;
+    match (host, port).to_socket_addrs() {
+        Ok(mut addrs) => addrs.any(|sa| is_private_ip(sa.ip())),
+        Err(_) => false,
     }
 }
 
@@ -701,7 +833,17 @@ pub struct WebCrawler {
     visited: Arc<Mutex<HashSet<String>>>,
     queue: Arc<Mutex<VecDeque<(String, usize)>>>,
     stop: Arc<AtomicBool>,
-    counter: Arc<AtomicUsize>,
+    /// pages réellement indexées.
+    fetched: Arc<AtomicUsize>,
+    /// pages écartées (déjà vues, hors bornes, hôtes interdits, robots).
+    skipped: Arc<AtomicUsize>,
+    /// échecs de récupération (réseau, statut, taille…).
+    errors: Arc<AtomicUsize>,
+    /// fetches en cours — un worker ne s'arrête que file vide ET zéro en vol
+    /// (les autres workers peuvent encore pousser des liens).
+    in_flight: Arc<AtomicUsize>,
+    /// cache robots.txt par hôte (une requête par hôte et par session).
+    robots_cache: Arc<Mutex<HashMap<String, RobotsTxt>>>,
     last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
@@ -713,7 +855,11 @@ impl WebCrawler {
             visited: Arc::new(Mutex::new(HashSet::new())),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             stop: Arc::new(AtomicBool::new(false)),
-            counter: Arc::new(AtomicUsize::new(0)),
+            fetched: Arc::new(AtomicUsize::new(0)),
+            skipped: Arc::new(AtomicUsize::new(0)),
+            errors: Arc::new(AtomicUsize::new(0)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            robots_cache: Arc::new(Mutex::new(HashMap::new())),
             last_fetch: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -754,8 +900,27 @@ impl WebCrawler {
             v
         };
         report.pages = pages;
-        report.visited = self.counter.load(Ordering::Relaxed);
+        report.visited = self.fetched.load(Ordering::Relaxed);
+        report.skipped = self.skipped.load(Ordering::Relaxed);
+        report.errors = self.errors.load(Ordering::Relaxed);
         report
+    }
+
+    /// `robots.txt` d'un hôte, mis en cache pour toute la session de crawl
+    /// (une seule requête par hôte au lieu d'une par page). Le verrou n'est
+    /// jamais tenu pendant l'I/O réseau ; en cas de course, deux workers
+    /// peuvent charger le même robots.txt une fois — borne inchangée.
+    fn robots_for(&self, host: &str) -> RobotsTxt {
+        if let Some(r) = self.robots_cache.lock().unwrap().get(host) {
+            return r.clone();
+        }
+        let r = RobotsTxt::load(host, self.options.limits.timeout, self.options.limits.max_bytes);
+        self.robots_cache
+            .lock()
+            .unwrap()
+            .entry(host.to_string())
+            .or_insert(r)
+            .clone()
     }
 
     fn worker_loop(&self) {
@@ -768,77 +933,113 @@ impl WebCrawler {
                 q.pop_front()
             };
             let Some((url, depth)) = next else {
-                return; // file vide → ce worker s'arrête
+                // File vide : on ne s'arrête que si aucun autre worker n'est
+                // en train de fetcher (il pourrait encore pousser des liens).
+                if self.in_flight.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+                continue;
             };
 
-            // déjà visité ?
-            {
-                let mut v = self.visited.lock().unwrap();
-                if !v.insert(url.clone()) {
-                    continue;
-                }
-            }
-            let max_pages = self.options.limits.max_pages;
-            if max_pages > 0 && self.counter.load(Ordering::Relaxed) >= max_pages {
-                self.stop.store(true, Ordering::Relaxed);
+            self.in_flight.fetch_add(1, Ordering::SeqCst);
+            self.process(&url, depth);
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Traite une URL sortie de la file : filtres → fetch → index → liens.
+    fn process(&self, url: &str, depth: usize) {
+        // déjà visité ?
+        {
+            let mut v = self.visited.lock().unwrap();
+            if !v.insert(url.to_string()) {
+                self.skipped.fetch_add(1, Ordering::Relaxed);
                 return;
             }
-            // limite de profondeur
-            if self.options.limits.max_depth > 0 && depth > self.options.limits.max_depth {
-                continue;
-            }
-            // liste noire d'hôtes
-            if let Some((_, host, _, _)) = parse_url(&url) {
-                if self
-                    .options
-                    .deny_hosts
-                    .iter()
-                    .any(|d| host.ends_with(d.as_str()))
-                {
-                    continue;
-                }
-            }
+        }
+        let max_pages = self.options.limits.max_pages;
+        if max_pages > 0 && self.fetched.load(Ordering::Relaxed) >= max_pages {
+            self.stop.store(true, Ordering::Relaxed);
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // limite de profondeur
+        if self.options.limits.max_depth > 0 && depth > self.options.limits.max_depth {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // liste noire d'hôtes
+        let Some((_, host, _, path)) = parse_url(url) else {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if self
+            .options
+            .deny_hosts
+            .iter()
+            .any(|d| host.ends_with(d.as_str()))
+        {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
 
-            match self.fetch_and_index(&url, depth) {
-                Ok(()) => {
-                    self.counter.fetch_add(1, Ordering::Relaxed);
+        // anti-SSRF : hôtes privés/loopback bloqués sauf opt-out explicite
+        let port = parse_url(url).map(|(_, _, p, _)| p).unwrap_or(80);
+        if !self.options.allow_private_hosts && host_resolves_private(&host, port) {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        // robots.txt (mis en cache par hôte) — AVANT la politesse : le
+        // Crawl-delay demandé par l'hôte s'ajoute au délai configuré.
+        let robots = self.options.respect_robots.then(|| self.robots_for(&host));
+        if let Some(r) = &robots {
+            if !r.allows(&host, &path) {
+                self.skipped.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        }
+
+        // politesse : délai depuis la dernière requête vers cet hôte —
+        // indépendant du respect de robots.txt (deux préoccupations
+        // distinctes), mais on prend le MAX avec le Crawl-delay demandé.
+        // Le créneau est réservé sous verrou : le timestamp peut être dans
+        // le futur (slot pris par un autre worker).
+        {
+            let robots_delay = robots.as_ref().and_then(|r| r.crawl_delay(&host));
+            let delay = robots_delay
+                .map(|d| d.max(self.options.limits.politeness_delay))
+                .unwrap_or(self.options.limits.politeness_delay);
+            if delay > Duration::ZERO {
+                let wait = {
+                    let mut last = self.last_fetch.lock().unwrap();
+                    let now = Instant::now();
+                    let earliest = last
+                        .get(&host)
+                        .map(|prev| *prev + delay)
+                        .unwrap_or(now)
+                        .max(now);
+                    last.insert(host.clone(), earliest);
+                    earliest.saturating_duration_since(now)
+                };
+                if wait > Duration::ZERO {
+                    std::thread::sleep(wait);
                 }
-                Err(e) => {
-                    // erreur : comptée, pas fatale
-                    self.counter.fetch_add(1, Ordering::Relaxed);
-                    let _ = e;
-                }
+            }
+        }
+
+        match self.fetch_and_index(url, &host, depth) {
+            Ok(()) => {
+                self.fetched.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(_e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
-    fn fetch_and_index(&self, url: &str, depth: usize) -> Result<(), WebError> {
-        let (_scheme, host, _port, _path) = parse_url(url).ok_or_else(|| WebError::InvalidUrl(url.into()))?;
-
-        // politesse : délai depuis la dernière requête vers cet hôte
-        if self.options.respect_robots {
-            let mut last = self.last_fetch.lock().unwrap();
-            if let Some(prev) = last.get(&host) {
-                let elapsed = prev.elapsed();
-                if elapsed < self.options.limits.politeness_delay {
-                    std::thread::sleep(self.options.limits.politeness_delay - elapsed);
-                }
-            }
-            last.insert(host.clone(), Instant::now());
-        }
-
-        // robots.txt
-        if self.options.respect_robots {
-            let robots = RobotsTxt::load(
-                &host,
-                self.options.limits.timeout,
-                self.options.limits.max_bytes,
-            );
-            if !robots.allows(&host, &_path) {
-                return Err(WebError::Http("bloqué par robots.txt".into()));
-            }
-        }
-
+    fn fetch_and_index(&self, url: &str, _host: &str, depth: usize) -> Result<(), WebError> {
         let t0 = Instant::now();
         let (status, body) = http_get(url, self.options.limits.timeout, self.options.limits.max_bytes)?;
         if status != 200 {
@@ -1171,6 +1372,23 @@ mod tests {
         assert!(r[0].url.contains("rust"), "top={}", r[0].url);
     }
 
+    #[test]
+    fn snippet_never_panics_on_multibyte() {
+        // Texte accentué (multi-octets) : les bornes du snippet tombent en
+        // plein caractère — le slicing doit rester sûr (régression E3).
+        let mut idx = TextIndex::new();
+        idx.add(
+            "http://fr/é",
+            "Français",
+            &"café élève hôtel où à côté ".repeat(30),
+        );
+        for q in ["hôtel", "café", "élève"] {
+            let r = idx.search(q, 1);
+            assert_eq!(r.len(), 1, "q={q}");
+            assert!(r[0].snippet.contains(q) || !r[0].snippet.is_empty());
+        }
+    }
+
     #[cfg(not(feature = "web"))]
     #[test]
     fn unchunk_decodes() {
@@ -1187,6 +1405,81 @@ mod tests {
         );
         assert!(!r.allows("example.com", "/private/x"));
         assert!(r.allows("example.com", "/public"));
+    }
+
+    /// A3 — Allow prioritaire au motif le plus long ; Crawl-delay lu.
+    #[test]
+    fn robots_allow_longest_match_and_crawl_delay() {
+        let mut r = RobotsTxt::default();
+        r.disallowed
+            .insert("h".into(), vec!["/private".into()]);
+        r.allowed
+            .entry("h".into())
+            .or_default()
+            .push("/private/public".into());
+        // motif Allow plus long → autorisé malgré le Disallow parent
+        assert!(r.allows("h", "/private/public/data"));
+        assert!(!r.allows("h", "/private/secret"));
+
+        // Disallow vide = tout autorisé
+        let mut e = RobotsTxt::default();
+        e.disallowed.insert("h".into(), vec![String::new()]);
+        assert!(e.allows("h", "/n'importe/quoi"));
+
+        // Crawl-delay
+        r.crawl_delay_secs.insert("h".into(), 1.5);
+        assert_eq!(r.crawl_delay("h"), Some(Duration::from_millis(1500)));
+        assert_eq!(r.crawl_delay("autre"), None);
+    }
+
+    /// A2 — détection d'IP privées / loopback (anti-SSRF).
+    #[test]
+    fn private_ip_detection() {
+        use std::net::IpAddr;
+        let p = |s: &str| is_private_ip(s.parse::<IpAddr>().unwrap());
+        assert!(p("127.0.0.1") && p("10.0.0.5") && p("172.16.0.1"));
+        assert!(p("192.168.1.1") && p("169.254.1.1") && p("::1"));
+        assert!(p("fd00::1") && p("fe80::1") && p("::ffff:192.168.0.9"));
+        assert!(!p("8.8.8.8") && !p("1.1.1.1") && !p("2606:4700::1111"));
+        // frontière : 172.32 est PUBLIC, 172.15 aussi
+        assert!(!p("172.32.0.1") && !p("172.15.255.255"));
+    }
+
+    /// Régression m1 : le port par défaut dépend du schéma (https → 443).
+    #[test]
+    fn parse_url_default_port_by_scheme() {
+        let (_, _, p80, _) = parse_url("http://a.b/x").unwrap();
+        let (_, _, p443, _) = parse_url("https://a.b/x").unwrap();
+        assert_eq!(p80, 80);
+        assert_eq!(p443, 443);
+        // port explicite conservé
+        let (_, _, p, _) = parse_url("https://a.b:8443/x").unwrap();
+        assert_eq!(p, 8443);
+    }
+
+    /// Régression m2 : `data-href` ne doit pas être pris pour un `href`.
+    #[test]
+    fn parse_html_ignores_non_word_boundary_attrs() {
+        let (text, links, _) = parse_html(
+            "<a data-href=\"/decoy\" href=\"/real\">x</a>",
+            "http://base/",
+        );
+        assert_eq!(text, "x");
+        assert!(
+            links.iter().any(|l| l.ends_with("/real")) && links.len() == 1,
+            "links={links:?}"
+        );
+    }
+
+    /// Régression m3 : entités numériques hexadécimales décodées.
+    #[test]
+    fn decode_entities_handles_hex() {
+        let (text, _, _) = parse_html("<p>l&#x27;été &#65; &amp; &inconnue;</p>", "http://b/");
+        assert!(text.contains("l'été"), "text={text}");
+        assert!(text.contains('A'), "text={text}");
+        assert!(text.contains('&'), "text={text}");
+        // l'entité inconnue est restituée telle quelle
+        assert!(text.contains("&inconnue"), "text={text}");
     }
 
     #[test]

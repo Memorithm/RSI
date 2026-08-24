@@ -1,0 +1,41 @@
+name: fuzz-json
+
+# Fuzzing hebdomadaire du parseur JSON std-only (le mini-fuzz in-tree de
+# `src/json.rs` tourne déjà à chaque `cargo test` avec 10 000 entrées ; ce job
+# le pousse en volume, la nuit, pour attraper les cas rares).
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # chaque lundi 03:00 UTC
+  workflow_dispatch:
+
+# annule les runs obsolètes d'une même branche
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  json-fuzz:
+    name: parseur JSON — fuzz volumique
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Le mini-fuzz in-tree est paramétré par la variable d'environnement
+      # RSI_JSON_FUZZ_ITERS (défaut 10 000 en test) : on monte à 5 M itérations
+      # en nightly. Aucun crash/panic toléré — le job échoue sinon.
+      - name: Fuzz (5 M entrées hostiles)
+        env:
+          RSI_JSON_FUZZ_ITERS: "5000000"
+        run: cargo test --release --locked --lib json -- --nocapture

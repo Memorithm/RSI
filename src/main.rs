@@ -86,6 +86,11 @@ fn main() {
     let start_si = agent.si_global();
     let reports = agent.run(args.n_steps);
 
+    if reports.is_empty() {
+        println!("Aucun pas exécuté (n_steps = 0). SI_global initial : {start_si:.4}");
+        return;
+    }
+
     let stride = (args.n_steps / 24).max(1);
     for (i, r) in reports.iter().enumerate() {
         if i % stride != 0 && i + 1 != reports.len() {

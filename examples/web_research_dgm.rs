@@ -82,6 +82,7 @@ fn main() {
     };
     let web = WebCrawlerContext::new(
         CrawlerOptions {
+            allow_private_hosts: true,
             limits: limits.clone(),
             user_agent: "RSI-Bot/0.10".into(),
             respect_robots: false,
@@ -111,6 +112,7 @@ fn main() {
     // 4. vérification indépendante : le fournisseur retourne bien des extraits
     let web2 = WebCrawlerContext::new(
         CrawlerOptions {
+            allow_private_hosts: true,
             limits: limits.clone(),
             user_agent: "RSI-Bot/0.10".into(),
             respect_robots: false,

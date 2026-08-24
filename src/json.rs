@@ -458,19 +458,30 @@ mod tests {
         // Mini-fuzz *in-tree* (RNG déterministe, zéro dépendance) : `Json::parse`
         // ne doit JAMAIS paniquer, quelle que soit l'entrée. On échantillonne dans
         // un alphabet riche en caractères structurellement signifiants.
+        //
+        // Le volume est paramétrable par `RSI_JSON_FUZZ_ITERS` (défaut 10 000 ;
+        // le job nightly CI le monte à 5 M — cf. .github/workflows/fuzz-json.yml).
         use crate::rng::Rng;
         const ALPHABET: &[char] = &[
             '{', '}', '[', ']', ':', ',', '"', '\\', '/', 'u', 'n', 't', 'f', 'e', 'E', '+', '-',
             '.', '0', '1', '9', ' ', '\n', '\t', 'a', 'z', 'é', '😀', '\u{0}',
         ];
+        let iters: u64 = std::env::var("RSI_JSON_FUZZ_ITERS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000);
         let mut rng = Rng::new(0x5EED);
-        for _ in 0..10_000 {
+        for i in 0..iters {
             let len = rng.uniform_range(0.0, 48.0) as usize;
             let s: String = (0..len)
                 .map(|_| ALPHABET[(rng.uniform_range(0.0, ALPHABET.len() as f64)) as usize])
                 .collect();
             // le seul contrat : pas de panic. Ok ou Err, peu importe.
             let _ = Json::parse(&s);
+            const PROGRESS_EVERY: u64 = 1_000_000;
+            if i > 0 && i % PROGRESS_EVERY == 0 {
+                eprintln!("[fuzz-json] {i} entrées hostiles sans panic…");
+            }
         }
         // quelques motifs adversariaux ciblés
         let deep = "[".repeat(200);

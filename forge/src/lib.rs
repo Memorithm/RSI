@@ -122,8 +122,6 @@ pub struct Config {
     pub population: usize,
     pub survivors: usize,
     pub base_seed: u64,
-    /// Adresses de workers distants (non utilisé localement — `None`).
-    pub worker_addresses: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -133,7 +131,6 @@ impl Default for Config {
             population: 24,
             survivors: 8,
             base_seed: 42,
-            worker_addresses: None,
         }
     }
 }
@@ -164,22 +161,24 @@ impl<D: Domain> Engine<D> {
         Engine { domain, config }
     }
 
+    /// Clé scalaire de classement (minimisation) : somme **signée** des
+    /// objectifs. Un objectif très bon (négatif) améliore la clé au lieu de la
+    /// pénaliser ; une mesure malformée (NaN) vaut +∞ et ne peut jamais gagner.
+    fn scalar_key(score: &Score) -> f64 {
+        let s: f64 = score.objectives.iter().copied().sum();
+        if s.is_nan() {
+            f64::INFINITY
+        } else {
+            s
+        }
+    }
+
     fn sort_best(&self, pop: &mut [Individual<D::Cand>]) {
-        // minimisation : meilleur = plus petit objectif principal (somme
-        // pondérée des objectifs en multi-objectif, déterministe)
+        // minimisation : meilleur = plus petite somme signée des objectifs
+        // (agrégation déterministe en multi-objectif).
         pop.sort_by(|a, b| {
-            let ka = a
-                .score
-                .objectives
-                .iter()
-                .map(|x| x.abs())
-                .sum::<f64>();
-            let kb = b
-                .score
-                .objectives
-                .iter()
-                .map(|x| x.abs())
-                .sum::<f64>();
+            let ka = Self::scalar_key(&a.score);
+            let kb = Self::scalar_key(&b.score);
             ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
         });
     }
@@ -203,6 +202,10 @@ impl<D: Domain> Engine<D> {
     /// Exécute la campagne. Évaluation séquentielle (déterministe bit-à-bit) ;
     /// la parallélisation bit-exacte est réalisée au niveau RSI pour les
     /// évaluations pures.
+    ///
+    /// Robustesse : un seed initial refusé par `verify` est **écarté** (et non
+    /// fatal) — la campagne démarre avec ce qui est valide, tant qu'il reste
+    /// au moins un individu ; sinon `Err`.
     pub fn run(&self) -> Result<Report<D::Cand>> {
         let gens = self.config.generations.max(1);
         let pop_size = self.config.population.max(2);
@@ -214,13 +217,19 @@ impl<D: Domain> Engine<D> {
             .ok();
 
         let mut rng = StdRng::seed_from_u64(self.config.base_seed);
+        // écarte les seeds invalides au lieu d'abandonner toute la campagne
         let mut population: Vec<Individual<D::Cand>> = (0..pop_size)
-            .map(|i| {
+            .filter_map(|i| {
                 let cand = self.domain.seed(&mut rng);
                 let seed = self.config.base_seed ^ (i as u64).wrapping_mul(0x9E37_79B9);
-                self.evaluate(&cand, seed)
+                self.evaluate(&cand, seed).ok()
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
+        if population.is_empty() {
+            return Err(ForgeError::Config(
+                "aucun seed initial valide : campagne impossible".to_string(),
+            ));
+        }
 
         for gen in 0..gens {
             self.sort_best(&mut population);
@@ -305,7 +314,6 @@ mod tests {
             population: 20,
             survivors: 5,
             base_seed: 7,
-            worker_addresses: None,
         };
         let rep = Engine::new(QuadDomain, cfg).run().unwrap();
         let best = rep.best.unwrap();
@@ -321,10 +329,32 @@ mod tests {
             population: 12,
             survivors: 4,
             base_seed: 99,
-            worker_addresses: None,
         };
         let a = Engine::new(QuadDomain, cfg()).run().unwrap();
         let b = Engine::new(QuadDomain, cfg()).run().unwrap();
         assert_eq!(a.best.unwrap().cand.repr(), b.best.unwrap().cand.repr());
+    }
+
+    /// Régression E4 : un objectif très bon (négatif) doit améliorer le
+    /// classement, pas le pénaliser (l'ancienne clé sommait les |objectifs|).
+    #[test]
+    fn signed_objective_sorting() {
+        let good = Individual {
+            cand: Quad { x: 0.0 },
+            score: Score::valid(vec![-10.0, 5.0]), // somme −5
+        };
+        let mediocre = Individual {
+            cand: Quad { x: 1.0 },
+            score: Score::valid(vec![1.0, 1.0]), // somme +2
+        };
+        let engine = Engine::new(QuadDomain, Config::default());
+        let mut pop = vec![mediocre, good.clone()];
+        engine.sort_best(&mut pop);
+        assert_eq!(pop[0].score.objectives, vec![-10.0, 5.0]);
+        // NaN ne gagne jamais
+        let nan = Individual { cand: Quad { x: 2.0 }, score: Score::valid(vec![f64::NAN]) };
+        let mut pop = vec![nan, good];
+        engine.sort_best(&mut pop);
+        assert!(pop[0].score.objectives[0].is_finite());
     }
 }

@@ -16,6 +16,7 @@ permissions:
 jobs:
   exact-lineage-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       RSI_QUALIFICATION_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       RSI_LOCKED: 83009f1be2ddbdb42da840a3a3df6504aef57b5a

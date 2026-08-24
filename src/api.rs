@@ -50,6 +50,11 @@ const MAX_DIM: usize = 1_024;
 const MAX_SUBSTRATE: usize = 256;
 /// Nombre maximal de pas par appel `run`.
 const MAX_STEPS: usize = 100_000;
+/// Plafond du cumul d'historique par session (fenêtre glissante) : MAX_STEPS
+/// borne un appel, pas le cumul — sans ce plafond, un client local répétant
+/// `run` fait croître la RAM sans borne. Les exports CSV/JSON portent sur la
+/// fenêtre conservée (les plus récents).
+const MAX_HISTORY: usize = 100_000;
 /// Bornes des hyperparamètres d'optimiseur.
 const MAX_CANDIDATES: usize = 10_000;
 const MAX_POPULATION: usize = 4_096;
@@ -65,6 +70,21 @@ fn bounded(cfg: &Json, key: &str, default: usize, lo: usize, hi: usize) -> usize
         .and_then(|v| v.as_usize())
         .unwrap_or(default)
         .clamp(lo, hi)
+}
+
+/// Étend `history` avec `reports` puis borne la taille à `max` (fenêtre
+/// glissante : les plus anciens sont retirés). Fonction libre pour être
+/// testée à petite échelle.
+fn clamp_history(
+    history: &mut Vec<StepReport>,
+    max: usize,
+    reports: impl IntoIterator<Item = StepReport>,
+) {
+    history.extend(reports);
+    if history.len() > max {
+        let overflow = history.len() - max;
+        history.drain(0..overflow);
+    }
 }
 
 struct Session {
@@ -558,11 +578,17 @@ impl RsiApi {
             .ok_or_else(|| format!("session inconnue : '{id}' (appelez d'abord 'create')"))
     }
 
+    /// Ajoute des rapports à l'historique d'une session, en respectant le
+    /// plafond [`MAX_HISTORY`] (fenêtre glissante : on garde les plus récents).
+    fn push_history(s: &mut Session, reports: impl IntoIterator<Item = StepReport>) {
+        clamp_history(&mut s.history, MAX_HISTORY, reports);
+    }
+
     fn cmd_step(&mut self, params: &Json) -> ApiResult {
         let id = Self::session_id(params);
         let s = self.session_mut(&id)?;
         let report = s.agent.step();
-        s.history.push(report.clone());
+        Self::push_history(s, std::iter::once(report.clone()));
         Ok(step_report_json(&report))
     }
 
@@ -574,7 +600,7 @@ impl RsiApi {
         let si_start = s.agent.si_global();
         let reports = s.agent.run(steps);
         let last = reports.last().cloned();
-        s.history.extend(reports);
+        Self::push_history(s, reports);
 
         let mut out = Json::obj();
         out.set("ok", Json::Bool(true))
@@ -620,7 +646,7 @@ impl RsiApi {
         let si_start = s.agent.si_global();
         let outcome = s.agent.run_until(&lcfg);
         let last = outcome.reports.last().cloned();
-        s.history.extend(outcome.reports);
+        Self::push_history(s, outcome.reports);
 
         let reason = match outcome.reason {
             StopReason::MaxSteps => "max_steps",
@@ -1314,6 +1340,21 @@ de stabilité (‖ΔS‖<λ et non-régression de SI_global)."
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_cap_keeps_most_recent() {
+        // fenêtre glissante : au-delà du plafond, les PLUS RÉCENTS sont gardés
+        let mut h: Vec<StepReport> = Vec::new();
+        let mk = |t: usize| {
+            let mut a = RSIAgent::demo(1);
+            a.t = t;
+            a.step()
+        };
+        clamp_history(&mut h, 5, (0..12).map(mk));
+        assert_eq!(h.len(), 5);
+        assert_eq!(h.first().unwrap().t, 8, "les plus anciens doivent partir");
+        assert_eq!(h.last().unwrap().t, 12);
+    }
 
     #[test]
     fn create_run_export_cycle() {

@@ -526,12 +526,26 @@ impl Archive {
     ///
     /// La sélection est ouverte : chaque variante a une chance non nulle, mais
     /// les meilleures variantes et les lignées **sous-explorées** (peu d'enfants
-    /// jusqu'ici) sont favorisées — une pondération qualité-diversité légère.
-    /// Déterministe pour un état de RNG donné.
+    /// jusqu'ici) sont favorisées — une pondération qualité-diversité légère où
+    /// la *qualité* est continue : tout-au-vert = base 0.6 à 1.0 selon le score
+    /// relatif au meilleur de l'archive, sinon 0.1 (cassée). Déterministe pour
+    /// un état de RNG donné.
     pub fn select_parent(&self, rng: &mut Rng) -> Option<&Variant> {
         if self.variants.is_empty() {
             return None;
         }
+        // bornes de score parmi les variantes tout-au-vert (pour normaliser)
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for v in &self.variants {
+            if let Some(f) = &v.fitness {
+                if f.all_green() && f.score.is_finite() {
+                    lo = lo.min(f.score);
+                    hi = hi.max(f.score);
+                }
+            }
+        }
+        let span = (hi - lo).max(1e-9);
         let weights: Vec<f64> = self
             .variants
             .iter()
@@ -541,12 +555,17 @@ impl Archive {
                     .iter()
                     .filter(|c| c.parent.as_deref() == Some(v.id.as_str()))
                     .count() as f64;
-                let quality = v
-                    .fitness
-                    .as_ref()
-                    .map(|f| if f.compiles { 1.0 } else { 0.1 })
-                    .unwrap_or(0.1);
                 let novelty = 1.0 / (1.0 + children);
+                let quality = match &v.fitness {
+                    Some(f) if f.all_green() && f.score.is_finite() => {
+                        if hi <= lo + 1e-9 {
+                            1.0
+                        } else {
+                            0.6 + 0.4 * ((f.score - lo) / span).clamp(0.0, 1.0)
+                        }
+                    }
+                    _ => 0.1,
+                };
                 quality * novelty + f64::EPSILON
             })
             .collect();
@@ -702,6 +721,11 @@ pub trait Evaluator {
 /// Répertoires jamais utiles à copier dans un snapshot (gros et régénérés).
 const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules"];
 
+/// Budget total d'octets copiables dans un snapshot : au-delà, la création
+/// échoue proprement (un dépôt contenant de gros artefacts non exclus ne doit
+/// pas remplir le disque /tmp silencieusement).
+const COPY_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
+
 static SNAP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Copie jetable d'une racine de workspace, avec (optionnellement) un patch
@@ -736,6 +760,10 @@ impl WorkspaceSnapshot {
         if patch.is_noop() {
             return Err(DgmError::Apply("patch is a no-op".to_string()));
         }
+        // Empêche l'évasion hors de la racine (`..`, chemins absolus…).
+        if target_escapes_root(&patch.target) {
+            return Err(DgmError::PathNotAllowed(patch.target.clone()));
+        }
         let target = self.resolve(&patch.target);
         // Empêche l'évasion hors de la racine (`..`, chemins absolus…).
         let canon_root = self
@@ -758,14 +786,38 @@ impl Drop for WorkspaceSnapshot {
     }
 }
 
+/// Cible interdite : absolue ou contenant une remontée `..`. Vérification de
+/// composants — nécessaire en complément de la canonicalisation, car
+/// `canonicalize` échoue sur un fichier inexistant et laisse alors un chemin
+/// brut `a/../b` passer un simple `starts_with`.
+fn target_escapes_root(target: &str) -> bool {
+    let p = Path::new(target);
+    p.is_absolute()
+        || p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// Applique un patch accepté à l'arbre **vivant**, avec sauvegarde, et rend l'id
 /// de sauvegarde. C'est la **seule** fonction qui mute le vrai code source ; les
 /// appelants la gardent par une évaluation passante et tout-au-vert.
+///
+/// Défense en profondeur : même garde de chemin que [`WorkspaceSnapshot::apply`]
+/// (composants `..`/absolus interdits, puis canonicalisation + ancrage sous
+/// `live_root`) — une cible `../x`, absolue ou symbolique ne peut pas sortir de
+/// la racine, même si l'appelant omet sa propre liste blanche.
 pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Result<String> {
     if patch.is_noop() {
         return Err(DgmError::Apply("patch is a no-op".to_string()));
     }
+    if target_escapes_root(&patch.target) {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
+    }
     let target = live_root.join(&patch.target);
+    let canon_root = live_root.canonicalize().unwrap_or_else(|_| live_root.to_path_buf());
+    let canon_target = target.canonicalize().unwrap_or_else(|_| target.clone());
+    if !canon_target.starts_with(&canon_root) {
+        return Err(DgmError::PathNotAllowed(patch.target.clone()));
+    }
     patch_file_with_backup(&target, &patch.find, &patch.replace, backup_dir)
 }
 
@@ -885,6 +937,11 @@ fn unique_tmp_dir() -> PathBuf {
 }
 
 fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+    let mut budget = COPY_BUDGET_BYTES;
+    copy_tree_bounded(src, dst, &mut budget)
+}
+
+fn copy_tree_bounded(src: &Path, dst: &Path, budget: &mut u64) -> Result<()> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -896,8 +953,17 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
                 continue;
             }
             std::fs::create_dir_all(&to)?;
-            copy_tree(&entry.path(), &to)?;
+            copy_tree_bounded(&entry.path(), &to, budget)?;
         } else if ty.is_file() {
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if len > *budget {
+                return Err(DgmError::Io(format!(
+                    "snapshot trop volumineux : budget de {} Mio dépassé \
+                     (excluez les gros artefacts ou augmentez COPY_BUDGET_BYTES)",
+                    COPY_BUDGET_BYTES / (1024 * 1024)
+                )));
+            }
+            *budget -= len;
             std::fs::copy(entry.path(), &to)?;
         }
         // liens symboliques et autres types de nœuds intentionnellement ignorés.
@@ -2038,6 +2104,21 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_rejects_path_escape() {
+        // Même défense que promote_to_live : `..` et chemins absolus rejetés
+        // sur les composants, y compris quand la cible n'existe pas.
+        let live = fresh_dir("esc-snap");
+        write(&live, "a.rs", "value = 1");
+        let snap = WorkspaceSnapshot::create(&live).unwrap();
+        let err = snap.apply(&Patch::new("../escaped.rs", "value = 1", "value = 2"));
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        let err = snap.apply(&Patch::new("/etc/passwd", "root", "x"));
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        assert!(!snap.resolve("escaped.rs").exists());
+        let _ = std::fs::remove_dir_all(&live);
+    }
+
+    #[test]
     fn ambiguous_patch_is_rejected() {
         // Un motif présent deux fois ⇒ rejet (sûreté : pas d'édition ambiguë).
         let live = fresh_dir("ambig");
@@ -2104,6 +2185,45 @@ mod tests {
         let after = std::fs::read_to_string(live.join("a.rs")).unwrap();
         assert_eq!(after, "value = 2");
         let _ = std::fs::remove_dir_all(&live);
+        let _ = std::fs::remove_dir_all(&backups);
+    }
+
+    #[test]
+    fn promote_rejects_path_escape() {
+        // Défense en profondeur : une cible hors racine est rejetée AVANT
+        // toute écriture, même sans liste blanche côté appelant.
+        let live = fresh_dir("promote-esc");
+        let outside = fresh_dir("promote-victim");
+        std::fs::write(outside.join("victim.txt"), "value = 1").unwrap();
+        let backups = fresh_dir("promote-esc-bak");
+
+        let rel_escape = format!("../{}/victim.txt", outside.file_name().unwrap().to_string_lossy());
+        let err = promote_to_live(
+            &live,
+            &Patch::new(&rel_escape, "value = 1", "value = 2"),
+            &backups,
+        );
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        // la victime n'a pas été touchée
+        assert_eq!(
+            std::fs::read_to_string(outside.join("victim.txt")).unwrap(),
+            "value = 1"
+        );
+        // cible absolue : rejetée aussi
+        let abs = outside.join("victim.txt");
+        let err = promote_to_live(
+            &live,
+            &Patch::new(abs.to_string_lossy().as_ref(), "value = 1", "value = 3"),
+            &backups,
+        );
+        assert!(matches!(err, Err(DgmError::PathNotAllowed(_))));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("victim.txt")).unwrap(),
+            "value = 1"
+        );
+
+        let _ = std::fs::remove_dir_all(&live);
+        let _ = std::fs::remove_dir_all(&outside);
         let _ = std::fs::remove_dir_all(&backups);
     }
 

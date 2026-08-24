@@ -10,12 +10,16 @@
 #
 #   docker build -t rsi:latest .
 #   docker run --rm -i rsi:latest        # rsi-mcp en stdio (serveur MCP)
-#   docker run --rm rsi:latest --help    # idem, options du serveur
+#                                        # (rsi-mcp ne parse aucun argument :
+#                                        #  il lit stdin ; sans `-i`, EOF immédiat)
 #   docker run --rm --entrypoint /usr/local/bin/rsi-demo rsi:latest
 
 # ──────────────────────────────────────────────────────────────────────────
 # Étage 1 — compilation statique musl.
 # rust:alpine cible nativement x86_64-unknown-linux-musl ⇒ binaires statiques.
+# NOTE reproductibilité : le tag `1.94-alpine` est flottant — pour un build
+# bit-reproductible dans le temps, épingler par digest
+# (`FROM rust@sha256:<digest> AS builder`).
 # ──────────────────────────────────────────────────────────────────────────
 FROM rust:1.94-alpine AS builder
 
@@ -53,6 +57,10 @@ COPY --from=builder ${BIN_DIR}/rsi-demo      /usr/local/bin/rsi-demo
 COPY --from=builder ${BIN_DIR}/rsi-refine    /usr/local/bin/rsi-refine
 COPY --from=builder ${BIN_DIR}/rsi-ablate    /usr/local/bin/rsi-ablate
 COPY --from=builder ${BIN_DIR}/rsi-loopbench /usr/local/bin/rsi-loopbench
+
+# Non-root (UID numérique : scratch n'a pas /etc/passwd). Le serveur parse de
+# l'entrée non fiable sur stdin ⇒ ne pas tourner en root.
+USER 65534:65534
 
 # Le serveur MCP parle en stdio ⇒ entrypoint par défaut.
 ENTRYPOINT ["/usr/local/bin/rsi-mcp"]

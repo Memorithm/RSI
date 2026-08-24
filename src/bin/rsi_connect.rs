@@ -147,12 +147,30 @@ fn descriptor(name: &str, bin: &str) -> Json {
 /// Fusionne le descripteur RSI dans un fichier de config existant (ou crée).
 ///
 /// Préserve tout `mcpServers` préexistant et n'écrase que la clé `name`.
+///
+/// Sûretés :
+/// - une config existante **non parsable** n'est jamais écrasée : sauvegarde
+///   `.bak` puis refus (l'utilisateur doit corriger ou déplacer le fichier) —
+///   l'ancien comportement remplaçait silencieusement le contenu ;
+/// - écriture **atomique** (tmpfile dans le même répertoire + rename) : une
+///   coupure ne laisse jamais une config tronquée.
 fn register_into(path: &Path, name: &str, bin: &str) -> Result<bool, String> {
-    // charge l'existant ou démarre d'un objet vide
+    // charge l'existant ; non-JSON ⇒ sauvegarde .bak et refus d'écraser
     let mut root = match std::fs::read_to_string(path) {
-        Ok(content) if !content.trim().is_empty() => {
-            Json::parse(&content).unwrap_or_else(|_| Json::obj())
-        }
+        Ok(content) if !content.trim().is_empty() => match Json::parse(&content) {
+            Ok(j) => j,
+            Err(e) => {
+                let bak = path.with_extension("json.bak");
+                std::fs::copy(path, &bak)
+                    .map_err(|e| format!("sauvegarde {} : {e}", bak.display()))?;
+                return Err(format!(
+                    "{} n'est pas du JSON valide ({e}) ; original copié en {} — \
+                     corrigez ou déplacez le fichier puis relancez",
+                    path.display(),
+                    bak.display()
+                ));
+            }
+        },
         _ => Json::obj(),
     };
 
@@ -164,6 +182,15 @@ fn register_into(path: &Path, name: &str, bin: &str) -> Result<bool, String> {
     };
     servers_map.insert(name.to_string(), server_entry(bin));
 
+    if !matches!(root, Json::Obj(_)) && root != Json::obj() {
+        // racine non-objet déjà couverte ci-dessus si non parsable ; ici une
+        // racine JSON valide mais non objet (tableau, scalaire…) : on refuse
+        // plutôt que de perdre le contenu.
+        return Err(format!(
+            "{} a une racine JSON non-objet ; fusion refusée",
+            path.display()
+        ));
+    }
     if let Json::Obj(root_map) = &mut root {
         root_map.insert("mcpServers".to_string(), Json::Obj(servers_map));
     }
@@ -176,10 +203,16 @@ fn register_into(path: &Path, name: &str, bin: &str) -> Result<bool, String> {
         }
     }
 
-    // sérialisation lisible (indentée 2 espaces)
+    // sérialisation lisible (indentée 2 espaces), écrite ATOMIQUEMENT :
+    // tmpfile voisin + rename (une coupure ne laisse pas de config tronquée)
     let pretty = pretty_print(&root, 0);
-    std::fs::write(path, pretty + "\n")
-        .map_err(|e| format!("écriture de {} : {e}", path.display()))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, pretty + "\n")
+        .map_err(|e| format!("écriture de {} : {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("rename vers {} : {e}", path.display())
+    })?;
 
     // sécurité : restreint l'accès au fichier (lecture/écriture propriétaire)
     restrict_permissions(path)?;
@@ -323,4 +356,10 @@ fn main() {
 le serveur RSI au prochain démarrage — aucune action manuelle requise.",
         targets.len()
     );
+
+    // code de sortie exploitable par les scripts appelants (install.sh, hooks) :
+    // échec si AUCUNE cible n'a pu être enregistrée
+    if ok == 0 && !targets.is_empty() {
+        std::process::exit(1);
+    }
 }

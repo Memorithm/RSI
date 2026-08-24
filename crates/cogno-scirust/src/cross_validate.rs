@@ -133,19 +133,36 @@ pub fn compare_oracle_and_backend(
     Ok(report)
 }
 
-/// Compare les gradients (contrat §14 : « comparer les gradients lorsque
-/// définis »). Pour la perte COGNO-0.1, les gradients des termes différentiables
-/// sont calculés par différences finies centrales — même convention des deux
-/// côtés (le backend et l'oracle utilisent les mêmes fonctions).
+/// Résultat d'une comparaison de gradients (contrat §14 : « comparer les
+/// gradients lorsque définis »).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientComparison {
+    /// écart absolu maximal (par composante) entre gradient numérique et
+    /// analytique.
+    pub max_abs_diff: f64,
+    /// vrai si toutes les composantes correspondent dans la tolérance.
+    pub matches: bool,
+}
+
+/// Compare le gradient **numérique** (différences finies centrales de `f`) au
+/// gradient **analytique** `grad`, composante par composante, dans la
+/// tolérance relative donnée (échelle = max(|numérique|, |analytique|, 1)).
 pub fn compare_gradients(
     f: &dyn Fn(&[f64]) -> CognoResult<FiniteScalar>,
+    grad: &dyn Fn(&[f64]) -> CognoResult<Vec<f64>>,
     params: &[f64],
     tolerance: f64,
-) -> CognoResult<f64> {
-    // vérifie que deux évaluations symétriques (h et −h) donnent un gradient
-    // fini et cohérent — utilisé pour vérifier la différentiabilité.
+) -> CognoResult<GradientComparison> {
     let h = 1e-6;
     let mut max_diff = 0.0f64;
+    let mut matches = true;
+    let analytic = grad(params)?;
+    if analytic.len() != params.len() {
+        return Err(cogno_core::error::CognoError::LengthMismatch {
+            expected: params.len(),
+            got: analytic.len(),
+        });
+    }
     for i in 0..params.len() {
         let mut p1 = params.to_vec();
         let mut p2 = params.to_vec();
@@ -153,14 +170,19 @@ pub fn compare_gradients(
         p2[i] -= h;
         let f1 = f(&p1)?.value();
         let f2 = f(&p2)?.value();
-        let g = (f1 - f2) / (2.0 * h);
-        if !g.is_finite() {
+        let numeric = (f1 - f2) / (2.0 * h);
+        if !numeric.is_finite() || !analytic[i].is_finite() {
             return Err(cogno_core::error::CognoError::NonFinite("gradient"));
         }
-        max_diff = max_diff.max(g.abs());
+        let diff = (numeric - analytic[i]).abs();
+        // tolérance relative sur la magnitude max
+        let scale = numeric.abs().max(analytic[i].abs()).max(1.0);
+        if diff > tolerance * scale {
+            matches = false;
+        }
+        max_diff = max_diff.max(diff);
     }
-    let _ = tolerance;
-    Ok(max_diff)
+    Ok(GradientComparison { max_abs_diff: max_diff, matches })
 }
 
 /// Comparaison **après un pas d'optimisation** (contrat §14 : « comparer les
@@ -179,7 +201,8 @@ pub fn compare_after_optim_step(
 ) -> CognoResult<bool> {
     use crate::adamw::AdamW;
     let run = || -> CognoResult<Vec<f64>> {
-        let mut opt = AdamW::new(config, params.len());
+        let mut opt = AdamW::new(config, params.len())
+            .map_err(cogno_core::error::CognoError::InvalidInput)?;
         let mut p = params.to_vec();
         opt.step(&mut p, grad).map_err(cogno_core::error::CognoError::InvalidInput)?;
         Ok(p)
@@ -238,8 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn worst_component_reported() {
-        // un backend dégradé (tous les termes nuls) doit être détecté :
+    fn worst_component_reported() {        // un backend dégradé (tous les termes nuls) doit être détecté :
         // l'oracle calcule J=1.75 (batch complet), le "backend zéro" vaut 0.
         let b = sample_batch();
         let oracle_input = cogno_core::objective::CognoObjectiveInput {
@@ -273,6 +295,29 @@ mod tests {
         assert!(!comp.matches);
         assert!(!comp.worst_component.is_empty());
         assert_eq!(comp.worst_component, "admissible_reward");
+    }
+
+    /// Contrat §14 : le gradient numérique (différences finies) doit
+    /// correspondre au gradient analytique dans la tolérance — et un gradient
+    /// analytique faux doit être détecté.
+    #[test]
+    fn gradient_comparison_matches_or_detects() {
+        // f(p) = p0² + 3·p1 → ∇f = [2·p0, 3]
+        let f = |p: &[f64]| FiniteScalar::try_new(p[0] * p[0] + 3.0 * p[1]);
+        let grad = |p: &[f64]| -> CognoResult<Vec<f64>> { Ok(vec![2.0 * p[0], 3.0]) };
+        let r = compare_gradients(&f, &grad, &[1.5, -2.0], 1e-4).unwrap();
+        assert!(r.matches, "analytique correct rejeté : {:?}", r);
+        assert!(r.max_abs_diff < 1e-3);
+
+        let wrong = |_p: &[f64]| -> CognoResult<Vec<f64>> { Ok(vec![0.0, 0.0]) };
+        let r = compare_gradients(&f, &wrong, &[1.5, -2.0], 1e-4).unwrap();
+        assert!(!r.matches, "gradient analytique faux non détecté");
+        assert!(r.max_abs_diff > 1.0);
+
+        // longueur incohérente → erreur structurée
+        let short = |_p: &[f64]| -> CognoResult<Vec<f64>> { Ok(vec![1.0]) };
+        let e = compare_gradients(&f, &short, &[1.5, -2.0], 1e-4).unwrap_err();
+        assert!(matches!(e, cogno_core::error::CognoError::LengthMismatch { .. }));
     }
 
     // ─── Validation croisée §14 : cas imposés ─────────────────────────────── //

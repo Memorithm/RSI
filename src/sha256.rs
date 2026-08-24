@@ -231,6 +231,42 @@ pub fn sha256_hex(input: &str) -> String {
     s
 }
 
+/// HMAC-SHA256 (RFC 2104), std-only : `HMAC(k, m) = H((k⊕opad) ‖ H((k⊕ipad) ‖ m))`.
+///
+/// Utilisé pour **signer** le journal d'audit ([`crate::audit::HashChainLog::
+/// with_key`]) : un attaquant pouvant réécrire toute la chaîne (pas seulement
+/// la corrompre) est arrêté par la clé — non-répudiation locale.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    // clés plus longues que le bloc → condensées ; plus courtes → bourrées à 0
+    let mut k = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        let d = sha256(key);
+        k[..32].copy_from_slice(&d);
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let ipad: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
+    let opad: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
+
+    let mut inner = ipad;
+    inner.extend_from_slice(message);
+    let inner_hash = sha256(&inner);
+
+    let mut outer = opad;
+    outer.extend_from_slice(&inner_hash);
+    sha256(&outer)
+}
+
+/// HMAC-SHA256 en hexadécimal.
+pub fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
+    let mut s = String::with_capacity(64);
+    for b in hmac_sha256(key, message) {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,6 +285,25 @@ mod tests {
         assert_eq!(
             sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+    }
+
+    #[test]
+    fn hmac_rfc4231_vectors() {
+        // vecteurs de test RFC 4231 (HMAC-SHA256), cas 1 et 2
+        assert_eq!(
+            hmac_sha256_hex(&[0x0b; 20], b"Hi There"),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        assert_eq!(
+            hmac_sha256_hex(b"Jefe", b"what do ya want for nothing?"),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        // clé longue que le bloc → condensée d'abord (RFC 4231 cas 6)
+        let long_key = [0xaa; 131];
+        assert_eq!(
+            hmac_sha256_hex(&long_key, b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
         );
     }
 }

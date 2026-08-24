@@ -1,6 +1,11 @@
-# RSI — raccourcis. La cible la plus simple : `make install`.
+# RSI — raccourcis.
+.DEFAULT_GOAL := help
 
-.PHONY: install build test demo connect clean ci
+.PHONY: help install build test demo connect clean ci
+
+## help : affiche cette aide (cible par défaut)
+help:
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
 
 ## install : compile et connecte RSI à ton agent IA (openclaw, hermes-agent…)
 install:
@@ -8,11 +13,11 @@ install:
 
 ## build : compile tous les binaires en release
 build:
-	cargo build --release --bins
+	cargo build --release --bins --locked
 
 ## test : lance toute la suite de tests
 test:
-	cargo test
+	cargo test --locked
 
 ## demo : lance la simulation de démonstration
 demo:
@@ -22,13 +27,15 @@ demo:
 connect:
 	cargo run --release --bin rsi-connect
 
-## ci : reproduit en local exactement les checks de la CI (clippy 0 warning +
-## tests, en défaut puis avec les features publiques). À lancer avant de pousser.
+## ci : reproduit en local exactement les checks de la CI GitHub Actions
+## (clippy -D warnings + tests, en défaut puis avec les features publiques,
+## scirust inclus — même liste que ci.yml). À lancer avant de pousser.
+PUBLIC_FEATURES := "wasm observability simd llm-ollama llm-claude-ureq scirust"
 ci:
 	cargo clippy --all-targets --locked -- -D warnings
 	cargo test --locked
-	cargo clippy --all-targets --locked --features "wasm observability simd llm-ollama llm-claude-ureq" -- -D warnings
-	cargo test --locked --features "wasm observability simd llm-ollama llm-claude-ureq"
+	cargo clippy --all-targets --locked --features $(PUBLIC_FEATURES) -- -D warnings
+	cargo test --locked --features $(PUBLIC_FEATURES)
 
 ## clean : nettoie les artefacts de build
 clean:

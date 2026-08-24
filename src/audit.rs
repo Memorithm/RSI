@@ -79,14 +79,45 @@ pub trait AuditLog {
 }
 
 /// Implémentation cœur std-only : journal hash-chaîné SHA-256.
+///
+/// Sans clé, la chaîne prouve la **corruption** mais pas la **réécriture**
+/// (quiconque peut re-hasher toute la chaîne). Avec une clé
+/// ([`HashChainLog::with_key`]), chaque maillon est un **HMAC-SHA256** :
+/// réécrire la chaîne exige la clé — non-répudiation locale. Le schéma est
+/// identique des deux modes (seule la fonction de lien change) ; `verify`
+/// détecte automatiquement lequel a produit les maillons.
 #[derive(Default)]
 pub struct HashChainLog {
     events: Vec<TraceEvent>,
+    signing_key: Option<Vec<u8>>,
 }
 
 impl HashChainLog {
     pub fn new() -> Self {
-        HashChainLog { events: Vec::new() }
+        HashChainLog {
+            events: Vec::new(),
+            signing_key: None,
+        }
+    }
+
+    /// Journal **signé** : les maillons sont des HMAC-SHA256 de `key`.
+    /// La même clé doit être fournie à `verify` (via un journal reconstruit
+    /// avec `with_key`) pour valider la chaîne signée.
+    pub fn with_key(key: impl Into<Vec<u8>>) -> Self {
+        HashChainLog {
+            events: Vec::new(),
+            signing_key: Some(key.into()),
+        }
+    }
+
+    fn link(&self, prev_hash: &str, seq: u64, event_type: &str, payload: &str) -> String {
+        match &self.signing_key {
+            Some(key) => crate::sha256::hmac_sha256_hex(
+                key,
+                format!("{prev_hash}|{seq}|{event_type}|{payload}").as_bytes(),
+            ),
+            None => link_hash(prev_hash, seq, event_type, payload),
+        }
     }
 
     /// Hash de tête courant (GENESIS si vide).
@@ -139,7 +170,7 @@ impl AuditLog for HashChainLog {
         let prev_hash = self.chain_head();
         let event_type = "rsi_step".to_string();
         let payload = event.payload();
-        let hash = link_hash(&prev_hash, seq, &event_type, &payload);
+        let hash = self.link(&prev_hash, seq, &event_type, &payload);
         self.events.push(TraceEvent {
             sequence_number: seq,
             prev_hash,
@@ -164,9 +195,9 @@ impl AuditLog for HashChainLog {
             if e.prev_hash != prev {
                 return false; // lien rompu
             }
-            let recomputed = link_hash(&e.prev_hash, e.sequence_number, &e.event_type, &e.payload);
+            let recomputed = self.link(&e.prev_hash, e.sequence_number, &e.event_type, &e.payload);
             if recomputed != e.hash {
-                return false; // contenu altéré
+                return false; // contenu altéré (ou clé différente)
             }
             prev = e.hash.clone();
         }
@@ -237,5 +268,44 @@ mod tests {
         let json = log.to_ccos_json();
         let parsed = Json::parse(&json).unwrap();
         assert_eq!(parsed.get("events").unwrap().as_array().unwrap().len(), 1);
+    }
+
+    /// A1 — journal signé : la chaîne HMAC vérifie avec la bonne clé, échoue
+    /// avec une autre clé, et une **réécriture complète** par un attaquant
+    /// sans clé (re-hash nu des maillons) est rejetée par le vérificateur
+    /// signé — contrairement au journal non signé où elle passe.
+    #[test]
+    fn signed_chain_requires_key() {
+        let mut log = HashChainLog::with_key(b"secret-key");
+        for i in 0..6 {
+            log.record(&ev(i, 0.1 * i as f64));
+        }
+        assert!(log.verify(), "bonne clé → chaîne signée valide");
+
+        // même trajectoire, autre clé : les maillons ne correspondent plus
+        let mut wrong = HashChainLog::with_key(b"autre-cle");
+        wrong.events = log.events.clone();
+        assert!(!wrong.verify(), "vérification avec la mauvaise clé");
+
+        // attaque : l'attaquant réécrit TOUTE la chaîne en hash nu (il n'a
+        // pas la clé). Le vérificateur SIGNÉ rejette ces maillons non signés.
+        let mut forged_events = log.events.clone();
+        for e in &mut forged_events {
+            e.hash = link_hash(&e.prev_hash, e.sequence_number, &e.event_type, &e.payload);
+        }
+        let mut forged = HashChainLog::with_key(b"secret-key");
+        forged.events = forged_events;
+        assert!(!forged.verify(), "réécriture sans clé détectée par le signataire");
+
+        // symétrique : un journal NU accepte ses propres maillons (comportement
+        // historique inchangé) mais pas les maillons HMAC d'autrui
+        let mut plain = HashChainLog::new();
+        plain.events = log.events.clone();
+        assert!(!plain.verify());
+        let mut plain2 = HashChainLog::new();
+        for i in 0..3 {
+            plain2.record(&ev(i, 0.1 * i as f64));
+        }
+        assert!(plain2.verify());
     }
 }

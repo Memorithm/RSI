@@ -79,4 +79,34 @@ mod tests {
         m.remember(&e, b"experience");
         assert!(m.explain(&e, 1).is_some());
     }
+
+    /// Garde de régression **M1** (résolu amont octasoma v0.5, rev `145761a`) :
+    /// le contrat d'insertion est honnête — une entrée invalide (dimension
+    /// fausse ou embedding non fini) n'est stockée dans **aucun** des deux tiers
+    /// et n'enfle pas la mémoire ; la lentille 3-D reste cohérente.
+    #[test]
+    fn m1_honest_insert_rejects_invalid_input() {
+        let mut m = OctaSomaMemory::new(8, 42);
+        let good = [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+        // Dimension fausse / embedding non fini → rien n'est stocké.
+        m.remember(&good[..4], b"dimension fausse");
+        m.remember(&[f32::NAN, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], b"nan");
+        m.remember(&[f32::INFINITY, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], b"inf");
+        assert_eq!(m.len(), 0, "une entrée invalide ne doit pas être stockée");
+        assert!(m.recall(&good, 3).is_empty());
+        // La lentille 3-D reste vide aussi : aucune explication ne peut
+        // invoquer un voisin inexistant.
+        let lens = m.explain(&good, 1).expect("requête valide → Some");
+        assert!(lens.neighbors.is_empty());
+        let total: usize = lens.zoom_path.iter().map(|r| r.count).sum();
+        assert_eq!(total, 0, "aucun souvenir dans les régions zoomées");
+
+        // Sémantique doublons assumée amont (`duplicate_points_all_retained`) :
+        // chaque `remember` compte — aucun dédoublonnage implicite.
+        m.remember(&good, b"a");
+        m.remember(&good, b"b");
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.recall(&good, 2).len(), 2);
+    }
 }

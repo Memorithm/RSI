@@ -179,8 +179,7 @@ fn reduce_chained(v: &[f64]) -> f64 {
 #[inline(never)]
 fn reduce_independent(v: &[f64]) -> f64 {
     let mut acc = [0.0f64; 8];
-    let chunks = v.chunks_exact(8);
-    let rem = chunks.remainder();
+    let (chunks, rem) = v.as_chunks::<8>();
     for c in chunks {
         for (a, &x) in acc.iter_mut().zip(c) {
             *a = a.mul_add(0.999_999_9, x);

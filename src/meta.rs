@@ -342,7 +342,7 @@ impl MetaSearch for MetaOptimizer {
         // (§A) puis candidats générés. La génération (RNG) reste séquentielle ;
         // seule l'ÉVALUATION est parallélisée. L'argmax ci-dessous, à ordre fixe
         // et strictement croissant, reproduit exactement la sélection séquentielle.
-        let mut items: Vec<MetaStrategy> = self.seeds.drain(..).collect();
+        let mut items: Vec<MetaStrategy> = std::mem::take(&mut self.seeds);
         for _ in 0..self.candidates {
             items.push(current.perturb(&mut self.rng, self.explore_scale));
         }
@@ -411,7 +411,7 @@ impl MetaSearch for CmaEsMeta {
         let cur_si = current.projected_si(state, substrate, surface);
         let mut center = current.clone();
         let mut center_si = cur_si;
-        for seed_strat in self.seeds.drain(..).collect::<Vec<_>>() {
+        for seed_strat in std::mem::take(&mut self.seeds) {
             let si = seed_strat.projected_si(state, substrate, surface);
             if si > center_si {
                 center = seed_strat;

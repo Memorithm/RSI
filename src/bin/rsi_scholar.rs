@@ -170,6 +170,22 @@ fn main() {
                  avec --paper-llm (analyse LLM de PAPERS, modèle via --paper-model)."
             }
         );
+        // audit m26 : un `--out` demandé doit EXISTER même sur extraction vide
+        if let Some(out_path) = flag_value(&args, "--out") {
+            let report = format!(
+                "# rapport rsi-scholar — {paper}\n\n\
+                 aucune technique exploitable extraite (0 objectif).\n\
+                 {hint}\n",
+                paper = target,
+                hint = if paper_llm {
+                    "(essayez un papier plus algorithmique, ou --paper-model plus fort)"
+                } else {
+                    "(relancez avec --paper-llm pour une analyse LLM)"
+                }
+            );
+            std::fs::write(&out_path, report)
+                .unwrap_or_else(|e| eprintln!("écriture de {out_path} : {e}"));
+        }
         return;
     }
     println!(

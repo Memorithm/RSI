@@ -1,0 +1,16 @@
+# Mise à jour automatique des actions GitHub (épinglées par SHA depuis
+# l'audit m24 — dependabot gère les bumps de SHA avec commentaire du tag).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -626,7 +626,7 @@ dependencies = [
 [[package]]
 name = "octasoma"
 version = "0.4.0"
-source = "git+https://github.com/Memorithm/octasoma?rev=145761aeb52ef8ded85dcf2b8c97690005284926#145761aeb52ef8ded85dcf2b8c97690005284926"
+source = "git+https://github.com/Memorithm/octasoma?rev=08a5fb00b1ab3cc3b5c963810dd643fb3c33a312#08a5fb00b1ab3cc3b5c963810dd643fb3c33a312"
 dependencies = [
  "lz4_flex",
  "scirust-retrieval",

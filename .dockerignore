@@ -1,6 +1,6 @@
-# Contexte de build minimal : seuls Cargo.toml + src/ sont nécessaires au
-# build du cœur (le Dockerfile ne COPIE que ces chemins, mais on exclut tout
-# le reste pour garder le contexte léger et le build reproductible).
+# Contexte de build minimal : manifestes + src/ + membres du workspace
+# (forge, ccos, crates) sont copiés par le Dockerfile ; on exclut tout le
+# reste pour garder le contexte léger et le build reproductible.
 /target
 /.git
 /.env

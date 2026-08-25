@@ -2,8 +2,13 @@
   description = "RSI — Recursive Self-Improvement : moteur d'auto-amélioration encadrée (cœur std-only, sans dépendance externe)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    # Révisions épinglées (audit M14) : des refs mutables (`nixos-unstable`,
+    # master implicite) résolvaient un snapshot différent à chaque build —
+    # rustc changeait de version selon le jour. Un `flake.lock` committé
+    # reste l'objectif dès qu'un environnement nix est disponible ; en attendant,
+    # l'épinglage par révision rend les inputs immuables.
+    nixpkgs.url = "github:NixOS/nixpkgs/56c02bc00adcf003215cc4bd996d6efaf4cff188";
+    flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
   };
 
   outputs = { self, nixpkgs, flake-utils }:
@@ -91,8 +96,9 @@
           program = "${self.packages.${system}.default}/bin/rsi-demo";
         };
 
-        # `nix develop` : toolchain complète (build + lints) avec la cible musl
-        # pour reproduire localement le build statique de l'image Docker.
+        # `nix develop` : toolchain complète (build + lints). NOTE : la cible
+        # musl n'est PAS fournie ici (pas de rustup/multi-target dans ce shell) ;
+        # pour le build statique Docker, passer par `docker build` directement.
         devShells.default = pkgs.mkShell {
           packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
           shellHook = ''

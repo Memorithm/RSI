@@ -26,6 +26,11 @@ use wasmi::{Config, Engine, Linker, Module, Store};
 /// Taille maximale d'un candidat WAT (octets).
 const MAX_WAT_BYTES: usize = 64 * 1024;
 /// Budget d'instructions par appel (fuel) — borne la terminaison.
+///
+/// NOTE (audit a5, décision assumée) : le fuel borne le TEMPS de calcul mais
+/// pas la mémoire statique déclarée par un module (`(memory N)`). wasmi 0.31
+/// n'expose pas de limiteur pré-instantiation ; le risque est borné par la
+/// taille max du WAT (64 Kio) et l'exécution locale mono-tenant.
 const FUEL_PER_CALL: u64 = 5_000_000;
 
 // ═══════════════ Évaluateur DGM bac à sable WASM (A6) ═══════════════ //

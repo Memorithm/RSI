@@ -268,9 +268,12 @@ pub mod event_log {
     fn payload_bytes(p: &EventPayload) -> Vec<u8> {
         match p {
             EventPayload::Custom { key, value } => {
+                // audit m11 : l'ancien séparateur NUL n'était PAS injectif —
+                // `("a\0b","c")` et `("a","b\0c")` produisaient le même flux
+                // (donc le même hash). Préfixe de longueur big-endian.
                 let mut v = Vec::new();
+                v.extend_from_slice(&(key.len() as u64).to_be_bytes());
                 v.extend_from_slice(key.as_bytes());
-                v.push(0);
                 v.extend_from_slice(value.as_bytes());
                 v
             }

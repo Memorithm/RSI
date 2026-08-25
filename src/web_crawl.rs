@@ -139,6 +139,22 @@ pub fn parse_url(url: &str) -> Option<(String, String, u16, String)> {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
+    // Anti-SSRF (audit M2) : un userinfo (`http://evil.com@127.0.0.1/`) ferait
+    // résoudre `evil.com@127.0.0.1` — échec ⇒ gate laissé passer — tandis que
+    // le parseur WHATWG du client réel dialerait 127.0.0.1. Deux parseurs
+    // divergents = primitive SSRF : on refuse tout userinfo.
+    if authority.contains('@') {
+        return None;
+    }
+    // Anti header-injection (audit m1) : CR/LF/NUL ou espace dans l'autorité
+    // ou le chemin permettraient de forger la ligne de requête ou des en-têtes.
+    if authority
+        .bytes()
+        .chain(path.bytes())
+        .any(|b| b < 0x21 || b == 0x7f)
+    {
+        return None;
+    }
     let (host, port) = match authority.rfind(':') {
         Some(i) => {
             let p: u16 = authority[i + 1..].parse().ok()?;
@@ -187,70 +203,132 @@ pub fn resolve_url(base: &str, link: &str) -> Option<String> {
 const DEFAULT_UA: &str =
     "Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0";
 
-/// Requête GET avec suivi des redirections, borné.
+/// Requête GET avec suivi des redirections, borné, **anti-SSRF par hop**.
 ///
-/// - **Feature `web`** : client `reqwest` (TLS complet, gzip, redirections
-///   automatiques) — nécessaire pour le HTTPS réel (tous les moteurs de
-///   recherche et la majorité du web).
-/// - **Sans feature `web`** : client HTTP/1.1 minimal sur `std::net`
-///   (aucune dépendance), redirections 3xx suivies manuellement — suffit
-///   pour `http://` et les pages statiques.
+/// La porte `host_resolves_private` appliquée à l'URL initiale ne suffit pas :
+/// une redirection vers `http://169.254.169.254/…` doit être re-vérifiée à
+/// chaque hop (audit M1). `http_get` applique donc la politique stricte
+/// (`allow_private = false`) ; pour crawler du localhost, passer par
+/// [`get_following_redirects`] avec l'opt-out explicite.
 ///
-/// Retourne `(statut, corps)`. Le corps est borné à `max_bytes` (anti-DoS).
-#[cfg(feature = "web")]
+/// Retourne `(statut, corps)`. Le corps est borné à `max_bytes` **pendant** le
+/// transfert (anti-DoS, audit M4).
 pub fn http_get(url: &str, timeout: Duration, max_bytes: usize) -> Result<(u16, Vec<u8>), WebError> {
-    let Ok(client) = reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .user_agent(DEFAULT_UA)
-        .redirect(reqwest::redirect::Policy::limited(5))
-        .build()
-    else {
-        return Err(WebError::Http("construction du client reqwest impossible".into()));
-    };
-    let Ok(resp) = client.get(url).send() else {
-        return Err(WebError::Http("requête HTTP échouée".into()));
-    };
-    let status = resp.status().as_u16();
-    let Ok(bytes) = resp.bytes() else {
-        return Err(WebError::Http("lecture du corps échouée".into()));
-    };
-    if bytes.len() > max_bytes {
-        return Err(WebError::TooLarge);
-    }
-    Ok((status, bytes.to_vec()))
+    get_following_redirects(url, timeout, max_bytes, false)
 }
 
-/// Version std-only (sans feature `web`) : client HTTP/1.1 minimal sur
-/// `std::net::TcpStream`, avec suivi manuel des redirections 3xx.
-#[cfg(not(feature = "web"))]
-pub fn http_get(url: &str, timeout: Duration, max_bytes: usize) -> Result<(u16, Vec<u8>), WebError> {
-    const MAX_REDIRECTS: usize = 5;
-    let mut current = url.to_string();
-    for _ in 0..=MAX_REDIRECTS {
-        let (status, body, headers) = http_get_once(&current, timeout, max_bytes)?;
-        if (300..400).contains(&status) {
-            // redirection : suit Location (absolu ou relatif), casse insensible
-            let loc = headers
-                .lines()
-                .find(|l| {
-                    let lower = l.to_lowercase();
-                    lower.starts_with("location:")
-                })
-                .map(|l| {
-                    let idx = l.find(':').unwrap_or(0) + 1;
-                    l[idx..].trim().to_string()
-                });
-            match loc {
-                Some(l) if !l.is_empty() => {
-                    current = resolve_url(&current, &l).unwrap_or(l);
-                    continue;
+/// Comme [`http_get`], avec opt-out explicite de la porte anti-SSRF par hop
+/// (pour crawler un serveur local volontairement).
+pub fn get_following_redirects(
+    url: &str,
+    timeout: Duration,
+    max_bytes: usize,
+    allow_private: bool,
+) -> Result<(u16, Vec<u8>), WebError> {
+    #[cfg(feature = "web")]
+    {
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .user_agent(DEFAULT_UA)
+            .redirect(redirect_policy(allow_private))
+            .build()
+        else {
+            return Err(WebError::Http("construction du client reqwest impossible".into()));
+        };
+        let resp = client.get(url).send().map_err(|e| {
+            // les erreurs de politique anti-SSRF remontent comme erreurs HTTP
+            WebError::Http(format!("requête HTTP échouée : {e}"))
+        })?;
+        let status = resp.status().as_u16();
+        // lecture en flux avec cap PENDANT le transfert (audit M4) :
+        // resp.bytes() bufferisait tout le corps avant le check.
+        use std::io::Read;
+        let mut body: Vec<u8> = Vec::new();
+        resp.take((max_bytes as u64) + 1)
+            .read_to_end(&mut body)
+            .map_err(|e| WebError::Http(e.to_string()))?;
+        if body.len() > max_bytes {
+            return Err(WebError::TooLarge);
+        }
+        Ok((status, body))
+    }
+    #[cfg(not(feature = "web"))]
+    {
+        const MAX_REDIRECTS: usize = 5;
+        let mut current = url.to_string();
+        for _ in 0..=MAX_REDIRECTS {
+            // vérification anti-SSRF AVANT chaque connexion (audit M1)
+            if !allow_private {
+                if let Some((_, host, port, _)) = parse_url(&current) {
+                    if host_resolves_private(&host, port) {
+                        return Err(WebError::Http(format!(
+                            "hôte privé bloqué (anti-SSRF) : {host}"
+                        )));
+                    }
                 }
-                _ => return Ok((status, body)),
+            }
+            let (status, body, headers) = http_get_once(&current, timeout, max_bytes)?;
+            if (300..400).contains(&status) {
+                // redirection : suit Location (absolu ou relatif), casse insensible
+                let loc = headers
+                    .lines()
+                    .find(|l| {
+                        let lower = l.to_lowercase();
+                        lower.starts_with("location:")
+                    })
+                    .map(|l| {
+                        let idx = l.find(':').unwrap_or(0) + 1;
+                        l[idx..].trim().to_string()
+                    });
+                match loc {
+                    Some(l) if !l.is_empty() => {
+                        current = resolve_url(&current, &l).unwrap_or(l);
+                        continue;
+                    }
+                    _ => return Ok((status, body)),
+                }
+            }
+            return Ok((status, body));
+        }
+        Err(WebError::Http("trop de redirections".into()))
+    }
+}
+
+/// Politique de redirection reqwest avec re-validation anti-SSRF de chaque hop
+/// (audit M1) : l'URL de destination est résolue et toute IP privée/loopback/
+/// link-local est refusée, sauf opt-out explicite.
+#[cfg(feature = "web")]
+fn redirect_policy(
+    allow_private: bool,
+) -> reqwest::redirect::Policy {
+    use std::net::ToSocketAddrs;
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() > 5 {
+            return attempt.error("trop de redirections");
+        }
+        if !allow_private {
+            // host/port copiés en owned : la closure `error` consomme `attempt`
+            let (host, port) = {
+                let u = attempt.url();
+                (
+                    u.host_str().unwrap_or_default().to_string(),
+                    u.port_or_known_default().unwrap_or(80),
+                )
+            };
+            // NOTE DNS-rebinding (audit m3) : la résolution ici puis celle du
+            // connecteur sont deux instants distincts — TOCTOU documenté.
+            let private = (host.as_str(), port)
+                .to_socket_addrs()
+                .map(|mut addrs| addrs.any(|sa| is_private_ip(sa.ip())))
+                .unwrap_or(false);
+            if private {
+                return attempt.error(format!(
+                    "redirection vers hôte privé bloquée (anti-SSRF) : {host}"
+                ));
             }
         }
-        return Ok((status, body));
-    }
-    Err(WebError::Http("trop de redirections".into()))
+        attempt.follow()
+    })
 }
 
 /// Une requête GET std-only, sans suivi de redirection. Retourne (statut, corps, en-têtes).
@@ -328,21 +406,25 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < body.len() {
-        // lit la taille hexadécimale jusqu'au CRLF
-        let line_end = body[i..]
-            .windows(2)
-            .position(|w| w == b"\r\n")
-            .map(|p| i + p)
-            .unwrap_or(body.len());
+        // lit la taille hexadécimale jusqu'au CRLF — corps tronqué sans CRLF
+        // final = arrêt propre (l'arithmétique non gardée slicait hors bornes,
+        // panic déclenchable par une connexion coupée — audit M3b).
+        let Some(line_end) = body[i..].windows(2).position(|w| w == b"\r\n").map(|p| i + p)
+        else {
+            break;
+        };
         let size_str = String::from_utf8_lossy(&body[i..line_end]);
         let size = usize::from_str_radix(size_str.trim(), 16).unwrap_or(0);
         if size == 0 {
             break;
         }
         let start = line_end + 2;
+        if start >= body.len() {
+            break;
+        }
         let end = (start + size).min(body.len());
         out.extend_from_slice(&body[start..end]);
-        i = end + 2; // saute le CRLF de fin de chunk
+        i = end.saturating_add(2); // saute le CRLF de fin de chunk
     }
     out
 }
@@ -353,11 +435,40 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
 
 /// Extrait le texte visible d'un HTML (enlève scripts/styles/balises, décode
 /// entités de base) et les liens `href`/`src` absolus résolus.
-pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {    // titre
+/// Position de `needle` (ASCII) dans `hay`, casse insensible ASCII —
+/// contrairement à `to_lowercase().find()`, l'offset reste valide sur la
+/// chaîne d'origine (aucun remapping Unicode).
+fn find_ascii_ci(hay: &str, needle: &str) -> Option<usize> {
+    let nb = needle.as_bytes();
+    if nb.is_empty() {
+        return Some(0);
+    }
+    hay.as_bytes()
+        .windows(nb.len())
+        .position(|w| w.eq_ignore_ascii_case(nb))
+}
+
+/// Contenu binaire détectable par magic bytes / NUL précoce (audit a2) :
+/// évite de lossy-décoder et parser du PDF/ZIP/PNG comme du HTML.
+fn looks_binary(b: &[u8]) -> bool {
+    let head = &b[..b.len().min(512)];
+    b.starts_with(b"PK")
+        || b.starts_with(b"%PDF")
+        || b.starts_with(&[0x1f, 0x8b])
+        || b.starts_with(&[0x89, b'P', b'N', b'G'])
+        || b.starts_with(b"GIF8")
+        || head.contains(&0)
+}
+
+pub fn parse_html(raw: &str, base_url: &str) -> (String, Vec<String>, String) {
+    // titre — recherche ASCII case-insensitive SUR LA MÊME chaîne (audit M3a) :
+    // un offset trouvé dans `to_lowercase()` n'est pas réutilisable sur `raw`
+    // (les mappings Unicode changent la longueur d'octets : 'İ' s'étend,
+    // 'ẞ'→'ß'… ⇒ slice hors char-boundary = panic déclenchable à distance).
     let mut title = String::new();
-    if let Some(start) = raw.to_lowercase().find("<title>") {
+    if let Some(start) = find_ascii_ci(raw, "<title>") {
         let after = &raw[start + 7..];
-        if let Some(end) = after.find("</title>") {
+        if let Some(end) = find_ascii_ci(after, "</title>") {
             title = decode_entities(&after[..end]).trim().to_string();
         }
     }
@@ -537,8 +648,11 @@ pub struct RobotsTxt {
 
 impl RobotsTxt {
     /// Charge `robots.txt` pour un hôte (best-effort ; échec = tout autorisé).
-    pub fn load(host: &str, timeout: Duration, max_bytes: usize) -> Self {
-        let url = format!("http://{host}/robots.txt");
+    /// Le schéma de la cible est honoré : robots.txt est fetché en https pour
+    /// une cible https (l'ancien http fixe fuyait les cibles de crawl et
+    /// permettait à un MITM d'injecter des règles Disallow — audit m4).
+    pub fn load(scheme: &str, host: &str, timeout: Duration, max_bytes: usize) -> Self {
+        let url = format!("{scheme}://{host}/robots.txt");
         let mut txt = RobotsTxt::default();
         if let Ok((status, body)) = http_get(&url, timeout, max_bytes) {
             if status == 200 {
@@ -765,7 +879,6 @@ pub struct SearchResult {
 #[derive(Debug, Clone)]
 pub struct CrawlerOptions {
     pub limits: CrawlLimits,
-    pub user_agent: String,
     /// si true, vérifie robots.txt (par défaut).
     pub respect_robots: bool,
     /// hôtes à ne jamais visiter (liste noire).
@@ -781,7 +894,6 @@ impl Default for CrawlerOptions {
     fn default() -> Self {
         CrawlerOptions {
             limits: CrawlLimits::default(),
-            user_agent: "RSI-Bot/0.10".to_string(),
             respect_robots: true,
             deny_hosts: Vec::new(),
             allow_private_hosts: false,
@@ -910,15 +1022,21 @@ impl WebCrawler {
     /// (une seule requête par hôte au lieu d'une par page). Le verrou n'est
     /// jamais tenu pendant l'I/O réseau ; en cas de course, deux workers
     /// peuvent charger le même robots.txt une fois — borne inchangée.
-    fn robots_for(&self, host: &str) -> RobotsTxt {
-        if let Some(r) = self.robots_cache.lock().unwrap().get(host) {
+    fn robots_for(&self, scheme: &str, host: &str) -> RobotsTxt {
+        let key = format!("{scheme}://{host}");
+        if let Some(r) = self.robots_cache.lock().unwrap().get(&key) {
             return r.clone();
         }
-        let r = RobotsTxt::load(host, self.options.limits.timeout, self.options.limits.max_bytes);
+        let r = RobotsTxt::load(
+            scheme,
+            host,
+            self.options.limits.timeout,
+            self.options.limits.max_bytes,
+        );
         self.robots_cache
             .lock()
             .unwrap()
-            .entry(host.to_string())
+            .entry(key)
             .or_insert(r)
             .clone()
     }
@@ -943,7 +1061,13 @@ impl WebCrawler {
             };
 
             self.in_flight.fetch_add(1, Ordering::SeqCst);
-            self.process(&url, depth);
+            // catch_unwind (audit M3) : un panic dans process() (contenu
+            // hostile inattendu) ne doit jamais sauter le décrément — sans
+            // lui, la condition de sortie `in_flight == 0` ne se verrait plus
+            // et le crawl entier vivelockerait, workers survivants compris.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.process(&url, depth);
+            }));
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -993,7 +1117,11 @@ impl WebCrawler {
 
         // robots.txt (mis en cache par hôte) — AVANT la politesse : le
         // Crawl-delay demandé par l'hôte s'ajoute au délai configuré.
-        let robots = self.options.respect_robots.then(|| self.robots_for(&host));
+        let scheme = parse_url(url).map(|(s, _, _, _)| s).unwrap_or_else(|| "http".into());
+        let robots = self
+            .options
+            .respect_robots
+            .then(|| self.robots_for(&scheme, &host));
         if let Some(r) = &robots {
             if !r.allows(&host, &path) {
                 self.skipped.fetch_add(1, Ordering::Relaxed);
@@ -1045,6 +1173,9 @@ impl WebCrawler {
         if status != 200 {
             return Err(WebError::Http(format!("statut {status}")));
         }
+        if looks_binary(&body) {
+            return Err(WebError::Http("contenu binaire (non HTML) ignoré".into()));
+        }
         let raw = String::from_utf8_lossy(&body).to_string();
         let (text, links, title) = parse_html(&raw, url);
         let fetched_ms = t0.elapsed().as_millis() as u64;
@@ -1054,11 +1185,18 @@ impl WebCrawler {
             idx.add(url, &title, &text);
         }
 
-        // enqueue les liens (sauf si profondeur max atteinte)
+        // enqueue les liens (sauf si profondeur max atteinte) — avec bornes
+        // anti-avalanche (audit a4) : une page à 10⁶ href ne doit pas gonfler
+        // la file (mémoire) ni écraser les autres fronts.
+        const MAX_LINKS_PER_PAGE: usize = 200;
+        const MAX_QUEUE: usize = 10_000;
         let max_depth = self.options.limits.max_depth;
         if max_depth == 0 || depth < max_depth {
             let mut q = self.queue.lock().unwrap();
-            for link in links {
+            for link in links.into_iter().take(MAX_LINKS_PER_PAGE) {
+                if q.len() >= MAX_QUEUE {
+                    break;
+                }
                 q.push_back((link, depth + 1));
             }
         }
@@ -1077,11 +1215,22 @@ impl WebCrawler {
 // --------------------------------------------------------------------- //
 
 /// Récupère et extrait le texte d'une URL unique (surf web).
-pub fn fetch_page_text(url: &str, limits: &CrawlLimits) -> Result<CrawledPage, WebError> {
+///
+/// Porte anti-SSRF **par hop** appliquée sauf `allow_private` (audit M1/a1) —
+/// l'opt-out est réservé au surf local explicite (`rsi-crawl fetch --allow-private`).
+pub fn fetch_page_text(
+    url: &str,
+    limits: &CrawlLimits,
+    allow_private: bool,
+) -> Result<CrawledPage, WebError> {
     let t0 = Instant::now();
-    let (status, body) = http_get(url, limits.timeout, limits.max_bytes)?;
+    let (status, body) =
+        get_following_redirects(url, limits.timeout, limits.max_bytes, allow_private)?;
     if status != 200 {
         return Err(WebError::Http(format!("statut {status}")));
+    }
+    if looks_binary(&body) {
+        return Err(WebError::Http("contenu binaire (non HTML) ignoré".into()));
     }
     let raw = String::from_utf8_lossy(&body).to_string();
     let (text, links, title) = parse_html(&raw, url);
@@ -1271,7 +1420,12 @@ fn extract_url(block: &str) -> String {
     let Some(start) = block.find(pat) else {
         return String::new();
     };
-    let end_seg = (start + 600).min(block.len());
+    // fenêtre bornée ET alignée char-boundary (audit M3c) : une réponse
+    // multioctet coupée en plein caractère faisait paniquer le slice.
+    let mut end_seg = (start + 600).min(block.len());
+    while !block.is_char_boundary(end_seg) {
+        end_seg -= 1;
+    }
     let seg = &block[start..end_seg];
     let Some(href) = seg.find("href=") else {
         return String::new();
@@ -1394,6 +1548,61 @@ mod tests {
     fn unchunk_decodes() {
         let body = b"5\r\nHello\r\n6\r\n world\r\n0\r\n\r\n";
         assert_eq!(unchunk(body), b"Hello world");
+    }
+
+    /// Audit M3b : corps tronqué (taille sans CRLF final) = arrêt propre,
+    /// jamais de slice hors bornes.
+    #[cfg(not(feature = "web"))]
+    #[test]
+    fn unchunk_truncated_is_safe() {
+        let truncated = b"A\r\nHello"; // pas de CRLF après la taille → chunk partiel
+        assert_eq!(unchunk(truncated), b"Hello");
+        let mid = b"5\r\nHel";
+        assert_eq!(unchunk(mid), b"Hel");
+    }
+
+    /// Audit M2 : userinfo (`evil.com@127.0.0.1`) rejeté — deux parseurs
+    /// divergents = primitive SSRF.
+    #[test]
+    fn parse_url_rejects_userinfo() {
+        assert!(parse_url("http://evil.com@127.0.0.1:8080/x").is_none());
+        assert!(parse_url("https://user:pw@internal.host/y").is_none());
+        assert!(parse_url("http://example.com/a").is_some());
+    }
+
+    /// Audit m1 : CR/LF/NUL/espace dans l'autorité ou le chemin rejetés
+    /// (impossible de forger la requête ou des en-têtes).
+    #[test]
+    fn parse_url_rejects_control_bytes() {
+        assert!(parse_url("http://a.b/p\r\nX-Injected: y").is_none());
+        assert!(parse_url("http://a.b:80\r\nHost: evil/p").is_none());
+        assert!(parse_url("http://a.b/pa th").is_none());
+        // les caractères UTF-8 multi-octets restent acceptés
+        assert!(parse_url("http://a.b/café").is_some());
+    }
+
+    /// Audit M3a : titre avec remapping Unicode de longueur variable —
+    /// l'ancien offset via `to_lowercase()` paniquait hors char boundary.
+    #[test]
+    fn title_with_unicode_case_mapping_is_safe() {
+        let page = "<p>Krauss\u{1E9E}</p><title>Le titre</title><body>x</body>";
+        let (_, _, title) = parse_html(page, "http://x/");
+        assert_eq!(title, "Le titre");
+        // 'İ' (U+0130) s'étend en minuscule — l'autre sens du bug
+        let page = "\u{130} avant<title>t2</title>";
+        let (_, _, title) = parse_html(page, "http://x/");
+        assert_eq!(title, "t2");
+    }
+
+    /// Audit a2 : sniff binaire par magic bytes / NUL précoce.
+    #[test]
+    fn looks_binary_detects_common_formats() {
+        assert!(looks_binary(b"PK\x03\x04zip"));
+        assert!(looks_binary(b"%PDF-1.7"));
+        assert!(looks_binary(&[0x1f, 0x8b, 0x08]));
+        assert!(looks_binary(&[0x89, b'P', b'N', b'G']));
+        assert!(!looks_binary(b"<html><body>ok</body></html>"));
+        assert!(!looks_binary(b"plain text without null"));
     }
 
     #[test]

@@ -207,13 +207,43 @@ fn register_into(path: &Path, name: &str, bin: &str) -> Result<bool, String> {
     // tmpfile voisin + rename (une coupure ne laisse pas de config tronquée)
     let pretty = pretty_print(&root, 0);
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, pretty + "\n")
-        .map_err(|e| format!("écriture de {} : {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+    // audit m5 : `fs::write` suivait un symlink préalablement planté sur le
+    // chemin tmp => overwrite arbitraire. `create_new` échoue si le chemin
+    // existe déjà (fichier OU lien) — on retente avec un suffixe unique.
+    let mut write_ok = false;
+    let mut tmp_used = tmp.clone();
+    for attempt in 0..8 {
+        let candidate = if attempt == 0 {
+            tmp.clone()
+        } else {
+            path.with_extension(format!("json.tmp.{}", std::process::id()) + &format!("-{attempt}"))
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                f.write_all((pretty.clone() + "\n").as_bytes())
+                    .map_err(|e| format!("écriture de {} : {e}", candidate.display()))?;
+                tmp_used = candidate;
+                write_ok = true;
+                break;
+            }
+            Err(_) => continue,
+        }
+    }
+    if !write_ok {
+        return Err(format!(
+            "impossible de créer un fichier temporaire sûr près de {}",
+            path.display()
+        ));
+    }
+    std::fs::rename(&tmp_used, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_used);
         format!("rename vers {} : {e}", path.display())
     })?;
-
     // sécurité : restreint l'accès au fichier (lecture/écriture propriétaire)
     restrict_permissions(path)?;
     Ok(true)

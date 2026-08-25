@@ -196,7 +196,9 @@ fn main() {
             client = client.with_top_p(p);
         }
         if let Some(np) = prop_np {
-            client = client.with_num_predict(np).with_num_ctx(np + 8192);
+            // audit M10 : np+8192 en u32 débordait
+            let ctx = (np as u64).saturating_add(8192).min(u32::MAX as u64) as u32;
+            client = client.with_num_predict(np).with_num_ctx(ctx);
         }
         Box::new(LlmCodeModel::new(client))
     };
@@ -292,9 +294,9 @@ fn main() {
     );
 
     // --- Boucle. ------------------------------------------------------------ //
-    let min_gain: f64 = flag_value(&args, "--min-gain")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.0);
+    // audit m30/m11 : NaN/inf ici rendait TOUTE variante inacceptable
+    let min_gain: f64 =
+        rsi::cli::parse_f64_nonneg(flag_value(&args, "--min-gain").as_deref(), "--min-gain", 0.0);
     let revise: u32 = flag_value(&args, "--revise")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -321,7 +323,7 @@ fn main() {
             .with_endpoint(host.clone(), port)
             .with_timeout(Duration::from_secs(timeout_secs))
             .with_num_predict(np)
-            .with_num_ctx(np + 8192);
+            .with_num_ctx((np as u64).saturating_add(8192).min(u32::MAX as u64) as u32);
         engine = engine.with_predictor(Box::new(WorldModelPredictor { client }));
         prescreen_note = format!(", pré-crible={sim_model}");
         let mode = if revise > 0 {
@@ -346,6 +348,14 @@ fn main() {
     // feature `web` (reqwest/TLS) pour les endpoints HTTPS réels.
     let mut web_note = String::new();
     if args.iter().any(|a| a == "--web") {
+        // audit m26 : sans la feature `web`, HTTPS est indisponible (le client
+        // std ne fait que du http) — DuckDuckGo étant https-only, le contexte
+        // resterait TOUJOURS vide. On prévient au lieu de simuler.
+        if !cfg!(feature = "web") {
+            eprintln!(
+                "attention : --web sans feature 'web' — les endpoints HTTPS sont\n  indisponibles dans ce binaire, le contexte web sera vide (recompilez avec --features web)"
+            );
+        }
         let prefix = flag_value(&args, "--web-prefix").unwrap_or_default();
         let prefix_for_search = prefix.clone();
         let limits = rsi::web_crawl::CrawlLimits {
@@ -419,7 +429,7 @@ fn main() {
                     fitness.tests_passed,
                     fitness.tests_failed,
                     fitness.score,
-                    &variant_id[..8.min(variant_id.len())],
+                    short(variant_id),
                 );
                 // Raison du rejet : les notes portent le détail (queue de la
                 // sortie cargo). On montre jusqu'à 8 lignes informatives —
@@ -501,21 +511,40 @@ fn main() {
                 let backups = flag_value(&args, "--backups")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| ws.join(".rsi_backups"));
-                match rsi::dgm::promote_to_live(&ws, &b.patch, &backups) {
-                    Ok(id) => println!(
-                        "  ✓ PROMU vers l'arbre vivant (sauvegarde {id} dans {}).",
-                        backups.display()
-                    ),
-                    Err(e) => {
-                        eprintln!("  ✗ échec de la promotion : {e}");
-                        exit(1);
+                // Audit M6 : la variante évaluée = racine + lignée + son
+                // patch. Promouvoir le seul patch feu produirait un arbre
+                // vivant ≠ état évalué — on applique la chaîne complète.
+                let chain = engine.lineage_patches(b.id.as_str());
+                let mut ids = Vec::new();
+                let mut promoted_ok = true;
+                for p in chain.iter().chain(std::iter::once(&b.patch)) {
+                    match rsi::dgm::promote_to_live(&ws, p, &backups) {
+                        Ok(id) => ids.push(id),
+                        Err(e) => {
+                            eprintln!("  ✗ échec de la promotion ({}): {}", p.target, e);
+                            promoted_ok = false;
+                            break;
+                        }
                     }
+                }
+                if promoted_ok {
+                    println!(
+                        "  ✓ PROMU vers l'arbre vivant ({} patch(es), sauvegardes dans {}) : {}",
+                        ids.len(),
+                        backups.display(),
+                        ids.join(", ")
+                    );
+                } else {
+                    exit(1);
                 }
             } else {
                 println!(
                     "  (DRY-RUN : arbre vivant intact. Relancer avec --promote pour appliquer.)"
                 );
-                println!("  note : seul ce patch unique serait appliqué (variant = delta depuis la référence).");
+                println!(
+                    "  note : {} patch(es) seraient appliqués (lignée complète de la variante).",
+                    engine.lineage_patches(b.id.as_str()).len() + 1
+                );
             }
         }
     }
@@ -595,8 +624,14 @@ fn first_positional(args: &[String]) -> Option<String> {
     None
 }
 
+/// 8 premiers caractères, alignés char-boundary (audit a21 : les ids sont hex
+/// aujourd'hui, mais l'idiome brut re-paniquerait sur toute future entrée UTF-8).
 fn short(id: &str) -> &str {
-    &id[..8.min(id.len())]
+    let mut end = 8.min(id.len());
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    &id[..end]
 }
 
 fn usage() {

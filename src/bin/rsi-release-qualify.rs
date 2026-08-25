@@ -2,8 +2,17 @@ use rsi::run_local_release_qualification;
 use std::path::PathBuf;
 
 fn main() {
-    let output = std::env::args_os()
-        .nth(1)
+    // audit a22 : `-h` était traité comme nom de dossier de sortie
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.iter().any(|a| a == "-h" || a == "--help") {
+        eprintln!(
+            "rsi-release-qualify — qualification locale hard-gate\n\n\
+             USAGE:\n  rsi-release-qualify [OUT_DIR]   (défaut: ./qualification)"
+        );
+        std::process::exit(0);
+    }
+    let output = argv
+        .first()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/p9-release-qualification"));
     let artifacts = run_local_release_qualification().unwrap_or_else(|error| {

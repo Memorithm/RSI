@@ -154,8 +154,19 @@ fn main() {
     let guard = LlmGuard {
         max_iters: parse_or(&args, "--iters", 20),
         patience: parse_or(&args, "--patience", 6),
-        target: flag_value(&args, "--target").and_then(|v| v.parse().ok()),
-        min_delta: parse_or(&args, "--min-delta", 1e-9),
+        // audit M11 : --min-delta négatif/NaN cassait l'élitisme (adoption
+        // de régressions), --target NaN ne serait jamais atteint
+        target: flag_value(&args, "--target")
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|t| t.is_finite() && *t > 0.0),
+        min_delta: {
+            let d: f64 = parse_or(&args, "--min-delta", 1e-9);
+            if !d.is_finite() || d < 0.0 {
+                eprintln!("erreur : --min-delta doit être fini et >= 0 (reçu {d})");
+                std::process::exit(2);
+            }
+            d
+        },
         k: parse_or::<usize>(&args, "--k", 4).max(1),
         max_llm_calls: parse_or(&args, "--max-calls", 60),
         max_wall_clock: flag_value(&args, "--max-seconds")
@@ -169,12 +180,15 @@ fn main() {
     // --- Client Ollama (transport HTTP sur std::net, sans dépendance). ----- //
     let host = flag_value(&args, "--ollama-host").unwrap_or_else(|| "127.0.0.1".to_string());
     let port: u16 = parse_or(&args, "--ollama-port", 11434);
-    let timeout: u64 = parse_or(&args, "--timeout", 180);
+    // audit m30-pattern : --timeout 0 faisait échouer toute connexion
+    let timeout: u64 = parse_or(&args, "--timeout", 180).max(1);
     let mut client = OllamaClient::new(model.clone())
         .with_endpoint(host.clone(), port)
         .with_timeout(Duration::from_secs(timeout));
     if let Some(np) = flag_value(&args, "--num-predict").and_then(|v| v.parse::<u32>().ok()) {
-        client = client.with_num_predict(np).with_num_ctx(np + 8192);
+        // audit M10 : np+8192 en u32 débordait (panic debug / wrap release)
+        let ctx = (np as u64).saturating_add(8192).min(u32::MAX as u64) as u32;
+        client = client.with_num_predict(np).with_num_ctx(ctx);
     }
     // Leviers d'exploration (diversité des propositions LLM).
     let temperature = flag_value(&args, "--temperature").and_then(|v| v.parse::<f64>().ok());

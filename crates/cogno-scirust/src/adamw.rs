@@ -100,6 +100,12 @@ impl AdamW {
         if params.len() != grad.len() {
             return Err("adamw: longueurs params/grad incohérentes");
         }
+        // audit m17 : un gradient non fini empoisonnerait DÉFINITIVEMENT les
+        // EMA m/v (tous les pas suivants resteraient NaN même avec des
+        // gradients sains) — rejet structurel, état intact.
+        if grad.iter().any(|g| !g.is_finite()) {
+            return Err("adamw: gradient non fini (NaN/inf)");
+        }
         let mut g: Vec<f64> = grad.to_vec();
         // clip de norme (optionnel)
         if let Some(max_norm) = self.config.grad_clip {
@@ -124,9 +130,11 @@ impl AdamW {
             let m_hat = self.m[i] / (1.0 - b1.powf(t));
             let v_hat = self.v[i] / (1.0 - b2.powf(t));
             let update = lr * m_hat / (v_hat.sqrt() + eps);
-            params[i] -= update;
-            // weight decay découplé
-            params[i] -= lr * wd * params[i];
+            // weight decay découplé, appliqué au paramètre d'ENTRÉE θ_{t-1}
+            // (audit m16 : décanter le paramètre post-update divergeait de la
+            // référence Loshchilov & Hutter Alg. 2 / PyTorch AdamW)
+            let p_prev = params[i];
+            params[i] = p_prev - lr * wd * p_prev - update;
         }
         Ok(())
     }

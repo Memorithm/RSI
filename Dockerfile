@@ -28,11 +28,16 @@ RUN apk add --no-cache musl-dev
 
 WORKDIR /build
 
-# On ne copie que ce dont le build a besoin (cf. .dockerignore pour le reste).
+# On copie manifestes + membres du workspace : le crate racine dépend
+# (non-optionnellement) de cogno-core et le manifeste racine déclare les
+# members — cargo exige leurs sources même pour un build std-only.
 # Cargo.lock est requis : sans lui, `cargo` résout tout le manifeste et tente de
-# cloner les deps git privées (forge/octasoma/ccos/scirust) ⇒ échec.
+# cloner les deps git privées (octasoma/scirust) ⇒ échec.
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY forge ./forge
+COPY ccos ./ccos
+COPY crates ./crates
 
 # Features par défaut = std-only, AUCUNE dépendance crate activée ⇒ build
 # hors-ligne. `--locked` fige la résolution sur le lock (pas de clone des deps

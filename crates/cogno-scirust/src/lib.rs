@@ -26,7 +26,9 @@ pub use batch::{CognoBatchOutput, compute_cogno01_loss_batch, compute_objective_
 pub use cross_validate::{
     BatchComparison, compare_after_optim_step, compare_oracle_and_backend, CrossValidationReport,
 };
+#[allow(deprecated)]
+pub use train::validate_f32_path;
 pub use train::{
     AllocationStats, ControlledRollout, GradientAccumulator, PpoConfig, PpoSample,
-    Rollout, RolloutPolicy, compute_ppo_loss, validate_f32_path,
+    Rollout, RolloutPolicy, compute_ppo_loss, validate_f32_representable,
 };

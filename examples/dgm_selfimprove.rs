@@ -100,7 +100,7 @@ fn main() {
                 "  step {i:2} · {} · score={:>4} · variant={}",
                 if *accepted { "ACCEPTÉ " } else { "rejeté  " },
                 fitness.score,
-                &variant_id[..8.min(variant_id.len())],
+                char_safe_short(variant_id),
             ),
         }
     }
@@ -117,4 +117,13 @@ fn main() {
     println!("  (promotion explicite via rsi::dgm::promote_to_live, non appelée ici)");
 
     let _ = std::fs::remove_dir_all(&ws);
+}
+
+/// Troncature alignée char-boundary (audit a21).
+fn char_safe_short(s: &str) -> &str {
+    let mut end = 8.min(s.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }

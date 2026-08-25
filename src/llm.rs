@@ -1022,7 +1022,11 @@ impl ClaudeTransport for UreqTransport {
         headers: &[(String, String)],
         body: &str,
     ) -> Result<String, String> {
-        let mut req = ureq::post(url);
+        // timeout explicite (audit m2) : ureq 2.x n'en a AUCUN par défaut —
+        // une connexion TLS pendante bloquerait ascend_llm/DGM au-delà de tous
+        // les budgets du guard (qui ne sont vérifiés qu'entre appels).
+        const CLAUDE_TIMEOUT_SECS: u64 = 120;
+        let mut req = ureq::post(url).timeout(std::time::Duration::from_secs(CLAUDE_TIMEOUT_SECS));
         for (k, v) in headers {
             req = req.set(k, v);
         }
@@ -1694,6 +1698,12 @@ impl LlmClient for LlamaKVCacheFFIClient {
 
 // Stubs pour simuler les symboles externes llama_ lors de la liaison et des tests
 // sans nécessiter une véritable bibliothèque dynamique externe compilée.
+//
+// Audit m6 : ces stubs étaient exportés SANS condition depuis la lib — tout
+// binaire liant à la fois `rsi` et le vrai llama.cpp se cassait à l'édition de
+// liens (doublons) ou, pire, silencieusement lié aux stubs "réussissait" avec
+// une inférence fabriquée. Désormais compilés UNIQUEMENT en test.
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_load_model_from_file(
     _path: *const std::os::raw::c_char,
@@ -1702,9 +1712,11 @@ pub unsafe extern "C" fn llama_load_model_from_file(
     1 as *mut std::ffi::c_void
 }
 
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_free_model(_model: *mut std::ffi::c_void) {}
 
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_new_context_with_model(
     _model: *mut std::ffi::c_void,
@@ -1713,11 +1725,14 @@ pub unsafe extern "C" fn llama_new_context_with_model(
     2 as *mut std::ffi::c_void
 }
 
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_free(_ctx: *mut std::ffi::c_void) {}
 
+#[cfg(test)]
 static mut DUMMY_CELLS: [LlamaKVCacheCell; 1] = [LlamaKVCacheCell { pos: 0, seq_id: 0 }];
 
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_get_kv_cache_view(
     _ctx: *mut std::ffi::c_void,
@@ -1729,6 +1744,7 @@ pub unsafe extern "C" fn llama_get_kv_cache_view(
     }
 }
 
+#[cfg(test)]
 #[no_mangle]
 pub unsafe extern "C" fn llama_decode_raw(
     _ctx: *mut std::ffi::c_void,

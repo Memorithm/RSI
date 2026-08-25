@@ -93,9 +93,9 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(6)
         .clamp(1, 64);
-    let min_gain: f64 = flag_value(&args, "--min-gain")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.05);
+    // audit m30/m11 : NaN/inf ici rendait TOUTE variante inacceptable
+    let min_gain: f64 =
+        rsi::cli::parse_f64_nonneg(flag_value(&args, "--min-gain").as_deref(), "--min-gain", 0.05);
     let seed: u64 = flag_value(&args, "--seed")
         .and_then(|v| v.parse().ok())
         .unwrap_or(42);
@@ -170,6 +170,22 @@ fn main() {
                  avec --paper-llm (analyse LLM de PAPERS, modèle via --paper-model)."
             }
         );
+        // audit m26 : un `--out` demandé doit EXISTER même sur extraction vide
+        if let Some(out_path) = flag_value(&args, "--out") {
+            let report = format!(
+                "# rapport rsi-scholar — {paper}\n\n\
+                 aucune technique exploitable extraite (0 objectif).\n\
+                 {hint}\n",
+                paper = target,
+                hint = if paper_llm {
+                    "(essayez un papier plus algorithmique, ou --paper-model plus fort)"
+                } else {
+                    "(relancez avec --paper-llm pour une analyse LLM)"
+                }
+            );
+            std::fs::write(&out_path, report)
+                .unwrap_or_else(|e| eprintln!("écriture de {out_path} : {e}"));
+        }
         return;
     }
     println!(

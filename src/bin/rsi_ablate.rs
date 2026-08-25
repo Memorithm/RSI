@@ -147,11 +147,19 @@ fn run_once(a: &Ablation, seed: u64, corpus: &TaskCorpus, steps: usize) -> Metri
         .iter()
         .filter(|r| r.appr.si_after < r.appr.si_before - 0.05)
         .count() as f64;
-    let t90 = reports
-        .iter()
-        .find(|r| r.si_global >= 0.9 * si_end)
-        .map(|r| r.t as f64)
-        .unwrap_or(n);
+    // audit a23 : seuil relatif au MEILLEUR niveau atteint (départ ou fin) ;
+    // une trajectoire purement décroissante ne "converge" pas à t=1.
+    let si_start = reports.first().map(|r| r.si_global).unwrap_or(0.0);
+    let si_ref = si_start.max(si_end);
+    let t90 = if si_ref <= 0.0 {
+        f64::NAN
+    } else {
+        reports
+            .iter()
+            .find(|r| r.si_global >= 0.9 * si_ref)
+            .map(|r| r.t as f64)
+            .unwrap_or(n)
+    };
 
     Metrics {
         si_end,

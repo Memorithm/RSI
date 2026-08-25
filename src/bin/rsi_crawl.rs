@@ -137,7 +137,6 @@ fn cmd_crawl(args: &[String]) {
     };
     let options = CrawlerOptions {
         limits,
-        user_agent: "RSI-Bot/0.10".into(),
         respect_robots: o.respect_robots,
         deny_hosts: Vec::new(),
         // anti-SSRF par défaut ; --allow-private pour crawler localhost
@@ -204,7 +203,7 @@ fn cmd_fetch(args: &[String]) {
         timeout: Duration::from_secs(o.timeout_secs),
         politeness_delay: Duration::ZERO,
     };
-    match rsi::web_crawl::fetch_page_text(url, &limits) {
+    match rsi::web_crawl::fetch_page_text(url, &limits, o.allow_private) {
         Ok(page) => {
             println!("URL     : {}", page.url);
             println!("Titre   : {}", page.title);

@@ -69,16 +69,22 @@ impl GradientAccumulator {
     }
 
     /// Rend le gradient moyen (divisé par `target_steps`) et réinitialise.
-    /// Si le nombre d'étapes est inférieur à la cible, divise par la cible
-    /// quand même (contrat : accumulation exacte sur `target_steps`).
-    pub fn take_normalized(&mut self) -> Vec<f64> {
+    ///
+    /// Audit m21 : appelé avant `target_steps` pas, l'ancienne version
+    /// divisait quand même par la cible — un gradient silencieusement
+    /// sous-échelonné, ni moyenne de ce qui était accumulé ni erreur. Le
+    /// contrat est désormais structurel : fenêtre incomplète ⇒ erreur.
+    pub fn take_normalized(&mut self) -> Result<Vec<f64>, &'static str> {
+        if self.steps < self.target_steps {
+            return Err("gradient_accumulator: fenêtre incomplète (steps < target_steps)");
+        }
         let scale = self.target_steps as f64;
         let out: Vec<f64> = self.buffer.iter().map(|g| g / scale).collect();
         for b in self.buffer.iter_mut() {
             *b = 0.0;
         }
         self.steps = 0;
-        out
+        Ok(out)
     }
 }
 
@@ -131,10 +137,14 @@ pub fn relative_diff(a: f64, b: f64) -> f64 {
     (a - b).abs() / scale
 }
 
-/// Valide le chemin f32 contre le chemin f64 sur un jeu de valeurs : l'écart
-/// relatif doit rester sous `tolerance` (mixed precision autorisée seulement
-/// après validation du chemin f32 — contrat §12).
-pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
+/// Vérifie que les valeurs sont **représentables** en f32 sans débordement ni
+/// dérive relative excessive après un aller-retour `f64 → f32 → f64`.
+///
+/// Audit a14 (nom honnête) : ceci ne valide PAS un *chemin de calcul* f32 —
+/// aucune réduction/arithmétique f32 n'est comparée ici ; c'est la
+/// représentabilité et l'aller-retour qui sont testés. Un vrai chemin f32
+/// (réductions accumulées en f32) exigerait des kernels dédiés.
+pub fn validate_f32_representable(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
     for &v in f64_values {
         let v32 = v as f32 as f64;
         if relative_diff(v, v32) > tolerance {
@@ -142,6 +152,12 @@ pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> 
         }
     }
     Ok(())
+}
+
+/// Ancien nom (déprécié) : le nom promettait plus que ce qui est testé.
+#[deprecated(since = "0.1.1", note = "renommé validate_f32_representable (portée honnête)")]
+pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
+    validate_f32_representable(f64_values, tolerance)
 }
 
 // ─────────────────────────── Rollouts contrôlés ─────────────────────────── //
@@ -181,14 +197,19 @@ impl<'a> ControlledRollout<'a> {
     /// Exécute un rollout contrôlé pour `x`. La sortie passe le gate
     /// d'admissibilité avant d'être acceptée.
     pub fn run(&self, x: &[u8], provenance: &[u8]) -> CognoResult<Rollout> {
+        let t0 = std::time::Instant::now();
         let (y, log_prob) = self.policy.sample(x)?;
         FiniteScalar::try_new(log_prob).map_err(|_| CognoError::NonFinite("rollout log_prob"))?;
-        // taille approximative : longueur de y en octets = coût mémoire ;
-        // latence = 1 (mesurée par l'appelant en réalité) ; ctx = longueur de x
-        let mem = y.len();
-        let lat = 1;
-        let ctx = x.len();
-        let verdict = self.gate.verify(x, &y, provenance, mem, lat, ctx)?;
+        // audit m18 : coûts MESURÉS passés au gate (les anciennes constantes
+        // rendaient le hard-gate vacuel — lat=1 ne dépasse jamais un budget).
+        // Les champs budget_* documentent les plafonds ; le gate reste
+        // l'autorité unique de décision.
+        let mem_cost = y.len();
+        let lat_cost = t0.elapsed().as_millis() as usize;
+        let ctx_cost = x.len();
+        let verdict =
+            self.gate
+                .verify(x, &y, provenance, mem_cost, lat_cost, ctx_cost)?;
         Ok(Rollout {
             x: x.to_vec(),
             y,
@@ -278,13 +299,16 @@ mod tests {
         assert!(!acc.is_full());
         acc.accumulate(&[3.0, 4.0]).unwrap();
         assert!(acc.is_full());
-        let g = acc.take_normalized();
+        let g = acc.take_normalized().unwrap();
         assert_eq!(g, vec![2.0, 3.0]); // (1+3)/2, (2+4)/2
         assert_eq!(acc.steps_so_far(), 0);
         // le tampon est remis à zéro
         acc.accumulate(&[10.0, 10.0]).unwrap();
-        let g2 = acc.take_normalized();
-        assert_eq!(g2, vec![5.0, 5.0]);
+        // audit m21 : fenêtre incomplète ⇒ erreur, plus gradient sous-échelonné
+        assert!(acc.take_normalized().is_err());
+        acc.accumulate(&[10.0, 10.0]).unwrap();
+        let g2 = acc.take_normalized().unwrap();
+        assert_eq!(g2, vec![10.0, 10.0]); // fenêtre complète : (10+10)/2
     }
 
     #[test]
@@ -309,7 +333,11 @@ mod tests {
     fn f32_path_within_tolerance() {
         // valeurs représentables : l'écart f32/f64 est négligeable
         let vals = [0.1, 0.5, 1.0, std::f64::consts::PI, 12345.678];
-        assert!(validate_f32_path(&vals, 1e-4).is_ok());
+        {
+            #[allow(deprecated)]
+            let ok = validate_f32_path(&vals, 1e-4).is_ok();
+            assert!(ok);
+        }
     }
 
     #[test]

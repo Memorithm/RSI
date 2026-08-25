@@ -15,6 +15,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# lecture seule : aucun scope d'écriture nécessaire (m23)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # Les dépendances git Memorithm (`scirust-rsi`, `octasoma`) sont épinglées à
@@ -30,7 +34,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Toolchain Rust stable (+ clippy)
         uses: dtolnay/rust-toolchain@stable
@@ -42,7 +46,10 @@ jobs:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
         run: |
           if [ -n "$DEPS_TOKEN" ]; then
-            git config --global \
+            # --local (audit a20) : la config reste confinée au checkout ;
+            # le token doit couvrir tous les dépôts Memorithm consommés
+            # (octasoma, scirust) en lecture seule.
+            git config --local \
               url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
               "https://github.com/Memorithm/"
             echo "auth Memorithm configurée (fetch privé activé)"
@@ -51,23 +58,37 @@ jobs:
           fi
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Clippy (défaut) — 0 warning
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      - name: Tests (défaut, + doctests)
-        run: cargo test --locked
+      # --workspace : les crates membres (forge/ccos/cogno-*) portent ~85 tests
+      # qui n'étaient JAMAIS exécutés par un `cargo test` racine seul (M7).
+      - name: Tests (workspace, défaut, + doctests)
+        run: cargo test --locked --workspace
 
       # Inclut les bridges SciRust et OctaSoma contre leurs révisions canoniques
       # exactes enregistrées dans Cargo.toml/Cargo.lock.
       - name: Clippy (features publiques) — 0 warning
         run: cargo clippy --all-targets --locked --features "$PUBLIC_FEATURES" -- -D warnings
 
-      - name: Tests (features publiques)
-        run: cargo test --locked --features "$PUBLIC_FEATURES"
+      - name: Tests (workspace, features publiques)
+        run: cargo test --locked --workspace --features "$PUBLIC_FEATURES"
 
       # Toutes features confondues : la combinaison maximale n'était jamais
       # lintée (2 warnings y ont déjà échappé).
       - name: Clippy (toutes features) — 0 warning
         run: cargo clippy --workspace --all-targets --locked --all-features -- -D warnings
+
+      # Le comportement derrière web/forge/ccos/simd/… n'était que linté :
+      # désormais exécuté aussi (M7).
+      - name: Tests (workspace, toutes features)
+        run: cargo test --locked --workspace --all-features
+
+      # MSRV déclaré = 1.89 (audit a16) : vérifié au moins en `check` pour le
+      # workspace entier — une dépendance ou un idiome plus récent échoue ici.
+      - name: MSRV 1.89 — check
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          cargo +1.89.0 check --locked --workspace --all-features

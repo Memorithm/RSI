@@ -96,7 +96,9 @@ fn main() {
     let sim_num_predict: u32 = flag_value(&args, "--sim-num-predict")
         .and_then(|v| v.parse().ok())
         .unwrap_or(12288);
-    let sim_num_ctx: u32 = sim_num_predict + 8192; // prompt (~5k) + génération
+    // audit M10 : np+8192 en u32 débordait
+    let sim_num_ctx: u32 =
+        (sim_num_predict as u64).saturating_add(8192).min(u32::MAX as u64) as u32; // prompt (~5k) + génération
 
     // --- Proposeur : connexion automatique (comme rsi-dgm). ----------------- //
     let pref = flag_value(&args, "--model").or_else(|| std::env::var("RSI_LLM_MODEL").ok());
@@ -190,7 +192,9 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("  · erreur du proposeur : {e}");
-                break;
+                // audit m26 : un abort de boucle n'est pas un succès — les
+                // scripts d'enchaînement doivent voir l'échec (exit != 0).
+                std::process::exit(1);
             }
         };
         let patch = &proposal.patch;

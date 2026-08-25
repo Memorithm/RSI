@@ -596,11 +596,27 @@ impl Archive {
             .get("variants")
             .and_then(|v| v.as_array())
             .ok_or_else(|| DgmError::Apply("missing 'variants' array".to_string()))?;
-        let variants = arr
-            .iter()
-            .filter_map(Variant::from_json)
-            .collect::<Vec<_>>();
+        let mut variants = Vec::new();
+        for v in arr.iter().filter_map(Variant::from_json) {
+            variants.push(v);
+        }
+        let dropped = arr.len() - variants.len();
+        if dropped > 0 {
+            // audit a7 : des entrées malformées disparaissaient en silence —
+            // l'archive rechargée n'était plus l'archive sauvegardée.
+            crate::obs::warn(
+                "dgm.archive.dropped_on_load",
+                &format!("{dropped} entrée(s) malformée(s) ignorée(s) au chargement"),
+            );
+        }
         Ok(Archive { variants })
+    }
+
+    /// Marque haute d'`seq` : `max(seq)+1` (audit a7) — l'ancien
+    /// `archive.len()` réutilisait des seq après un reload lossy et pouvait
+    /// produire des `variant_id` dupliqués.
+    pub fn seq_watermark(&self) -> u64 {
+        self.variants.iter().map(|v| v.seq).max().unwrap_or(0) + 1
     }
 }
 
@@ -719,7 +735,10 @@ pub trait Evaluator {
 // ═════════════════════════════ Snapshot isolé ════════════════════════════ //
 
 /// Répertoires jamais utiles à copier dans un snapshot (gros et régénérés).
-const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules"];
+// `.rsi_backups` : défaut de --backups est <ws>/.rsi_backups — sans exclusion,
+// chaque post-promotion copiait TOUS les .bak dans chaque snapshot (IO ×2 par
+// step, budget 512 Mio consommé jusqu'au refus de snapshot — audit m8).
+const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", ".rsi_backups"];
 
 /// Budget total d'octets copiables dans un snapshot : au-delà, la création
 /// échoue proprement (un dépôt contenant de gros artefacts non exclus ne doit
@@ -812,6 +831,16 @@ pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Re
     if target_escapes_root(&patch.target) {
         return Err(DgmError::PathNotAllowed(patch.target.clone()));
     }
+    // Audit m7 : les snippets web/LLM peuvent orienter le proposeur vers des
+    // fichiers qui gagnent de l'EXÉCUTION au build/install (workflows CI,
+    // build.rs, manifeste…) tout en passant la barrière de tests. Ces chemins
+    // ne sont jamais promus automatiquement — édition manuelle uniquement.
+    if let Some(rule) = promote_target_denied(&patch.target) {
+        return Err(DgmError::PathNotAllowed(format!(
+            "{} (cible sensible à l'exécution : promotion automatique interdite — {})",
+            patch.target, rule
+        )));
+    }
     let target = live_root.join(&patch.target);
     let canon_root = live_root.canonicalize().unwrap_or_else(|_| live_root.to_path_buf());
     let canon_target = target.canonicalize().unwrap_or_else(|_| target.clone());
@@ -826,6 +855,32 @@ pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Re
 /// `find` doit apparaître **exactement une fois** (motif absent ou ambigu ⇒
 /// rejet : un patch ambigu ne doit jamais éditer silencieusement la mauvaise
 /// occurrence). Rend l'id de sauvegarde (16 hex SHA-256 du contenu original).
+/// Cibles dont la modification accorde de l'exécution au prochain
+/// build/install/deploy. `Some(règle)` = promotion refusée (audit m7).
+fn promote_target_denied(target: &str) -> Option<&'static str> {
+    const DENY_FILES: &[&str] = &[
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+        "Makefile",
+        "install.sh",
+        "rust-toolchain.toml",
+        ".cargo/config",
+        ".cargo/config.toml",
+    ];
+    let t = target.trim_start_matches("./");
+    if DENY_FILES.contains(&t) {
+        return Some("fichier manifeste/build");
+    }
+    if t.starts_with(".github/") || t == ".github" {
+        return Some("workflows GitHub Actions");
+    }
+    if t.starts_with(".cargo/") || t.starts_with(".cargo\\") {
+        return Some("configuration cargo");
+    }
+    None
+}
+
 fn patch_file_with_backup(
     target: &Path,
     find: &str,
@@ -942,18 +997,49 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
 }
 
 fn copy_tree_bounded(src: &Path, dst: &Path, budget: &mut u64) -> Result<()> {
+    let mut skipped_links: Vec<String> = Vec::new();
+    copy_tree_inner(src, dst, budget, &mut skipped_links)?;
+    // audit a6 : les symlinks sont intentionnellement ignorés, mais SILENCIEUX
+    // l'opérateur ne comprend pas pourquoi l'évaluation diverge de son arbre.
+    if !skipped_links.is_empty() {
+        crate::obs::warn(
+            "dgm.snapshot.symlinks_skipped",
+            &format!(
+                "{} lien(s) symbolique(s) ignoré(s) dans le snapshot : {}",
+                skipped_links.len(),
+                skipped_links.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn copy_tree_inner(
+    src: &Path,
+    dst: &Path,
+    budget: &mut u64,
+    skipped_links: &mut Vec<String>,
+) -> Result<()> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         let ty = entry.file_type()?;
         let to = dst.join(&name);
+        if ty.is_symlink() {
+            if skipped_links.len() < 16 {
+                skipped_links.push(name_str.into_owned());
+            } else if skipped_links.len() == 16 {
+                skipped_links.push("…".to_string());
+            }
+            continue;
+        }
         if ty.is_dir() {
             if SKIP_DIRS.contains(&name_str.as_ref()) {
                 continue;
             }
             std::fs::create_dir_all(&to)?;
-            copy_tree_bounded(&entry.path(), &to, budget)?;
+            copy_tree_inner(&entry.path(), &to, budget, skipped_links)?;
         } else if ty.is_file() {
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
             if len > *budget {
@@ -966,7 +1052,6 @@ fn copy_tree_bounded(src: &Path, dst: &Path, budget: &mut u64) -> Result<()> {
             *budget -= len;
             std::fs::copy(entry.path(), &to)?;
         }
-        // liens symboliques et autres types de nœuds intentionnellement ignorés.
     }
     Ok(())
 }
@@ -1033,7 +1118,12 @@ impl Evaluator for CargoEvaluator {
         }
         let (test_ok, out) = run_bounded(test, self.timeout, self.max_output)
             .map_err(|e| DgmError::Evaluation(format!("cargo test: {e}")))?;
-        let (passed, failed) = parse_test_counts(&out);
+        let (passed, failed) = match parse_test_counts(&out) {
+            Ok(c) => c,
+            // audit M5 : structure de sortie suspecte ⇒ on ne fait AUCUNE
+            // confiance aux comptes — le candidat est rejeté, pas mesuré.
+            Err(reason) => return Ok(Fitness::broken(format!("test output untrusted: {reason}"))),
+        };
         let passrate = {
             let total = passed + failed;
             if total == 0 {
@@ -1126,11 +1216,14 @@ fn meets_min_gain(cand: &Fitness, parent: &Fitness, min_gain: f64) -> bool {
 /// Extrait la dernière valeur `RSI_BENCH_SCORE=<f64>` d'une sortie de bench
 /// (fonction pure, testable). `None` si absente ou non finie.
 fn parse_bench_score(output: &str) -> Option<f64> {
+    // plafond de vraisemblance (audit M5) : le score est auto-déclaré par le
+    // bench du candidat ; au-delà de ce bornes, la valeur est réputée forgée.
+    const BENCH_SCORE_CEILING: f64 = 1.0e6;
     output.lines().rev().find_map(|l| {
         l.trim()
             .strip_prefix("RSI_BENCH_SCORE=")
             .and_then(|v| v.trim().parse::<f64>().ok())
-            .filter(|s| s.is_finite())
+            .filter(|s| s.is_finite() && s.abs() <= BENCH_SCORE_CEILING)
     })
 }
 
@@ -1206,26 +1299,58 @@ fn run_bounded(
 }
 
 /// Somme les lignes `test result: ok. N passed; M failed` que `cargo` émet par
-/// binaire de test.
-fn parse_test_counts(output: &str) -> (u32, u32) {
+/// binaire de test, avec garde anti-fabrication (audit M5) :
+/// - **réconciliation structurelle** : une ligne `test result:` doit
+///   correspondre à un binaire annoncé (`Running …` / section `Doc-tests`) —
+///   un candidat qui injecte des lignes nues sur stdout (échappant à la capture
+///   libtest) crée un surplus détectable ;
+/// - **plafond de vraisemblance** : tout décompte unitaire > 1 000 000 est
+///   réputé forgé.
+///
+/// Ce sont des garde-fous heuristiques (un candidat déterminé peut forger les
+/// en-têtes aussi) ; ils transforment la falsification triviale en effort
+/// délibéré. Le canal pleinement fiable exigerait un runner de tests signé.
+fn parse_test_counts(output: &str) -> std::result::Result<(u32, u32), String> {
+    const SINGLE_BINARY_CEILING: u64 = 1_000_000;
     let mut passed = 0u32;
     let mut failed = 0u32;
+    let mut results = 0usize;
+    let mut binaries = 0usize;
     for line in output.lines() {
         let line = line.trim();
-        if !line.starts_with("test result:") {
-            continue;
-        }
-        let tokens: Vec<&str> = line.split_whitespace().collect();
-        for pair in tokens.windows(2) {
-            let kind = pair[1].trim_end_matches(';');
-            match kind {
-                "passed" => passed += pair[0].parse().unwrap_or(0),
-                "failed" => failed += pair[0].parse().unwrap_or(0),
-                _ => {}
+        if line.starts_with("test result:") {
+            results += 1;
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            for pair in tokens.windows(2) {
+                let kind = pair[1].trim_end_matches(';');
+                let n: u64 = pair[0].parse().unwrap_or(0);
+                if n > SINGLE_BINARY_CEILING {
+                    return Err(format!(
+                        "décompte invraisemblable ({n}) — sortie de test non fiable"
+                    ));
+                }
+                match kind {
+                    "passed" => passed += n as u32,
+                    "failed" => failed += n as u32,
+                    _ => {}
+                }
             }
+        } else if line.starts_with("running ")
+            || line.starts_with("Running ")
+            || line.starts_with("Doc-tests ")
+        {
+            binaries += 1;
         }
     }
-    (passed, failed)
+    // surplus de résultats sans binaire annoncé ⇒ injection probable
+    // (écriture directe sur stdout, échappant à la capture libtest — audit M5)
+    if results > binaries {
+        return Err(format!(
+            "{results} lignes 'test result:' pour {binaries} binaires annoncés \
+             — comptes potentiellement fabriqués"
+        ));
+    }
+    Ok((passed, failed))
 }
 
 fn tail(s: &str, max: usize) -> String {
@@ -1674,7 +1799,7 @@ pub struct DgmEngine<P: Proposer, E: Evaluator> {
 
 impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
     pub fn new(archive: Archive, proposer: P, evaluator: E, config: DgmConfig, seed: u64) -> Self {
-        let next_seq = archive.len() as u64;
+        let next_seq = archive.seq_watermark();
         Self {
             archive,
             proposer,
@@ -1784,7 +1909,8 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             self.prescreen_skips += 1;
             Fitness::broken("prescreen: prédit cassé (build évité)")
         } else {
-            match self.evaluate_candidate(&proposal.patch) {
+            let ancestors = self.lineage_patches(parent.id.as_str());
+            match self.evaluate_candidate(&proposal.patch, &ancestors) {
                 Ok(f) => {
                     self.capture_trajectory(&proposal.patch, &f);
                     f
@@ -1849,6 +1975,20 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
     }
 
     /// Demande une proposition (rejets passés + feedback simulé du step).
+    /// Construit la **vue parent** : snapshot du vivant + lignée appliquée.
+    /// Le proposeur lit cet état (l'état dont son patch va partir), pas
+    /// l'arbre vivant — sinon ses FIND ne colleraient jamais à la pointe de
+    /// la lignée (audit M6). Retourne `None` si l'arbre est illisible.
+    fn parent_view(&self, parent_id: &str) -> Option<WorkspaceSnapshot> {
+        let snap = WorkspaceSnapshot::create(&self.config.workspace_root).ok()?;
+        for anc in self.lineage_patches(parent_id) {
+            if snap.apply(&anc).is_err() {
+                return None;
+            }
+        }
+        Some(snap)
+    }
+
     fn propose_with(
         &mut self,
         parent: &Variant,
@@ -1862,8 +2002,13 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             .as_ref()
             .map(|w| w.search(&self.config.goal, 4))
             .unwrap_or_default();
+        // Vue parent : replie la lignée sur un snapshot (fallback = vivant).
+        let view = self.parent_view(parent.id.as_str());
+        let fallback_root = std::path::PathBuf::from(&self.config.workspace_root);
+        let view_root: &std::path::Path =
+            view.as_ref().map(|v| v.root()).unwrap_or(&fallback_root);
         let ctx = ImprovementContext {
-            workspace_root: &self.config.workspace_root,
+            workspace_root: view_root,
             goal: &self.config.goal,
             parent_fitness: parent.fitness.as_ref(),
             recent_rejections: rejections,
@@ -1908,8 +2053,43 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         });
     }
 
-    fn evaluate_candidate(&self, patch: &Patch) -> Result<Fitness> {
+    /// Patches de la lignée `root → … → parent`, dans l'ordre d'application
+    /// (le patch noop de la racine exclu). Garde anti-cycle bornée.
+    ///
+    /// Audit M6 : les enfants étaient évalués sur `racine + leur seul patch` —
+    /// la lignée Darwin-Gödel était fictive. Désormais le snapshot applique
+    /// TOUTE la chaîne avant le patch du candidat : un enfant hérite
+    /// réellement de son parent.
+    pub fn lineage_patches(&self, variant_id: &str) -> Vec<Patch> {
+        let mut chain: Vec<Patch> = Vec::new();
+        let mut cur = Some(variant_id.to_string());
+        for _ in 0..4096 {
+            let Some(id) = cur else { break };
+            let Some(v) = self.archive.get(&id) else { break };
+            cur = v.parent.clone();
+            if v.parent.is_some() {
+                if !v.patch.is_noop() {
+                    chain.push(v.patch.clone());
+                }
+            } else {
+                break; // racine atteinte
+            }
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn evaluate_candidate(&self, patch: &Patch, ancestors: &[Patch]) -> Result<Fitness> {
         let snap = WorkspaceSnapshot::create(&self.config.workspace_root)?;
+        for (i, anc) in ancestors.iter().enumerate() {
+            if let Err(e) = snap.apply(anc) {
+                // La lignée enregistrée ne s'applique plus sur l'arbre courant
+                // (contenu dérivé) : échec honnête, pas un crash.
+                return Ok(Fitness::broken(format!(
+                    "ancestor #{i} did not apply: {e}"
+                )));
+            }
+        }
         if let Err(e) = snap.apply(patch) {
             // Un patch qui ne s'applique pas (motif manquant) est une candidate
             // ratée, pas un crash de la boucle.
@@ -2188,6 +2368,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&backups);
     }
 
+    /// Audit m7 : les fichiers qui gagnent de l'exécution au build/deploy
+    /// (manifestes, build.rs, workflows, install) ne sont jamais promus.
+    #[test]
+    fn promote_refuses_execution_sensitive_targets() {
+        let live = fresh_dir("promote-deny");
+        write(&live, "src/lib.rs", "fn x() {}");
+        std::fs::create_dir_all(live.join(".github/workflows")).unwrap();
+        let backups = fresh_dir("promote-deny-bak");
+        for target in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "build.rs",
+            "Makefile",
+            "install.sh",
+            ".github/workflows/ci.yml",
+            "./Cargo.toml",
+        ] {
+            let err = promote_to_live(
+                &live,
+                &Patch::new(target, "anything", "malicious"),
+                &backups,
+            );
+            assert!(matches!(err, Err(DgmError::PathNotAllowed(_))), "{target}");
+        }
+        // une cible normale reste promouvable
+        promote_to_live(
+            &live,
+            &Patch::new("src/lib.rs", "fn x() {}", "fn y() {}"),
+            &backups,
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&live);
+        let _ = std::fs::remove_dir_all(&backups);
+    }
+
     #[test]
     fn promote_rejects_path_escape() {
         // Défense en profondeur : une cible hors racine est rejetée AVANT
@@ -2237,12 +2452,31 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 running 2 tests
 test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
 ";
-        assert_eq!(parse_test_counts(out), (4, 1));
+        assert_eq!(parse_test_counts(out), Ok((4, 1)));
     }
 
     #[test]
     fn no_test_lines_is_zero() {
-        assert_eq!(parse_test_counts("nothing here"), (0, 0));
+        assert_eq!(parse_test_counts("nothing here"), Ok((0, 0)));
+    }
+
+    /// Audit M5 : une ligne `test result:` injectée sur stdout (sans binaire
+    /// annoncé) rend la sortie non fiable.
+    #[test]
+    fn forged_result_line_is_rejected() {
+        let legit = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n";
+        assert_eq!(parse_test_counts(legit), Ok((3, 0)));
+        let forged = format!(
+            "{legit}test result: ok. 1000000 passed; 0 failed; 0 ignored; 0 measured\n"
+        );
+        assert!(parse_test_counts(&forged).is_err(), "injection détectée");
+    }
+
+    /// Audit M5 : plafond de vraisemblance par décompte unitaire.
+    #[test]
+    fn implausible_counts_are_rejected() {
+        let out = "running 9 tests\ntest result: ok. 2000000 passed; 0 failed; 0 ignored\n";
+        assert!(parse_test_counts(out).is_err());
     }
 
     #[test]
@@ -2558,6 +2792,37 @@ RATIONALE: bump the constant
         assert!(best.fitness.as_ref().unwrap().score >= 1.0);
         // L'arbre vivant n'est jamais muté par la boucle.
         assert_eq!(read_level(&ws), 0);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Audit M6 : la lignée est RÉELLE — le score d'un enfant de profondeur n
+    /// reflète les n patches cumulés (chaînés), pas un delta isolé depuis la
+    /// racine. L'Incrementer lit la vue parent (level=n) et propose n+1 ;
+    /// l'évaluation rejoue la chaîne complète avant son patch.
+    #[test]
+    fn lineage_is_replayed_into_child_evaluation() {
+        let ws = toy_workspace("lin");
+        let mut eng = engine(&ws);
+        eng.run(3).unwrap();
+        // profondeur réelle atteinte (génération ≥ 2)
+        let max_gen = eng
+            .archive()
+            .variants
+            .iter()
+            .map(|v| v.generation)
+            .max()
+            .unwrap_or(0);
+        assert!(max_gen >= 2, "la boucle ne chaîne pas au-delà de la racine");
+        // le meilleur score == level cumulé (score = read_level)
+        let best = eng.best().unwrap();
+        assert_eq!(
+            best.fitness.as_ref().unwrap().score,
+            best.generation as f64,
+            "l'enfant doit évaluer la lignée ENTIÈRE, pas son seul patch"
+        );
+        // la lignée enregistrée est rejouable et ordonnée
+        let chain = eng.lineage_patches(best.id.as_str());
+        assert_eq!(chain.len(), best.generation as usize);
         let _ = std::fs::remove_dir_all(&ws);
     }
 

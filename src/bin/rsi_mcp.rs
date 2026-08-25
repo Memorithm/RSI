@@ -417,6 +417,12 @@ mod dgm_job {
     use rsi::json::Json;
     use std::sync::{Arc, Mutex};
 
+    /// Verrou insensible au poison (audit M12) : un panic d'un thread ne doit
+    /// jamais tuer le serveur entier par contamination du mutex.
+    pub fn lock_ok<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[derive(Default)]
     pub struct JobState {
         pub running: bool,
@@ -435,7 +441,7 @@ mod dgm_job {
     }
 
     pub fn status(shared: &Shared) -> Json {
-        let st = shared.lock().unwrap();
+        let st = lock_ok(shared);
         let mut out = Json::obj();
         out.set("running", Json::Bool(st.running))
             .set("goal", Json::Str(st.goal.clone()))
@@ -466,7 +472,7 @@ mod dgm_job {
         use std::time::Duration;
 
         {
-            let st = shared.lock().unwrap();
+            let st = lock_ok(shared);
             if st.running {
                 return Err("un job DGM tourne déjà — interroger rsi_dgm_status".to_string());
             }
@@ -500,9 +506,12 @@ mod dgm_job {
             .unwrap_or(8)
             .clamp(1, 64);
         let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+        // audit m30 : 1e400 via JSON => inf ; un min_gain non fini ne peut
+        // être atteint par aucune variante — borné ici.
         let min_gain = args
             .get("min_gain")
             .and_then(|v| v.as_f64())
+            .filter(|g| g.is_finite() && *g >= 0.0)
             .unwrap_or(0.05);
         let timeout_secs = args
             .get("timeout_secs")
@@ -536,7 +545,7 @@ mod dgm_job {
             .ok_or_else(|| format!("aucun modèle utilisable sur {host}:{port}"))?;
 
         {
-            let mut st = shared.lock().unwrap();
+            let mut st = lock_ok(shared);
             *st = JobState {
                 running: true,
                 goal: goal.clone(),
@@ -547,10 +556,15 @@ mod dgm_job {
         }
 
         let state = Arc::clone(shared);
+        let state_for_panic = Arc::clone(shared);
         let model_name = model.clone();
-        std::thread::spawn(move || {
+        // Audit M12 : tout panic dans ce thread empoisonnait le mutex (le
+        // prochain status() paniquait sur le thread principal => serveur mort)
+        // ou laissait running=true à jamais. Le corps est exécuté sous
+        // catch_unwind : l'échec devient une erreur structurée du job.
+        let body = move || {
             let fail = |state: &Shared, msg: String| {
-                let mut st = state.lock().unwrap();
+                let mut st = lock_ok(state);
                 st.error = Some(msg);
                 st.running = false;
                 st.phase = "échec".to_string();
@@ -584,7 +598,7 @@ mod dgm_job {
 
             for i in 0..steps {
                 {
-                    let mut st = state.lock().unwrap();
+                    let mut st = lock_ok(&state);
                     st.phase = format!("étape {}/{steps}", i + 1);
                 }
                 let outcome = match engine.step() {
@@ -627,7 +641,7 @@ mod dgm_job {
                             );
                     }
                 }
-                state.lock().unwrap().outcomes.push(j);
+                lock_ok(&state).outcomes.push(j);
             }
 
             let best = engine.best().map(|v| {
@@ -649,10 +663,22 @@ mod dgm_job {
                 );
                 b
             });
-            let mut st = state.lock().unwrap();
+            let mut st = lock_ok(&state);
             st.best = best;
             st.running = false;
             st.phase = "terminé".to_string();
+        };
+        // corps exécuté sous catch_unwind (audit M12) : un panic devient une
+        // erreur structurée du job, jamais un mutex empoisonné ni un serveur mort.
+        std::thread::spawn(move || {
+            let state2 = state_for_panic;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+            if result.is_err() {
+                let mut st = lock_ok(&state2);
+                st.error = Some("panic interne du job DGM (attrapé)".to_string());
+                st.running = false;
+                st.phase = "échec".to_string();
+            }
         });
 
         let mut out = Json::obj();

@@ -144,7 +144,11 @@ jobs:
         env:
           FLAT_REQUIRE_WGPU: "1"
           WGPU_BACKEND: vulkan
-        run: cargo +1.89.0 test --features wgpu --tests --locked -- --nocapture
+        run: # NOTE : sans --locked ici — le checkout FLAT épinglé embarque un
+        # Cargo.lock périmé par rapport à son manifeste ; le régénérer est
+        # déterministe (sources figées par révision) et l'upstream doit le
+        # rafraîchir de son côté.
+        run: cargo +1.89.0 test --features wgpu --tests -- --nocapture
 
       - name: Replay SciRust FLAT M15 compile-time contract
         working-directory: scirust

@@ -35,20 +35,20 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
       - name: Checkout exact RSI qualification head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: rsi
 
       - name: Checkout exact qualified SciRust
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Memorithm/scirust
           ref: 07d3524bc241d59142c22515a009c8c2b64ef50e
           path: scirust
 
       - name: Checkout exact qualified FLAT M15
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: Memorithm/FLAT-ATTENTION
           ref: 974ebbaf95f54917dba0dc3f394d9ad1a92e8349

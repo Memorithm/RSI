@@ -192,7 +192,9 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("  · erreur du proposeur : {e}");
-                break;
+                // audit m26 : un abort de boucle n'est pas un succès — les
+                // scripts d'enchaînement doivent voir l'échec (exit != 0).
+                std::process::exit(1);
             }
         };
         let patch = &proposal.patch;

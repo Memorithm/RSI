@@ -82,6 +82,15 @@ fn integrated(
 }
 
 fn main() {
+    // audit a22 : `--help` lançait un run complet (écritures incluses)
+    if std::env::args().any(|a| a == "-h" || a == "--help") {
+        eprintln!(
+            "rsi-full — run intégré (agent + mémoire + substrat + knowledge)\n\n\
+             USAGE:\n  rsi-full [n_steps] [seed] [optimizer]\n\n\
+             Exports (écrasent) : rsi_full_trajectory.csv/.json/.svg dans le cwd.\n"
+        );
+        std::process::exit(0);
+    }
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let compare = argv.iter().any(|a| a == "compare");
     let nums: Vec<usize> = argv.iter().filter_map(|a| a.parse().ok()).collect();

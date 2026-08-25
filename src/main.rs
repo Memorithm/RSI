@@ -133,16 +133,27 @@ fn main() {
         end.state_norm,
     );
 
+    // audit m26 : un export DEMANDÉ manquant doit faire échouer le processus
+    let mut export_failed = false;
     if let Some(path) = &args.csv {
         match report::write_csv(&reports, path) {
             Ok(()) => println!("✓ trajectoire CSV écrite : {path}"),
-            Err(e) => eprintln!("✗ échec écriture CSV {path} : {e}"),
+            Err(e) => {
+                eprintln!("✗ échec écriture CSV {path} : {e}");
+                export_failed = true;
+            }
         }
     }
     if let Some(path) = &args.json {
         match report::write_json(&reports, path) {
             Ok(()) => println!("✓ trajectoire JSON écrite : {path}"),
-            Err(e) => eprintln!("✗ échec écriture JSON {path} : {e}"),
+            Err(e) => {
+                eprintln!("✗ échec écriture JSON {path} : {e}");
+                export_failed = true;
+            }
         }
+    }
+    if export_failed {
+        std::process::exit(1);
     }
 }

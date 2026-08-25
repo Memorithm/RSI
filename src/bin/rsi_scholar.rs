@@ -93,9 +93,9 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(6)
         .clamp(1, 64);
-    let min_gain: f64 = flag_value(&args, "--min-gain")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.05);
+    // audit m30/m11 : NaN/inf ici rendait TOUTE variante inacceptable
+    let min_gain: f64 =
+        rsi::cli::parse_f64_nonneg(flag_value(&args, "--min-gain").as_deref(), "--min-gain", 0.05);
     let seed: u64 = flag_value(&args, "--seed")
         .and_then(|v| v.parse().ok())
         .unwrap_or(42);

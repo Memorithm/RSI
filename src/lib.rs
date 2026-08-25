@@ -196,6 +196,28 @@ pub use knowledge::{CorpusKnowledge, KnowledgeSource, PapersKnowledge};
 pub use loop_ctrl::{LoopConfig, LoopObserver, LoopOutcome, StopReason};
 pub use measured_substrate::MeasuredSubstrate;
 pub use memory::{ContextMemory, LinearContextMemory};
+
+/// Helpers CLI partagés par les binaires (audit m30 : plus de retombées
+/// silencieuses sur les valeurs numériques invalides).
+pub mod cli {
+    /// Parse une valeur de flag en `f64` fini et >= 0 ; message + défaut sinon.
+    pub fn parse_f64_nonneg(
+        raw: Option<&str>,
+        flag: &str,
+        default: f64,
+    ) -> f64 {
+        match raw {
+            Some(v) => match v.parse::<f64>() {
+                Ok(x) if x.is_finite() && x >= 0.0 => x,
+                _ => {
+                    eprintln!("attention : {flag}='{v}' invalide (fini >= 0 requis), défaut utilisé");
+                    default
+                }
+            },
+            None => default,
+        }
+    }
+}
 pub use meta::{CmaEsMeta, DgmMetaParams, MetaOptimizer, MetaSearch, MetaStrategy};
 pub use meta_neuro_symbolic::{
     compute_meta_ns_loss, AgentExecutionTrace, IntegritySha256Validator, MetaNSConfig, MetaNSState,

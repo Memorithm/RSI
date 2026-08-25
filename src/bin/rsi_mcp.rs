@@ -506,9 +506,12 @@ mod dgm_job {
             .unwrap_or(8)
             .clamp(1, 64);
         let seed = args.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+        // audit m30 : 1e400 via JSON => inf ; un min_gain non fini ne peut
+        // être atteint par aucune variante — borné ici.
         let min_gain = args
             .get("min_gain")
             .and_then(|v| v.as_f64())
+            .filter(|g| g.is_finite() && *g >= 0.0)
             .unwrap_or(0.05);
         let timeout_secs = args
             .get("timeout_secs")

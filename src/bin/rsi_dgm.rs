@@ -196,7 +196,9 @@ fn main() {
             client = client.with_top_p(p);
         }
         if let Some(np) = prop_np {
-            client = client.with_num_predict(np).with_num_ctx(np + 8192);
+            // audit M10 : np+8192 en u32 débordait
+            let ctx = (np as u64).saturating_add(8192).min(u32::MAX as u64) as u32;
+            client = client.with_num_predict(np).with_num_ctx(ctx);
         }
         Box::new(LlmCodeModel::new(client))
     };
@@ -321,7 +323,7 @@ fn main() {
             .with_endpoint(host.clone(), port)
             .with_timeout(Duration::from_secs(timeout_secs))
             .with_num_predict(np)
-            .with_num_ctx(np + 8192);
+            .with_num_ctx((np as u64).saturating_add(8192).min(u32::MAX as u64) as u32);
         engine = engine.with_predictor(Box::new(WorldModelPredictor { client }));
         prescreen_note = format!(", pré-crible={sim_model}");
         let mode = if revise > 0 {

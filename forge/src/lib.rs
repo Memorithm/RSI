@@ -237,12 +237,31 @@ impl<D: Domain> Engine<D> {
 
             let parents: Vec<&D::Cand> = population.iter().map(|i| &i.cand).collect();
             let mut next: Vec<Individual<D::Cand>> = population.clone();
-            while next.len() < pop_size {
-                let cand = self.domain.mutate(&mut rng, &parents)?;
+            // audit a11 : une erreur ponctuelle de mutation/évaluation en cours
+            // de campagne ne doit pas tuer la recherche (même tolérance que les
+            // seeds initiaux) — MAIS la tolérance est bornée : au-delà de
+            // `pop_size` échecs consécutifs, le domaine est cassé et on sort.
+            let mut consecutive_failures = 0usize;
+            while next.len() < pop_size && consecutive_failures <= pop_size {
+                let cand = match self.domain.mutate(&mut rng, &parents) {
+                    Ok(c) => c,
+                    Err(_) => {
+                        consecutive_failures += 1;
+                        continue;
+                    }
+                };
                 let seed = self.config.base_seed
                     ^ (gen + 1).wrapping_mul(0x9E37_79B9)
                     ^ (next.len() as u64).wrapping_mul(0x85EB_CA6B);
-                next.push(self.evaluate(&cand, seed)?);
+                match self.evaluate(&cand, seed) {
+                    Ok(individual) => {
+                        consecutive_failures = 0;
+                        next.push(individual);
+                    }
+                    Err(_) => {
+                        consecutive_failures += 1;
+                    }
+                }
             }
             population = next;
         }

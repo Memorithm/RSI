@@ -137,10 +137,14 @@ pub fn relative_diff(a: f64, b: f64) -> f64 {
     (a - b).abs() / scale
 }
 
-/// Valide le chemin f32 contre le chemin f64 sur un jeu de valeurs : l'écart
-/// relatif doit rester sous `tolerance` (mixed precision autorisée seulement
-/// après validation du chemin f32 — contrat §12).
-pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
+/// Vérifie que les valeurs sont **représentables** en f32 sans débordement ni
+/// dérive relative excessive après un aller-retour `f64 → f32 → f64`.
+///
+/// Audit a14 (nom honnête) : ceci ne valide PAS un *chemin de calcul* f32 —
+/// aucune réduction/arithmétique f32 n'est comparée ici ; c'est la
+/// représentabilité et l'aller-retour qui sont testés. Un vrai chemin f32
+/// (réductions accumulées en f32) exigerait des kernels dédiés.
+pub fn validate_f32_representable(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
     for &v in f64_values {
         let v32 = v as f32 as f64;
         if relative_diff(v, v32) > tolerance {
@@ -148,6 +152,12 @@ pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> 
         }
     }
     Ok(())
+}
+
+/// Ancien nom (déprécié) : le nom promettait plus que ce qui est testé.
+#[deprecated(since = "0.1.1", note = "renommé validate_f32_representable (portée honnête)")]
+pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
+    validate_f32_representable(f64_values, tolerance)
 }
 
 // ─────────────────────────── Rollouts contrôlés ─────────────────────────── //
@@ -323,7 +333,11 @@ mod tests {
     fn f32_path_within_tolerance() {
         // valeurs représentables : l'écart f32/f64 est négligeable
         let vals = [0.1, 0.5, 1.0, std::f64::consts::PI, 12345.678];
-        assert!(validate_f32_path(&vals, 1e-4).is_ok());
+        {
+            #[allow(deprecated)]
+            let ok = validate_f32_path(&vals, 1e-4).is_ok();
+            assert!(ok);
+        }
     }
 
     #[test]

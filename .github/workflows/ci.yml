@@ -46,7 +46,10 @@ jobs:
           DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
         run: |
           if [ -n "$DEPS_TOKEN" ]; then
-            git config --global \
+            # --local (audit a20) : la config reste confinée au checkout ;
+            # le token doit couvrir tous les dépôts Memorithm consommés
+            # (octasoma, scirust) en lecture seule.
+            git config --local \
               url."https://x-access-token:${DEPS_TOKEN}@github.com/Memorithm/".insteadOf \
               "https://github.com/Memorithm/"
             echo "auth Memorithm configurée (fetch privé activé)"

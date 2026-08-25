@@ -2,6 +2,7 @@ name: P9 Release Qualification
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - "src/release_compatibility.rs"
       - "src/release_qualification.rs"
@@ -15,6 +16,7 @@ permissions:
 
 jobs:
   exact-lineage-e2e:
+    name: p9-exact-lineage-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -142,7 +144,7 @@ jobs:
         env:
           FLAT_REQUIRE_WGPU: "1"
           WGPU_BACKEND: vulkan
-        run: cargo +1.89.0 test --features wgpu --tests -- --nocapture
+        run: cargo +1.89.0 test --features wgpu --tests --locked -- --nocapture
 
       - name: Replay SciRust FLAT M15 compile-time contract
         working-directory: scirust
@@ -160,3 +162,7 @@ jobs:
           echo "RSI qualification head: $(git -C rsi rev-parse HEAD)"
           echo "SciRust locked: $(git -C scirust rev-parse HEAD)"
           echo "FLAT locked: $(git -C flat rev-parse HEAD)"
+
+concurrency:
+  group: qual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

@@ -2,6 +2,7 @@ name: P10 Release Qualification
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - "src/release_compatibility.rs"
       - "src/release_qualification.rs"
@@ -16,6 +17,7 @@ permissions:
 
 jobs:
   exact-lineage-e2e:
+    name: p10-exact-lineage-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -172,7 +174,7 @@ jobs:
         env:
           FLAT_REQUIRE_WGPU: "1"
           WGPU_BACKEND: vulkan
-        run: cargo +1.89.0 test --features wgpu --tests -- --nocapture
+        run: cargo +1.89.0 test --features wgpu --tests --locked -- --nocapture
 
       - name: Replay P10.3 resident grouped training parity on lavapipe
         working-directory: scirust
@@ -199,3 +201,7 @@ jobs:
           echo "SciRust locked: $(git -C scirust rev-parse HEAD)"
           echo "FLAT locked: $(git -C flat rev-parse HEAD)"
           echo "SGEMM winner promotion: none"
+
+concurrency:
+  group: qual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

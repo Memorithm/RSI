@@ -470,14 +470,37 @@ mod tests {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(10_000);
-        let mut rng = Rng::new(0x5EED);
+        // Graine paramétrable (RSI_JSON_FUZZ_SEED) : sans elle, le job nightly
+        // rejouerait exactement les mêmes 5 M entrées à chaque exécution —
+        // zéro couverture nouvelle après la première semaine (audit M15).
+        // Défaut : dérivé de l'horloge → corpus différent à chaque run.
+        let seed: u64 = std::env::var("RSI_JSON_FUZZ_SEED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0x5EED)
+            });
+        eprintln!("[fuzz-json] graine = {seed} ({iters} itérations)");
+        let mut rng = Rng::new(seed);
         for i in 0..iters {
             let len = rng.uniform_range(0.0, 48.0) as usize;
             let s: String = (0..len)
                 .map(|_| ALPHABET[(rng.uniform_range(0.0, ALPHABET.len() as f64)) as usize])
                 .collect();
             // le seul contrat : pas de panic. Ok ou Err, peu importe.
-            let _ = Json::parse(&s);
+            // En cas de panic, on imprime l'échantillon fautif AVANT de
+            // propager — reproductible via RSI_JSON_FUZZ_SEED + itération i.
+            let sample = s.clone();
+            let idx = i;
+            if std::panic::catch_unwind(|| Json::parse(&sample)).is_err() {
+                eprintln!(
+                    "[fuzz-json] PANIC à l'itération {idx} (graine {seed}) sur :\n{sample:?}"
+                );
+                panic!("fuzz-json : panic du parseur (échantillon ci-dessus)");
+            }
             const PROGRESS_EVERY: u64 = 1_000_000;
             if i > 0 && i % PROGRESS_EVERY == 0 {
                 eprintln!("[fuzz-json] {i} entrées hostiles sans panic…");

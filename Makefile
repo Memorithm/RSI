@@ -30,7 +30,7 @@ connect:
 ## ci : reproduit en local exactement les checks de la CI GitHub Actions
 ## (clippy -D warnings + tests, en défaut puis avec les features publiques,
 ## scirust inclus — même liste que ci.yml). À lancer avant de pousser.
-PUBLIC_FEATURES := "wasm observability simd llm-ollama llm-claude-ureq scirust"
+PUBLIC_FEATURES := "wasm observability simd llm-ollama llm-claude-ureq scirust octasoma"
 ci:
 	cargo clippy --all-targets --locked -- -D warnings
 	cargo test --locked

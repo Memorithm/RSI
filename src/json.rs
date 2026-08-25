@@ -97,7 +97,11 @@ impl Json {
             Json::Null => out.push_str("null"),
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             Json::Num(n) => {
-                if n.fract() == 0.0 && n.abs() < 1e15 {
+                // audit m9 : non fini (ne devrait plus être produit par le
+                // parser) => `null`, jamais `inf`/`NaN` (JSON invalide).
+                if !n.is_finite() {
+                    out.push_str("null");
+                } else if n.fract() == 0.0 && n.abs() < 1e15 {
                     let _ = write!(out, "{}", *n as i64);
                 } else {
                     let _ = write!(out, "{}", n);
@@ -390,10 +394,19 @@ impl<'a> Parser<'a> {
         }
         let end = self.pos();
         let slice: &str = &self.input[start..end];
+        // audit m9 : `1e999` parse en +inf SILENCIEusement — la valeur
+        // ressortait ensuite sérialisée en `inf` (JSON invalide) et
+        // contaminait les calculs. RFC 8259 : rejet explicite.
         slice
             .parse::<f64>()
-            .map(Json::Num)
             .map_err(|_| format!("nombre invalide '{slice}'"))
+            .and_then(|n| {
+                if n.is_finite() {
+                    Ok(Json::Num(n))
+                } else {
+                    Err(format!("nombre hors bornes finies : '{slice}'"))
+                }
+            })
     }
 }
 

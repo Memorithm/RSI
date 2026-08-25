@@ -434,7 +434,12 @@ impl MetaSearch for CmaEsMeta {
             current.clone()
         };
         if best_si >= baseline_si {
-            (MetaStrategy::decode(&best_theta, n_sw), best_si)
+            // audit m10 : `encode` ne sérialise pas les hyperparams DGM —
+            // `decode` les remet à DEFAULT et une révision "réussie" écrasait
+            // silencieusement min_score_gain/simulated_revisions/explore_budget.
+            let mut revised = MetaStrategy::decode(&best_theta, n_sw);
+            revised.dgm = baseline.dgm.clone();
+            (revised, best_si)
         } else {
             (baseline, baseline_si)
         }

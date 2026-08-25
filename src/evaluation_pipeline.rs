@@ -260,6 +260,9 @@ pub enum EvaluationPipelineError {
     Spawn(String),
     Wait(String),
     CaptureThreadPanic,
+    /// Les lecteurs n'ont pas terminé dans le délai de grâce après le kill
+    /// (un petit-fils hérite des pipes et ne meurt pas avec l'enfant direct).
+    CaptureThreadHung,
 }
 
 impl fmt::Display for EvaluationPipelineError {
@@ -277,6 +280,9 @@ impl fmt::Display for EvaluationPipelineError {
             Self::Spawn(message) => write!(f, "evaluation process spawn failed: {message}"),
             Self::Wait(message) => write!(f, "evaluation process wait failed: {message}"),
             Self::CaptureThreadPanic => write!(f, "evaluation output capture thread panicked"),
+            Self::CaptureThreadHung => {
+                write!(f, "evaluation output capture did not terminate within grace period")
+            }
         }
     }
 }
@@ -331,12 +337,13 @@ fn execute_step(
         }
     };
 
-    let stdout = stdout_thread
-        .join()
-        .map_err(|_| EvaluationPipelineError::CaptureThreadPanic)?;
-    let stderr = stderr_thread
-        .join()
-        .map_err(|_| EvaluationPipelineError::CaptureThreadPanic)?;
+    // Audit M9 : `join()` nu est illimité — si le processus tué a engendré un
+    // petit-fils qui hérite des pipes, la lecture n'atteint jamais EOF et le
+    // pipeline « bounded » hang à vie. Grâce bornée : au-delà, on abandonne la
+    // capture (déjà plafonnée en mémoire) avec une erreur structurée.
+    const CAPTURE_GRACE: Duration = Duration::from_secs(5);
+    let stdout = join_bounded(stdout_thread, CAPTURE_GRACE)?;
+    let stderr = join_bounded(stderr_thread, CAPTURE_GRACE)?;
     let (stdout_bytes, stderr_bytes, output_truncated) =
         enforce_combined_limit(stdout, stderr, step.output_limit);
 
@@ -351,6 +358,23 @@ fn execute_step(
         stderr: stderr_bytes,
         output_truncated,
     })
+}
+
+/// Jointure de thread de capture avec échéance (audit M9).
+fn join_bounded(
+    handle: thread::JoinHandle<BoundedCapture>,
+    grace: Duration,
+) -> std::result::Result<BoundedCapture, EvaluationPipelineError> {
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(handle.join());
+    });
+    match rx.recv_timeout(grace) {
+        Ok(Ok(capture)) => Ok(capture),
+        Ok(Err(_)) => Err(EvaluationPipelineError::CaptureThreadPanic),
+        Err(_) => Err(EvaluationPipelineError::CaptureThreadHung),
+    }
 }
 
 struct BoundedCapture {

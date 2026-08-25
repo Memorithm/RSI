@@ -121,7 +121,25 @@ impl ScientificPapersRunner {
 
         let raw = std::fs::read_to_string(&bundle_path)
             .map_err(|error| format!("lecture {}: {error}", bundle_path.display()))?;
-        ScientificBundle::parse(&raw)
+        let bundle = ScientificBundle::parse(&raw)?;
+
+        // Audit m13 : l'ancre de traçabilité `analysis_sha256` est désormais
+        // VÉRIFIÉE contre l'artefact que RSI vient de produire — un
+        // papers-contract défaillant/hostile ne peut plus estamper n'importe
+        // quel digest sans être détecté.
+        let analysis_bytes = std::fs::read(&analysis_path)
+            .map_err(|error| format!("lecture {}: {error}", analysis_path.display()))?;
+        let actual: String = crate::sha256::sha256(&analysis_bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if !actual.eq_ignore_ascii_case(&bundle.provenance.analysis_sha256) {
+            return Err(format!(
+                "provenance.analysis_sha256 incohérent (bundle: {}, calculé: {})",
+                bundle.provenance.analysis_sha256, actual
+            ));
+        }
+        Ok(bundle)
     }
 
     pub fn papers_bin(&self) -> &str {
@@ -302,6 +320,18 @@ pub struct ScientificBundle {
     pub provenance: BundleProvenance,
 }
 
+/// Refuse les caractères de contrôle dans un champ texte du bundle (audit m14) :
+/// un `\n` dans `method`/`algorithm` permettait de forger des blocs GOAL
+/// supplémentaires dans la sortie CLI et de polluer les prompts DGM.
+fn sanitize_bundle_text<'a>(field: &'a str, name: &str) -> Result<&'a str, String> {
+    if field.chars().any(|c| c == '\n' || c == '\r' || c == '\0' || c.is_control()) {
+        return Err(format!(
+            "bundle.{name} contient un caractère de contrôle (injection possible)"
+        ));
+    }
+    Ok(field)
+}
+
 impl ScientificBundle {
     pub fn parse(raw: &str) -> Result<Self, String> {
         let root = Json::parse(raw).map_err(|error| format!("bundle JSON invalide: {error}"))?;
@@ -337,12 +367,18 @@ impl ScientificBundle {
             .and_then(Json::as_array)
             .ok_or("bundle.claims doit être un tableau")?;
         let mut claims = Vec::with_capacity(values.len());
+        let mut seen_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for value in values {
             let claim_schema = require_string(value, "schema")?;
             if claim_schema != SCIENTIFIC_CLAIM_SCHEMA {
                 return Err(format!("schema de claim non supporté: {claim_schema}"));
             }
             let claim_id = require_string(value, "id")?;
+            // audit m12 : un même id deux fois gonflait les objectifs et les
+            // compteurs (même papier compté deux fois) — rejet explicite.
+            if !seen_ids.insert(claim_id) {
+                return Err(format!("claim id dupliqué dans le bundle : {claim_id}"));
+            }
             if require_string(value, "paper_id")? != paper_id {
                 return Err(format!("claim {claim_id} rattaché au mauvais papier"));
             }
@@ -369,21 +405,46 @@ impl ScientificBundle {
                 let text_sha256 = optional_string(item, "text_sha256")?.map(str::to_string);
                 if let Some(hash) = &text_sha256 {
                     validate_sha256(hash)?;
+                    // audit a10 : quand `text` est fourni, son digest doit
+                    // correspondre — sinon l'ancre de traçabilité est décorative.
+                    if let Some(text) = optional_string(item, "text")? {
+                        let actual = crate::sha256::sha256_hex(text);
+                        if !actual.eq_ignore_ascii_case(hash) {
+                            return Err(format!(
+                                "evidence.text_sha256 incohérent (attendu {hash}, calculé {actual})"
+                            ));
+                        }
+                    }
                 }
                 evidence.push(ScientificEvidence {
-                    origin: require_string(item, "origin")?.to_string(),
-                    locator: require_string(item, "locator")?.to_string(),
+                    origin: sanitize_bundle_text(require_string(item, "origin")?, "origin")?
+                        .to_string(),
+                    locator: sanitize_bundle_text(require_string(item, "locator")?, "locator")?
+                        .to_string(),
                     text_sha256,
                 });
             }
 
+            let kind =
+                sanitize_bundle_text(require_string(value, "kind")?, "kind")?.to_string();
+            let statement = sanitize_bundle_text(
+                require_string(value, "statement")?,
+                "statement",
+            )?
+            .to_string();
+            let method = optional_string(value, "method")?
+                .map(|t| sanitize_bundle_text(t, "method").map(str::to_string))
+                .transpose()?;
+            let algorithm = optional_string(value, "algorithm")?
+                .map(|t| sanitize_bundle_text(t, "algorithm").map(str::to_string))
+                .transpose()?;
             claims.push(ScientificClaim {
-                id: claim_id.to_string(),
-                kind: require_string(value, "kind")?.to_string(),
-                statement: require_string(value, "statement")?.to_string(),
+                id: sanitize_bundle_text(claim_id, "id")?.to_string(), // m14
+                kind,
+                statement,
                 state: ClaimState::parse(require_string(value, "state")?)?,
-                method: optional_string(value, "method")?.map(str::to_string),
-                algorithm: optional_string(value, "algorithm")?.map(str::to_string),
+                method,
+                algorithm,
                 evidence,
                 confidence,
             });
@@ -402,7 +463,8 @@ impl ScientificBundle {
         self.claims
             .iter()
             .filter(|claim| claim.is_actionable_method())
-            .take(max_goals.max(1))
+            // audit a9 : 0 but demandé = 0 but rendu (le clamp reste côté CLI)
+            .take(max_goals)
             .map(|claim| {
                 let mut goal = format!(
                     "évalue empiriquement la méthode « {} » (PAPERS claim {}) sur {target_hint}; conserve le comportement observable et ne promeus que si build+tests+benchmark démontrent le gain",
@@ -553,6 +615,57 @@ mod tests {
         assert_eq!(companion_contract_bin("papers"), "papers-contract");
     }
 
+    /// Audit m12 : deux claims de même id = rejet explicite.
+    #[test]
+    fn duplicate_claim_ids_are_rejected() {
+        let single = fixture("inferred");
+        let key = "\"claims\":[";
+        let cs = single.find(key).unwrap() + key.len();
+        let pidx = single.find("\"proposals\"").unwrap();
+        let ce = single[..pidx].rfind(']').unwrap();
+        let claim = single[cs..ce].to_string();
+        let doubled = format!("{}{},{}{}", &single[..cs], claim, claim, &single[ce..]);
+        let err = ScientificBundle::parse(&doubled).unwrap_err();
+        assert!(err.contains("dupliqué"), "{err}");
+    }
+
+    /// Audit m14 : un caractère de contrôle dans method est rejeté
+    /// (impossible de forger des blocs GOAL supplémentaires).
+    #[test]
+    fn control_chars_in_bundle_text_are_rejected() {
+        let raw = fixture("inferred")
+            .replace("\"for each tile...\"", "\"ligne1\\nligne2 GOAL Faux\"");
+        let err = ScientificBundle::parse(&raw).unwrap_err();
+        assert!(err.contains("contrôle"), "{err}");
+    }
+
+    /// Audit a10 : quand text ET text_sha256 sont fournis, le digest est
+    /// vérifié — cohérent accepté, modifié rejeté.
+    #[test]
+    fn evidence_text_sha256_is_verified_when_text_present() {
+        use crate::sha256::sha256_hex;
+        const TEXT: &str = "A tiled method is reported to reduce latency.";
+        let good = sha256_hex(TEXT);
+        let hash_a = "a".repeat(64);
+        let old_field = format!("\"text\":null,\"text_sha256\":\"{hash_a}\"");
+        let new_field = format!("\"text\":\"{TEXT}\",\"text_sha256\":\"{good}\"");
+        let base = fixture("inferred").replace(&old_field, &new_field);
+        assert_ne!(base, fixture("inferred"), "fixture drift: champ text non trouvé");
+        assert!(ScientificBundle::parse(&base).is_ok(), "{:?}", ScientificBundle::parse(&base).err());
+
+        let wrong = format!("{}b", &good[..63]);
+        let bad = base.replace(&good, &wrong);
+        assert!(ScientificBundle::parse(&bad).is_err());
+    }
+
+    /// Audit a9 : directive_goals(_, 0) ne rend AUCUN but.
+    #[test]
+    fn zero_goals_requested_means_zero_goals() {
+        let bundle = ScientificBundle::parse(&fixture("inferred")).unwrap();
+        assert!(bundle.directive_goals("rsi", 0).is_empty());
+        assert_eq!(bundle.directive_goals("rsi", 1).len(), 1);
+    }
+
     #[test]
     fn runner_accepts_explicit_binaries_without_probe_side_effects() {
         let runner = ScientificPapersRunner::with_binaries("p", "c");
@@ -560,3 +673,4 @@ mod tests {
         assert_eq!(runner.contract_bin(), "c");
     }
 }
+

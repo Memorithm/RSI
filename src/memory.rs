@@ -26,20 +26,59 @@ pub trait ContextMemory {
 /// Mémoire contextuelle `std`-only : k-NN exact par balayage linéaire
 /// (distance euclidienne). Simple, sans dépendance ; convient comme défaut et
 /// comme référence face au backend OctaSoma.
-#[derive(Default)]
+///
+/// Contrat durci (audit m15, miroir de la garde M1 côté OctaSoma) :
+/// - la dimension est **verrouillée au premier** `remember` ; un embedding de
+///   dimension différente ou non fini est ignoré (comme le backend canonique) ;
+/// - capacité plafonnée (`with_capacity`) : au-delà, éviction du plus ancien
+///   — les runs DGM longs ne croissent plus sans borne.
+#[derive(Debug)]
 pub struct LinearContextMemory {
-    items: Vec<(Vec<f32>, Vec<u8>)>,
+    items: std::collections::VecDeque<(Vec<f32>, Vec<u8>)>,
+    dim: Option<usize>,
+    capacity: usize,
+}
+
+/// Capacité par défaut (éléments) : bornes la croissance mémoire des runs
+/// longs tout en couvrant largement les campagnes usuelles.
+pub const DEFAULT_LINEAR_MEMORY_CAPACITY: usize = 10_000;
+
+impl Default for LinearContextMemory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LinearContextMemory {
     pub fn new() -> Self {
-        LinearContextMemory { items: Vec::new() }
+        LinearContextMemory::with_capacity(DEFAULT_LINEAR_MEMORY_CAPACITY)
+    }
+
+    /// Mémoire plafonnée à `capacity` items (éviction FIFO au-delà).
+    pub fn with_capacity(capacity: usize) -> Self {
+        LinearContextMemory {
+            items: std::collections::VecDeque::new(),
+            dim: None,
+            capacity: capacity.max(1),
+        }
     }
 }
 
 impl ContextMemory for LinearContextMemory {
     fn remember(&mut self, embedding: &[f32], payload: &[u8]) {
-        self.items.push((embedding.to_vec(), payload.to_vec()));
+        // entrée invalide = ignorée, exactement comme `HybridMemory` amont
+        if embedding.iter().any(|x| !x.is_finite()) {
+            return;
+        }
+        match self.dim {
+            Some(d) if d != embedding.len() => return,
+            None => self.dim = Some(embedding.len()),
+            _ => {}
+        }
+        if self.items.len() >= self.capacity {
+            self.items.pop_front();
+        }
+        self.items.push_back((embedding.to_vec(), payload.to_vec()));
     }
 
     fn recall(&self, query: &[f32], k: usize) -> Vec<Vec<u8>> {
@@ -49,8 +88,12 @@ impl ContextMemory for LinearContextMemory {
                 .map(|(a, b)| (a - b) * (a - b))
                 .sum::<f32>()
         };
-        let mut scored: Vec<(f32, &Vec<u8>)> =
-            self.items.iter().map(|(e, p)| (dist2(e), p)).collect();
+        let mut scored: Vec<(f32, &Vec<u8>)> = self
+            .items
+            .iter()
+            .map(|(e, p)| (dist2(e), p))
+            .filter(|(d, _)| d.is_finite())
+            .collect();
         scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         scored.into_iter().take(k).map(|(_, p)| p.clone()).collect()
     }
@@ -63,6 +106,27 @@ impl ContextMemory for LinearContextMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit m15 : entrée non finie ignorée ; dimension verrouillée ;
+    /// capacité plafonnée avec éviction FIFO.
+    #[test]
+    fn linear_memory_validates_and_bounds() {
+        let mut m = LinearContextMemory::with_capacity(2);
+        let bad = [f32::NAN, 0.0];
+        m.remember(&bad, b"nan");
+        assert_eq!(m.len(), 0, "embedding NaN refusé");
+
+        m.remember(&[1.0, 0.0], b"a");
+        m.remember(&[3.0, 0.0, 1.0], b"c"); // dimension différente : ignoré
+        assert_eq!(m.len(), 1, "dimension verrouillée au premier insert");
+
+        m.remember(&[0.5, 0.0], b"b");
+        m.remember(&[0.9, 0.0], b"d"); // capacité 2 atteinte → "a" évincé
+        assert_eq!(m.len(), 2);
+        let r = m.recall(&[0.0, 0.0], 10);
+        assert_eq!(r, vec![b"b".to_vec(), b"d".to_vec()]);
+        assert!(!r.iter().any(|p| p == b"a"), "le plus ancien a été évincé");
+    }
 
     #[test]
     fn recall_returns_nearest() {

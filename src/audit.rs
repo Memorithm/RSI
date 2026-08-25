@@ -92,6 +92,18 @@ pub struct HashChainLog {
     signing_key: Option<Vec<u8>>,
 }
 
+// audit a8 : la clé HMAC est effacée à la destruction (le matériau ne doit pas
+// persister dans la mémoire libérée).
+impl Drop for HashChainLog {
+    fn drop(&mut self) {
+        if let Some(key) = &mut self.signing_key {
+            for b in key.iter_mut() {
+                *b = 0;
+            }
+        }
+    }
+}
+
 impl HashChainLog {
     pub fn new() -> Self {
         HashChainLog {
@@ -142,8 +154,25 @@ impl HashChainLog {
             .collect()
     }
 
-    /// Exporte le journal en JSON **ingestable par CCOS** (`ingest_source`).
+    /// Ancre anti-troncature (audit M8) : `verify()` marche depuis GENESIS,
+    /// donc tout **préfixe** de la chaîne est une chaîne valide — supprimer
+    /// les k derniers événements est indétectable sans point d'ancrage
+    /// externe. Consommez `(head, len)` hors bande (checkpoint, manifeste)
+    /// et validez avec [`HashChainLog::verify_against`].
+    pub fn anchor(&self) -> (String, usize) {
+        (self.chain_head(), self.events.len())
+    }
+
+    /// Comme [`AuditLog::verify`], plus ancre attendue : détecte la troncature.
+    pub fn verify_against(&self, expected_head: &str, expected_len: usize) -> bool {
+        self.verify() && self.chain_head() == expected_head && self.events.len() == expected_len
+    }
+
+    /// Exporte le journal en JSON **ingestable par CCOS** (`ingest_source`),
+    /// avec l'ancre embarquée : un export amputé de sa queue ne correspond
+    /// plus à l'ancre publiée ailleurs.
     pub fn to_ccos_json(&self) -> String {
+        let (head, count) = self.anchor();
         let arr: Vec<Json> = self
             .events
             .iter()
@@ -159,6 +188,8 @@ impl HashChainLog {
             .collect();
         let mut root = Json::obj();
         root.set("source", Json::Str("rsi://audit".into()))
+            .set("chain_head", Json::Str(head))
+            .set("event_count", Json::Num(count as f64))
             .set("events", Json::Arr(arr));
         root.to_string()
     }

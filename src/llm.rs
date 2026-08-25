@@ -1022,7 +1022,11 @@ impl ClaudeTransport for UreqTransport {
         headers: &[(String, String)],
         body: &str,
     ) -> Result<String, String> {
-        let mut req = ureq::post(url);
+        // timeout explicite (audit m2) : ureq 2.x n'en a AUCUN par défaut —
+        // une connexion TLS pendante bloquerait ascend_llm/DGM au-delà de tous
+        // les budgets du guard (qui ne sont vérifiés qu'entre appels).
+        const CLAUDE_TIMEOUT_SECS: u64 = 120;
+        let mut req = ureq::post(url).timeout(std::time::Duration::from_secs(CLAUDE_TIMEOUT_SECS));
         for (k, v) in headers {
             req = req.set(k, v);
         }

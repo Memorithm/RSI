@@ -84,7 +84,6 @@ fn main() {
         CrawlerOptions {
             allow_private_hosts: true,
             limits: limits.clone(),
-            user_agent: "RSI-Bot/0.10".into(),
             respect_robots: false,
             deny_hosts: Vec::new(),
         },
@@ -114,7 +113,6 @@ fn main() {
         CrawlerOptions {
             allow_private_hosts: true,
             limits: limits.clone(),
-            user_agent: "RSI-Bot/0.10".into(),
             respect_robots: false,
             deny_hosts: Vec::new(),
         },

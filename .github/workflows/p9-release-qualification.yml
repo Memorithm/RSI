@@ -1,7 +1,5 @@
 name: P9 Release Qualification
 
-name: P9 Release Qualification
-
 on:
   push:
     branches: [main]

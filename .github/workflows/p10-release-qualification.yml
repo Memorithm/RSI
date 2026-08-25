@@ -1,7 +1,5 @@
 name: P10 Release Qualification
 
-name: P10 Release Qualification
-
 on:
   push:
     branches: [main]

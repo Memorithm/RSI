@@ -894,6 +894,7 @@ fn patch_file_with_backup(
     std::fs::create_dir_all(backup_dir)?;
     let id = sha256_hex(&format!("{}|{}", target.display(), content))[..16].to_string();
     std::fs::write(backup_dir.join(format!("{id}.bak")), &content)?;
+    prune_backups(backup_dir);
     let mut patched = String::with_capacity(content.len() - (end - start) + replace.len());
     patched.push_str(&content[..start]);
     patched.push_str(replace);
@@ -901,6 +902,34 @@ fn patch_file_with_backup(
     std::fs::write(target, patched)
         .map_err(|e| DgmError::Apply(format!("write {}: {e}", target.display())))?;
     Ok(id)
+}
+
+/// Élague le répertoire de sauvegardes (suivi m8) : un `.bak` par contenu
+/// original distinct croissait sans borne sur des campagnes longues. On garde
+/// les [`MAX_BACKUPS`] plus récents (mtime) — les plus anciens deviennent
+/// récupérables via git, qui reste la vraie référence.
+const MAX_BACKUPS: usize = 256;
+
+fn prune_backups(backup_dir: &Path) {
+    const KEEP: usize = MAX_BACKUPS;
+    let Ok(entries) = std::fs::read_dir(backup_dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "bak").unwrap_or(false))
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some((meta.modified().ok()?, e.path()))
+        })
+        .collect();
+    if files.len() <= KEEP {
+        return;
+    }
+    files.sort_by_key(|(t, _)| std::cmp::Reverse(*t)); // récents d'abord
+    for (_, path) in files.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Localise le span d'octets `[start, end)` de `content` que `find` doit

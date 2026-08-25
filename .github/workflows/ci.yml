@@ -92,3 +92,17 @@ jobs:
         run: |
           rustup toolchain install 1.89.0 --profile minimal
           cargo +1.89.0 check --locked --workspace --all-features
+
+  # C1 (suivi) : le build Docker a déjà cassé une fois sans que personne ne
+  # le voie — un smoke par PR le rend impossible à rater. Build seul (pas de
+  # run) : le binaire MCP est exercé partout ailleurs.
+  docker-smoke:
+    name: docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Build image (musl statique)
+        run: docker build -t rsi:smoke .
+      - name: Sanity rsi-demo
+        run: docker run --rm --entrypoint /usr/local/bin/rsi-demo rsi:smoke 2 7 random | tail -n 5

@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(feature = "web"))]
 use std::io::{Read, Write};
 #[cfg(not(feature = "web"))]
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -257,17 +257,23 @@ pub fn get_following_redirects(
         const MAX_REDIRECTS: usize = 5;
         let mut current = url.to_string();
         for _ in 0..=MAX_REDIRECTS {
-            // vérification anti-SSRF AVANT chaque connexion (audit M1)
-            if !allow_private {
-                if let Some((_, host, port, _)) = parse_url(&current) {
-                    if host_resolves_private(&host, port) {
-                        return Err(WebError::Http(format!(
-                            "hôte privé bloqué (anti-SSRF) : {host}"
-                        )));
-                    }
-                }
+            // audit m3 (fermeture structurelle côté client std) : on résout
+            // UNE fois et on contrôle l'ADRESSE exacte qui sera dialée —
+            // l'ancien double-résoudre laissait un TOCTOU au DNS.
+            let (_, host, port, path) =
+                parse_url(&current).ok_or_else(|| WebError::InvalidUrl(current.clone()))?;
+            use std::net::ToSocketAddrs;
+            let addr = (host.as_str(), port)
+                .to_socket_addrs()
+                .map_err(|e| WebError::Dns(e.to_string()))?
+                .next()
+                .ok_or_else(|| WebError::Dns(format!("aucune adresse pour {host}")))?;
+            if !allow_private && is_private_ip(addr.ip()) {
+                return Err(WebError::Http(format!(
+                    "hôte privé bloqué (anti-SSRF) : {addr}"
+                )));
             }
-            let (status, body, headers) = http_get_once(&current, timeout, max_bytes)?;
+            let (status, body, headers) = http_get_once(addr, &host, &path, timeout, max_bytes)?;
             if (300..400).contains(&status) {
                 // redirection : suit Location (absolu ou relatif), casse insensible
                 let loc = headers
@@ -331,21 +337,18 @@ fn redirect_policy(
     })
 }
 
-/// Une requête GET std-only, sans suivi de redirection. Retourne (statut, corps, en-têtes).
+/// Une requête GET std-only, sans suivi de redirection. `addr` est l'adresse
+/// DÉJÀ résolue et validée par l'appelant (anti-TOCTOU, audit m3) ; `host`
+/// sert uniquement à l'en-tête Host. Retourne (statut, corps, en-têtes).
 /// Compilée uniquement sans la feature `web`.
 #[cfg(not(feature = "web"))]
 fn http_get_once(
-    url: &str,
+    addr: std::net::SocketAddr,
+    host: &str,
+    path: &str,
     timeout: Duration,
     max_bytes: usize,
 ) -> Result<(u16, Vec<u8>, String), WebError> {
-    let (_scheme, host, port, path) = parse_url(url).ok_or_else(|| WebError::InvalidUrl(url.into()))?;
-    let addr = (host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|e| WebError::Dns(e.to_string()))?
-        .next()
-        .ok_or_else(|| WebError::Dns(format!("aucune adresse pour {host}")))?;
-
     let mut stream = TcpStream::connect_timeout(&addr, timeout)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;

@@ -143,12 +143,30 @@ impl WasmSynthesis {
         Ok((engine, module))
     }
 
+    /// Plafonds mémoire/table par exécution (audit a5) : le fuel borne le
+    /// TEMPS mais pas la mémoire statique déclarée ni les `memory.grow`.
+    /// `StoreLimits` (wasmi 0.31) ferme ce trou : 16 Mio de mémoire linéaire
+    /// max, 1 mémoire, 1 table de 10k éléments, 1 instance — le dépassement
+    /// trappe au lieu de consommer l'hôte.
+    const MAX_MEMORY_BYTES: usize = 16 * 1024 * 1024;
+
     /// Exécute `run(input)` dans un bac à sable neuf (linker vide ⇒ aucun import,
-    /// fuel borné). `Err` si imports non résolus, trap, fuel épuisé, ou export
-    /// manquant.
+    /// fuel + limites mémoire bornés). `Err` si imports non résolus, trap,
+    /// fuel épuisé, limite dépassée, ou export manquant.
     fn run_once(engine: &Engine, module: &Module, input: i64) -> Result<i64, String> {
-        let linker = Linker::<()>::new(engine);
-        let mut store = Store::new(engine, ());
+        use wasmi::{StoreLimits, StoreLimitsBuilder};
+        let linker = Linker::<StoreLimits>::new(engine);
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(Self::MAX_MEMORY_BYTES)
+            .memories(1)
+            .table_elements(10_000)
+            .tables(1)
+            .instances(1)
+            .trap_on_grow_failure(true)
+            .build();
+        let mut store = Store::new(engine, limits);
+        // enregistre le limiteur (sinon StoreLimits n'est jamais consulté)
+        store.limiter(|limits| limits);
         store.add_fuel(FUEL_PER_CALL).map_err(|e| e.to_string())?;
         let instance = linker
             .instantiate(&mut store, module)
@@ -325,6 +343,23 @@ mod tests {
         assert!(report.accepted > 0);
         assert_eq!(t.pass_fraction(&best), 1.0, "best ne calcule pas x²+1");
         assert_eq!(report.stop, LlmStop::Target);
+    }
+
+    /// Audit a5 : un module déclarant plus de mémoire que le plafond trappe
+    /// à l'instanciation au lieu de consommer l'hôte.
+    #[test]
+    fn static_memory_over_limit_traps() {
+        // 300 pages × 64 Kio = ~19 Mio > MAX_MEMORY_BYTES (16 Mio)
+        let hog = "(module (memory 300) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
+        let (engine, module) = WasmSynthesis::compile(hog).unwrap();
+        assert!(
+            WasmSynthesis::run_once(&engine, &module, 1).is_err(),
+            "la limite mémoire doit refuser l'instanciation"
+        );
+        // dans les clous : fonctionne toujours
+        let ok = "(module (memory 1) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
+        let (engine, module) = WasmSynthesis::compile(ok).unwrap();
+        assert_eq!(WasmSynthesis::run_once(&engine, &module, 7), Ok(7));
     }
 
     // ─── A6 — WasmEvaluator branché dans la boucle DGM ───────────────────── //

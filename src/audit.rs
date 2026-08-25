@@ -63,6 +63,22 @@ fn link_hash(prev_hash: &str, seq: u64, event_type: &str, payload: &str) -> Stri
 /// Racine de la chaîne (hash de tête initial).
 pub const GENESIS: &str = "GENESIS";
 
+/// Comparaison d'empreintes hex en temps **constant** (audit a25) : plie les
+/// octets par XOR sur la longueur maximale commune — aucun early-exit sur la
+/// première divergence. Utile dès que la vérification est exposée au-delà du
+/// modèle de menace local.
+pub fn ct_digest_eq(a: &str, b: &str) -> bool {
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..ab.len() {
+        diff |= ab[i] ^ bb[i];
+    }
+    diff == 0
+}
+
 /// Journal d'audit hash-chaîné, vérifiable et rejouable.
 pub trait AuditLog {
     /// Enregistre un événement et renvoie le nouveau hash de tête.
@@ -165,7 +181,7 @@ impl HashChainLog {
 
     /// Comme [`AuditLog::verify`], plus ancre attendue : détecte la troncature.
     pub fn verify_against(&self, expected_head: &str, expected_len: usize) -> bool {
-        self.verify() && self.chain_head() == expected_head && self.events.len() == expected_len
+        self.verify() && ct_digest_eq(&self.chain_head(), expected_head) && self.events.len() == expected_len
     }
 
     /// Exporte le journal en JSON **ingestable par CCOS** (`ingest_source`),
@@ -227,7 +243,7 @@ impl AuditLog for HashChainLog {
                 return false; // lien rompu
             }
             let recomputed = self.link(&e.prev_hash, e.sequence_number, &e.event_type, &e.payload);
-            if recomputed != e.hash {
+            if !ct_digest_eq(&recomputed, &e.hash) {
                 return false; // contenu altéré (ou clé différente)
             }
             prev = e.hash.clone();

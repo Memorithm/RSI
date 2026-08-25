@@ -48,13 +48,44 @@ fn main() {
             Ok(n) => n,
             Err(_) => break,
         };
-        // Limite atteinte sans fin de ligne ⇒ requête trop grande : on refuse et
-        // on coupe proprement (drainer le reste risquerait l'OOM qu'on évite).
+        // Limite atteinte sans fin de ligne ⇒ requête trop grande : réponse
+        // d'erreur unique puis DRAIN borné (audit a24 réouvert) : on saute le
+        // reste de la ligne par blocs de 64 Kio jusqu'au prochain \n — la
+        // session survit à un client bavard, et un flux sans fin est coupé
+        // après MAX_TOTAL_DRAIN (le client hostile perd la connexion, pas
+        // tous les autres).
         if n >= MAX_LINE_BYTES && buf.last() != Some(&b'\n') {
             let resp = error_response(&Json::Null, -32600, "request line exceeds 16 MiB limit");
             let _ = writeln!(out, "{}", resp.to_string());
             let _ = out.flush();
-            break;
+            const DRAIN_CHUNK: usize = 64 * 1024;
+            const MAX_TOTAL_DRAIN: u64 = 256 * 1024 * 1024; // 256 Mio max
+            let mut drained: u64 = MAX_LINE_BYTES as u64;
+            let mut terminated = false;
+            let mut sink = [0u8; DRAIN_CHUNK];
+            while drained < MAX_TOTAL_DRAIN {
+                match (&mut reader)
+                    .take(DRAIN_CHUNK as u64)
+                    .read(&mut sink)
+                {
+                    Ok(0) => {
+                        terminated = true; // EOF
+                        break;
+                    }
+                    Ok(k) => {
+                        drained += k as u64;
+                        if sink[..k].contains(&b'\n') {
+                            terminated = true;
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            if !terminated {
+                break; // flux sans fin : coupure, mais APRÈS avoir répondu
+            }
+            continue; // ligne suivante — la session continue
         }
 
         let line = String::from_utf8_lossy(&buf);

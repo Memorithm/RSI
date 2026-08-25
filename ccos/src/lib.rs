@@ -152,6 +152,19 @@ pub mod event_log {
     /// Hash de tête de la chaîne vide.
     pub const GENESIS: &str = "GENESIS";
 
+/// Comparaison d'empreintes en temps constant (audit a25) — voir rsi::audit.
+fn ct_digest_eq(a: &str, b: &str) -> bool {
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..ab.len() {
+        diff |= ab[i] ^ bb[i];
+    }
+    diff == 0
+}
+
     impl EventLog {
         pub fn new(session_id: impl Into<String>) -> Self {
             EventLog {
@@ -215,7 +228,10 @@ pub mod event_log {
                 buf.extend_from_slice(&type_tag(&e.payload));
                 buf.extend_from_slice(&payload_bytes(&e.payload));
                 let expect = hex(&sha256(&buf));
-                if e.prev_hash != prev || e.hash != expect {
+                // audit a25 : comparaison constante des empreintes (pas d'early-exit)
+                let eq_prev = ct_digest_eq(&e.prev_hash, &prev);
+                let eq_hash = ct_digest_eq(&e.hash, &expect);
+                if !eq_prev || !eq_hash {
                     valid = false;
                     break;
                 }

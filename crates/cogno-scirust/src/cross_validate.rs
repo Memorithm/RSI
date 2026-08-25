@@ -219,15 +219,24 @@ pub fn compare_after_optim_step(
             return Ok(false);
         }
     }
-    if let Some(max_norm) = config.grad_clip {
+    if let Some(_grad_clip) = config.grad_clip {
+        // Audit M13 : l'ancienne borne `lr × clip × 4` était mathématiquement
+        // fausse — elle ignorait (i) le weight decay (θ décanté d'un facteur
+        // lr·wd·‖θ‖ peut dominer le déplacement) et (ii) la géométrie AdamW
+        // où chaque coordonnée bouge de ~lr au premier pas ⇒ déplacement
+        // total ~lr·√n. Borne analytique correcte :
+        //   ‖Δθ‖ ≤ lr·√n + lr·wd·‖θ_{t-1}‖ (+ε numérique).
+        let n = a.len() as f64;
+        let norm_before: f64 =
+            params.iter().map(|p| p * p).sum::<f64>().sqrt();
+        let wd_term = config.weight_decay * config.lr * norm_before;
+        let bound = config.lr * n.sqrt() + wd_term + 1e-6 * (1.0 + norm_before);
         let disp: f64 = a
             .iter()
             .zip(params)
             .map(|(x, y)| (x - y) * (x - y))
             .sum::<f64>()
             .sqrt();
-        // le déplacement est borné par lr × clip (borne large)
-        let bound = config.lr * max_norm * 4.0 + 1e-9;
         if disp > bound {
             return Ok(false);
         }

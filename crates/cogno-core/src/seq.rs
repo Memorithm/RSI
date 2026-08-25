@@ -131,14 +131,19 @@ impl Sequence {
     }
 
     /// Somme masquée des tokens (positions inactives ignorées).
+    ///
+    /// Audit m19 : accumulateur **compensé (Kahan)** comme tout accumulateur
+    /// critique du crate — des log-probs de signes mixtes sur de longues
+    /// séquences dérivaient au-delà de la tolérance 1e-9 de cross-validation.
     pub fn masked_sum(&self) -> f64 {
-        let mut s = 0.0;
+        use crate::numeric::CompensatedSum;
+        let mut s = CompensatedSum::default();
         for i in 0..self.tokens.len() {
             if i < self.mask.len() && self.mask.bits()[i] == 1 {
-                s += self.tokens[i];
+                s.add(self.tokens[i]);
             }
         }
-        s
+        s.finish()
     }
 
     /// Moyenne masquée (sur les positions actives). 0 si aucune active.
@@ -160,9 +165,17 @@ pub struct SequenceBatch {
 }
 
 impl SequenceBatch {
-    /// Assemble un batch. Valide la cohérence interne (aucun masque ne
-    /// dépasse sa séquence). `max_len` = longueur maximale du batch.
+    /// Assemble un batch en validant RÉELLEMENT la cohérence interne
+    /// (audit m20) : aucun masque ne doit dépasser sa séquence.
+    /// `max_len` = longueur maximale du batch.
     pub fn try_new(sequences: Vec<Sequence>) -> CognoResult<Self> {
+        for seq in &sequences {
+            if seq.mask.active_count() > 0 && seq.mask.len() > seq.len() {
+                return Err(CognoError::InvalidInput(
+                    "sequence_batch: un masque dépasse sa séquence",
+                ));
+            }
+        }
         let max_len = sequences.iter().map(Sequence::len).max().unwrap_or(0);
         Ok(SequenceBatch { sequences, max_len })
     }
@@ -175,8 +188,14 @@ impl SequenceBatch {
         self.sequences.is_empty()
     }
 
-    /// Somme masquée moyenne sur le batch (0 si vide).
-    pub fn mean_masked_sum(&self) -> f64 {
+    /// Moyenne (sur le batch) des moyennes masquées par séquence — MACRO
+    /// moyenne, 0 si vide. Convention épinglée (audit a12) : un backend
+    /// tensoriel pad-and-mean calculerait la MICRO moyenne
+    /// `Σ masqué / Σ actifs`, qui diffère dès que les longueurs sont
+    /// inégales ; toute contrepartie backend doit comparer à
+    /// [`SequenceBatch::mean_of_masked_means`] explicitement.
+    #[doc(alias = "mean_masked_sum")]
+    pub fn mean_of_masked_means(&self) -> f64 {
         if self.sequences.is_empty() {
             return 0.0;
         }
@@ -185,6 +204,12 @@ impl SequenceBatch {
             s += seq.masked_mean();
         }
         s / self.sequences.len() as f64
+    }
+
+    /// Ancien nom (déprécié) conservé pour compatibilité immédiate.
+    #[deprecated(since = "0.1.1", note = "renommé mean_of_masked_means (convention macro)")]
+    pub fn mean_masked_sum(&self) -> f64 {
+        self.mean_of_masked_means()
     }
 }
 
@@ -239,6 +264,6 @@ mod tests {
         assert_eq!(batch.max_len, 3);
         assert_eq!(batch.len(), 2);
         // moyenne des moyennes masquées : (2.0 + 10.0)/2 = 6.0
-        assert!((batch.mean_masked_sum() - 6.0).abs() < 1e-12);
+        assert!((batch.mean_of_masked_means() - 6.0).abs() < 1e-12);
     }
 }

@@ -1153,6 +1153,15 @@ impl Evaluator for CargoEvaluator {
             // confiance aux comptes — le candidat est rejeté, pas mesuré.
             Err(reason) => return Ok(Fitness::broken(format!("test output untrusted: {reason}"))),
         };
+        // audit M5 — canal de confiance n°1 : l'exit code appartient à cargo,
+        // pas au candidat. Un run réellement échoué sort != 0 ; « exit != 0
+        // mais 0 failed rapporté » trahit une sortie forgée qui aurait masqué
+        // les échecs réels.
+        if !test_ok && failed == 0 {
+            return Ok(Fitness::broken(
+                "cargo test a échoué mais 0 échec est rapporté — sortie non fiable",
+            ));
+        }
         let passrate = {
             let total = passed + failed;
             if total == 0 {
@@ -1934,11 +1943,15 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         }
 
         // 3. Évaluer. Prédit cassé ⇒ build sauté ; sinon gate réel autoritaire.
-        let fitness = if pred_is_broken(&final_pred) {
+        let ancestors = self.lineage_patches(parent.id.as_str());
+        let parent_fit = parent
+            .fitness
+            .clone()
+            .unwrap_or_else(|| Fitness::broken("parent had no fitness"));
+        let mut fitness = if pred_is_broken(&final_pred) {
             self.prescreen_skips += 1;
             Fitness::broken("prescreen: prédit cassé (build évité)")
         } else {
-            let ancestors = self.lineage_patches(parent.id.as_str());
             match self.evaluate_candidate(&proposal.patch, &ancestors) {
                 Ok(f) => {
                     self.capture_trajectory(&proposal.patch, &f);
@@ -1948,11 +1961,25 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             }
         };
 
-        // 4. N'accepter que si elle bat le parent sous l'ordre de barrière.
-        let parent_fit = parent
-            .fitness
-            .clone()
-            .unwrap_or_else(|| Fitness::broken("parent had no fitness"));
+        // audit M5 — canal de confiance n°2 : plafond Δ-déclarés. Les tests
+        // passants ne peuvent augmenter que du nombre de `#[test]` AJOUTÉS
+        // par la lignée+patch (+ marge doctests). Toute inflation au-delà =
+        // fabrication, même structurellement cohérente.
+        if fitness.compiles { // broken => compiles=false, déjà exclu
+            if let Some(delta) = self.declared_test_delta(&proposal.patch, &ancestors) {
+                const DOC_TEST_SLACK: u32 = 32;
+                let ceiling = parent_fit
+                    .tests_passed
+                    .saturating_add(delta.max(0) as u32)
+                    .saturating_add(DOC_TEST_SLACK);
+                if fitness.tests_passed > ceiling {
+                    fitness = Fitness::broken(format!(
+                        "tests_passed={} > plafond {} (Δ#[test]={delta}, parent={}) — comptes non fiables",
+                        fitness.tests_passed, ceiling, parent_fit.tests_passed
+                    ));
+                }
+            }
+        }
         let gate_ok = !self.config.accept_requires_all_green || fitness.all_green();
         let accepted = gate_ok
             && fitness.is_better_than(&parent_fit)
@@ -2106,6 +2133,35 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         }
         chain.reverse();
         chain
+    }
+
+    /// Nombre NET de `#[test]` ajoutés par le patch au bout de la lignée,
+    /// calculé par re-application en mémoire sur le contenu VIVANT du fichier
+    /// cible. `None` si le fichier est illisible ou une application échoue
+    /// (le candidat sera alors rejeté de toute façon par le snapshot réel).
+    fn declared_test_delta(&self, patch: &Patch, ancestors: &[Patch]) -> Option<i64> {
+        let path = std::path::Path::new(&self.config.workspace_root).join(&patch.target);
+        let base = std::fs::read_to_string(path).ok()?;
+        let count_tests = |t: &str| t.matches("#[test]").count() as i64;
+
+        // contenu attendu au bout de la lignée (patches touchant CE fichier)
+        let mut content = base;
+        for anc in ancestors {
+            if anc.target != patch.target || anc.is_noop() {
+                continue;
+            }
+            if !content.contains(&anc.find) {
+                return None;
+            }
+            content = content.replacen(&anc.find, &anc.replace, 1);
+        }
+        let before = count_tests(&content);
+
+        if !content.contains(&patch.find) {
+            return None;
+        }
+        content = content.replacen(&patch.find, &patch.replace, 1);
+        Some(count_tests(&content) - before)
     }
 
     fn evaluate_candidate(&self, patch: &Patch, ancestors: &[Patch]) -> Result<Fitness> {
@@ -2821,6 +2877,67 @@ RATIONALE: bump the constant
         assert!(best.fitness.as_ref().unwrap().score >= 1.0);
         // L'arbre vivant n'est jamais muté par la boucle.
         assert_eq!(read_level(&ws), 0);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Audit M6 : la lignée est RÉELLE — le score d'un enfant de profondeur n
+    /// reflète les n patches cumulés (chaînés), pas un delta isolé depuis la
+    /// racine. L'Incrementer lit la vue parent (level=n) et propose n+1 ;
+    /// l'évaluation rejoue la chaîne complète avant son patch.
+    /// Audit M5 — canal de confiance n°2 : un candidat qui rapporte plus de
+    /// tests passants que le plafond Δ-déclarés (parent + #[test] ajoutés +
+    /// marge doctests) est rejeté comme non fiable, même si sa sortie est
+    /// structurellement cohérente.
+    #[test]
+    fn inflated_test_counts_beyond_declared_are_rejected() {
+        // évaluateur malhonnête : rapporte 9999 passés quoi qu'il arrive
+        let liar = ClosureEvaluator::new(|_root: &Path| fit(true, 9_999, 0, 1.0));
+        let ws = toy_workspace("m5ceiling");
+        let mut eng = DgmEngine::new(
+            Archive::with_root(fit(true, 1, 0, 0.0)),
+            Incrementer,
+            liar,
+            DgmConfig::new(&ws, "raise the level"),
+            1,
+        );
+        eng.run(2).unwrap();
+        // aucune variante acceptée (les rejetées ne sont pas archivées)
+        assert_eq!(eng.archive().variants.len(), 1, "racine seule");
+        // l'historique porte la raison : plafond dépassé => non fiable
+        let reasons: Vec<String> = eng
+            .history()
+            .iter()
+            .filter_map(|o| match o {
+                StepOutcome::Evaluated { accepted, fitness, .. } if !*accepted => {
+                    Some(fitness.notes.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            reasons.iter().any(|n| n.contains("plafond")),
+            "raison attendue 'plafond', obtenu : {reasons:?}"
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Le Δ-déclarés honnête passe : ajouter un vrai `#[test]` augmente le
+    /// plafond d'une unité (le candidat honnête n'est pas pénalisé).
+    #[test]
+    fn declared_test_delta_counts_added_tests() {
+        let ws = toy_workspace("m5delta");
+        let patch = Patch::new(
+            "src/level.txt",
+            "level = 0",
+            "level = 0\n// #[test]\n#[test]\nfn t() {}",
+        );
+        let eng = engine(&ws);
+        let delta = eng
+            .declared_test_delta(&patch, &eng.lineage_patches(eng.archive().variants[0].id.as_str()))
+            .unwrap();
+        // le marqueur de commentaire compte aussi (direction conservatrice :
+        // surestime les tests ajoutés => relâche à peine le plafond)
+        assert_eq!(delta, 2);
         let _ = std::fs::remove_dir_all(&ws);
     }
 

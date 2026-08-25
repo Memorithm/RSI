@@ -231,6 +231,7 @@ pub fn get_following_redirects(
             .timeout(timeout)
             .user_agent(DEFAULT_UA)
             .redirect(redirect_policy(allow_private))
+            .dns_resolver(std::sync::Arc::new(PinningResolver::new(allow_private)))
             .build()
         else {
             return Err(WebError::Http("construction du client reqwest impossible".into()));
@@ -300,41 +301,74 @@ pub fn get_following_redirects(
     }
 }
 
-/// Politique de redirection reqwest avec re-validation anti-SSRF de chaque hop
-/// (audit M1) : l'URL de destination est résolue et toute IP privée/loopback/
-/// link-local est refusée, sauf opt-out explicite.
+/// Résolveur DNS **à épinglage** (audit m3, fermeture côté feature `web`) :
+/// une seule résolution par hôte et par client ; le résultat est mis en cache
+/// pour toute la chaîne de redirections et FILTRÉ à la résolution même — le
+/// connecteur ne peut plus jamais recevoir une IP privée, quelle que soit la
+/// vitesse à laquelle l'attaquant retourne son DNS (il n'y a plus de second
+/// regard). L'ancienne double vérification (politique puis connecteur) était
+/// le TOCTOU ; ici le contrôle ET le dial partagent la même résolution.
 #[cfg(feature = "web")]
-fn redirect_policy(
+struct PinningResolver {
     allow_private: bool,
-) -> reqwest::redirect::Policy {
-    use std::net::ToSocketAddrs;
-    reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() > 5 {
-            return attempt.error("trop de redirections");
+    cache: std::sync::Mutex<std::collections::HashMap<String, Vec<std::net::SocketAddr>>>,
+}
+
+#[cfg(feature = "web")]
+impl PinningResolver {
+    fn new(allow_private: bool) -> Self {
+        PinningResolver {
+            allow_private,
+            cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
-        if !allow_private {
-            // host/port copiés en owned : la closure `error` consomme `attempt`
-            let (host, port) = {
-                let u = attempt.url();
-                (
-                    u.host_str().unwrap_or_default().to_string(),
-                    u.port_or_known_default().unwrap_or(80),
-                )
-            };
-            // NOTE DNS-rebinding (audit m3) : la résolution ici puis celle du
-            // connecteur sont deux instants distincts — TOCTOU documenté.
-            let private = (host.as_str(), port)
-                .to_socket_addrs()
-                .map(|mut addrs| addrs.any(|sa| is_private_ip(sa.ip())))
-                .unwrap_or(false);
-            if private {
-                return attempt.error(format!(
-                    "redirection vers hôte privé bloquée (anti-SSRF) : {host}"
-                ));
+    }
+
+    /// Résolution + contrôle. Publique pour être testée sans réseau réel
+    /// (`localhost` se résout localement ; le cache peut être pré-ensemencé).
+    fn resolve_host(&self, host: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        {
+            let cache = self
+                .cache
+                .lock()
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            if let Some(pinned) = cache.get(host) {
+                return Ok(pinned.clone());
             }
         }
-        attempt.follow()
-    })
+        let addrs: Vec<std::net::SocketAddr> =
+            std::net::ToSocketAddrs::to_socket_addrs(&(host, 0))?.collect();
+        if !self.allow_private && addrs.iter().any(|a| is_private_ip(a.ip())) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("hôte privé bloqué (anti-SSRF) : {host}"),
+            ));
+        }
+        self.cache
+            .lock()
+            .map_err(|e| std::io::Error::other(e.to_string()))?
+            .insert(host.to_string(), addrs.clone());
+        Ok(addrs)
+    }
+}
+
+#[cfg(feature = "web")]
+impl reqwest::dns::Resolve for PinningResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let result = self.resolve_host(name.as_str());
+        Box::pin(async move {
+            result
+                .map(|addrs| Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+}
+
+/// Politique de redirection : plafond de hops uniquement. Le contrôle
+/// anti-SSRF vit désormais dans [`PinningResolver`] (audit M1/m3) — le
+/// connecteur lui-même ne peut pas dialer une IP privée.
+#[cfg(feature = "web")]
+fn redirect_policy(_allow_private: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::limited(5)
 }
 
 /// Une requête GET std-only, sans suivi de redirection. `addr` est l'adresse
@@ -1595,6 +1629,35 @@ mod tests {
         let page = "\u{130} avant<title>t2</title>";
         let (_, _, title) = parse_html(page, "http://x/");
         assert_eq!(title, "t2");
+    }
+
+    /// Audit m3 (feature web) : le résolveur à épinglage bloque localhost à
+    /// la RÉSOLUTION et épingle le cache — un second appel ne re-résout pas.
+    #[cfg(feature = "web")]
+    #[test]
+    fn pinning_resolver_blocks_private_and_pins() {
+        let r = PinningResolver::new(false);
+        // localhost → 127.0.0.1 : refusé à la résolution (pas de réseau externe)
+        let err = r.resolve_host("localhost").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("anti-SSRF"));
+
+        // pré-ensemencé : renvoyé tel quel, sans re-résolution
+        let pinned = PinningResolver::new(false);
+        pinned
+            .cache
+            .lock()
+            .unwrap()
+            .insert(
+                "pinned.test".to_string(),
+                vec!["93.184.216.34:0".parse().unwrap()],
+            );
+        let addrs = pinned.resolve_host("pinned.test").unwrap();
+        assert_eq!(addrs.len(), 1);
+
+        // opt-out explicite : localhost passe
+        let allow = PinningResolver::new(true);
+        assert!(allow.resolve_host("localhost").is_ok());
     }
 
     /// Audit a2 : sniff binaire par magic bytes / NUL précoce.

@@ -19,6 +19,7 @@
 pub mod adamw;
 pub mod batch;
 pub mod cross_validate;
+pub mod seq_backend;
 pub mod train;
 
 pub use adamw::{AdamW, AdamWConfig};
@@ -26,6 +27,8 @@ pub use batch::{CognoBatchOutput, compute_cogno01_loss_batch, compute_objective_
 pub use cross_validate::{
     BatchComparison, compare_after_optim_step, compare_oracle_and_backend, CrossValidationReport,
 };
+#[allow(deprecated)]
+pub use seq_backend::{compare_seq_oracle_and_backend, PaddedBatch, SeqParityReport};
 #[allow(deprecated)]
 pub use train::validate_f32_path;
 pub use train::{

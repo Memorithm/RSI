@@ -1,9 +1,9 @@
 //! Masques et séquences de longueurs différentes (contrat §14 : « masques
 //! partiels », « séquences de longueurs différentes », « mismatch de masque »).
 //!
-//! ORACLE-LOCAL pour l'instant (audit a13) : aucune contrepartie tensorielle
-//! n'existe encore ; toute future implémentation backend DOIT passer la
-//! cross-validation contre ces fonctions avant usage.
+//! Contrepartie backend (audit a13) : `cogno_scirust::seq_backend` réimplémente
+//! ces réductions en style paddé et est CROSS-VALIDÉE ici contre l'oracle
+//! (`compare_seq_oracle_and_backend`).
 //!
 //! Un [`Mask`] est un vecteur d'activation `{0,1}` validé à la construction :
 //! - longueur cohérente avec la séquence ;

@@ -55,7 +55,7 @@ web = ["dep:reqwest"]
 cogno-core = { path = "crates/cogno-core" }
 forge-core = { path = "forge", optional = true }
 # Canonical semantic/episodic memory. Optional so the RSI core remains minimal.
-octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef8ded85dcf2b8c97690005284926", default-features = false, optional = true }
+octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "08a5fb00b1ab3cc3b5c963810dd643fb3c33a312", default-features = false, optional = true }
 ccos = { path = "ccos", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }

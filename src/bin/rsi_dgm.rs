@@ -501,21 +501,40 @@ fn main() {
                 let backups = flag_value(&args, "--backups")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| ws.join(".rsi_backups"));
-                match rsi::dgm::promote_to_live(&ws, &b.patch, &backups) {
-                    Ok(id) => println!(
-                        "  ✓ PROMU vers l'arbre vivant (sauvegarde {id} dans {}).",
-                        backups.display()
-                    ),
-                    Err(e) => {
-                        eprintln!("  ✗ échec de la promotion : {e}");
-                        exit(1);
+                // Audit M6 : la variante évaluée = racine + lignée + son
+                // patch. Promouvoir le seul patch feu produirait un arbre
+                // vivant ≠ état évalué — on applique la chaîne complète.
+                let chain = engine.lineage_patches(b.id.as_str());
+                let mut ids = Vec::new();
+                let mut promoted_ok = true;
+                for p in chain.iter().chain(std::iter::once(&b.patch)) {
+                    match rsi::dgm::promote_to_live(&ws, p, &backups) {
+                        Ok(id) => ids.push(id),
+                        Err(e) => {
+                            eprintln!("  ✗ échec de la promotion ({}): {}", p.target, e);
+                            promoted_ok = false;
+                            break;
+                        }
                     }
+                }
+                if promoted_ok {
+                    println!(
+                        "  ✓ PROMU vers l'arbre vivant ({} patch(es), sauvegardes dans {}) : {}",
+                        ids.len(),
+                        backups.display(),
+                        ids.join(", ")
+                    );
+                } else {
+                    exit(1);
                 }
             } else {
                 println!(
                     "  (DRY-RUN : arbre vivant intact. Relancer avec --promote pour appliquer.)"
                 );
-                println!("  note : seul ce patch unique serait appliqué (variant = delta depuis la référence).");
+                println!(
+                    "  note : {} patch(es) seraient appliqués (lignée complète de la variante).",
+                    engine.lineage_patches(b.id.as_str()).len() + 1
+                );
             }
         }
     }

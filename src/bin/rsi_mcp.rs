@@ -561,7 +561,7 @@ mod dgm_job {
         // catch_unwind : l'échec devient une erreur structurée du job.
         let body = move || {
             let fail = |state: &Shared, msg: String| {
-                let mut st = lock_ok(&state);
+                let mut st = lock_ok(state);
                 st.error = Some(msg);
                 st.running = false;
                 st.phase = "échec".to_string();

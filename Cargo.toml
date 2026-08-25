@@ -59,6 +59,9 @@ octasoma = { git = "https://github.com/Memorithm/octasoma", rev = "145761aeb52ef
 ccos = { path = "ccos", optional = true }
 rand = { version = "0.8", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+# NOTE lineage (audit a17) : `octasoma @ 145761a…` tire transitivement
+# `scirust-retrieval`/`scirust-license` depuis la révision 9b3d9492… du même
+# dépôt amont — seconde lignée scirust hors contrats P9/P10, documentée ici.
 scirust-rsi = { git = "https://github.com/Memorithm/scirust", rev = "8af0801b8bc0c69630797db82bb2dd3416cc8f0a", optional = true }
 ureq = { version = "2", optional = true }
 wasmi = { version = "0.31", optional = true }

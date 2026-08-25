@@ -86,6 +86,38 @@ pub fn compare_oracle_and_backend(
     resource_weights: &ResourceWeights,
     tolerance: f64,
 ) -> CognoResult<CrossValidationReport> {
+    // hyperparamètres par défaut historiques (audit a15 : le test unique à
+    // ces valeurs validait trivialement les deux côtés — voir
+    // `compare_oracle_and_backend_with` pour la parité hors défauts)
+    compare_oracle_and_backend_with(
+        batches,
+        weights,
+        resource_weights,
+        tolerance,
+        HyperParams { alpha: 1.0, tau: 1.0, symbolic_epsilon: 1e-6, k_recall: 1, n_calib_bins: 5, abstain_below: 0.5 },
+    )
+}
+
+/// Hyperparamètres de l'objectif, exposés pour la cross-validation hors défauts.
+#[derive(Debug, Clone, Copy)]
+pub struct HyperParams {
+    pub alpha: f64,
+    pub tau: f64,
+    pub symbolic_epsilon: f64,
+    pub k_recall: usize,
+    pub n_calib_bins: usize,
+    pub abstain_below: f64,
+}
+
+/// Comme [`compare_oracle_and_backend`], avec hyperparamètres explicites.
+#[allow(clippy::too_many_arguments)]
+pub fn compare_oracle_and_backend_with(
+    batches: &[CognoBatchInput],
+    weights: &CognoWeights,
+    resource_weights: &ResourceWeights,
+    tolerance: f64,
+    hp: HyperParams,
+) -> CognoResult<CrossValidationReport> {
     let mut report = CrossValidationReport::default();
     let mut all_match = true;
     for input in batches {
@@ -104,23 +136,23 @@ pub fn compare_oracle_and_backend(
             &oracle_input,
             weights,
             resource_weights,
-            1.0,
-            1.0,
-            1e-6,
-            1,
-            5,
-            0.5,
+            hp.alpha,
+            hp.tau,
+            hp.symbolic_epsilon,
+            hp.k_recall,
+            hp.n_calib_bins,
+            hp.abstain_below,
         )?;
         let backend = compute_objective_batch(
             input,
             weights,
             resource_weights,
-            1.0,
-            1.0,
-            1e-6,
-            1,
-            5,
-            0.5,
+            hp.alpha,
+            hp.tau,
+            hp.symbolic_epsilon,
+            hp.k_recall,
+            hp.n_calib_bins,
+            hp.abstain_below,
         )?;
         let comp = BatchComparison::compare(&oracle, &backend.breakdown, tolerance);
         if !comp.matches {
@@ -269,46 +301,24 @@ mod tests {
             - report.comparisons[0].backend.total_loss.value()).abs() < 1e-9);
     }
 
+    /// Audit a15 : la parité doit aussi tenir HORS des hyperparamètres par
+    /// défaut (l'ancien test unique à α=τ=1 validait trivialement les deux
+    /// côtés — mêmes constantes des deux côtés).
     #[test]
-    fn worst_component_reported() {        // un backend dégradé (tous les termes nuls) doit être détecté :
-        // l'oracle calcule J=1.75 (batch complet), le "backend zéro" vaut 0.
-        let b = sample_batch();
-        let oracle_input = cogno_core::objective::CognoObjectiveInput {
-            rewards: b.rewards.clone(),
-            log_prob_policy: b.log_prob_policy.clone(),
-            log_prob_ref: b.log_prob_ref.clone(),
-            preference_pairs: b.preference_pairs.clone(),
-            soft_rules: b.soft_rules.clone(),
-            memory_samples: b.memory_samples.clone(),
-            pretrain_logp_mean: b.pretrain_logp_mean,
-            calibration_points: b.calibration_points.clone(),
-            resource_costs: b.resource_costs.clone(),
-        };
-        let w = CognoWeights::default();
-        let (oracle, _) = compute_cogno_objective(&oracle_input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5).unwrap();
-        assert!((oracle.admissible_reward.value() - 1.75).abs() < 1e-12, "oracle reward={}", oracle.admissible_reward.value());
-        // backend "zéro" : on fabrique un breakdown nul
-        let zero = CognoObjectiveBreakdown {
-            admissible_reward: FiniteScalar::ZERO,
-            reference_log_ratio: FiniteScalar::ZERO,
-            preference_objective: FiniteScalar::ZERO,
-            symbolic_objective: FiniteScalar::ZERO,
-            memory_objective: FiniteScalar::ZERO,
-            pretraining_objective: FiniteScalar::ZERO,
-            calibration_loss: cogno_core::numeric::NonNegativeFinite::ZERO,
-            resource_loss: cogno_core::numeric::NonNegativeFinite::ZERO,
-            total_objective: FiniteScalar::ZERO,
-            total_loss: FiniteScalar::ZERO,
-        };
-        let comp = BatchComparison::compare(&oracle, &zero, 1e-9);
-        assert!(!comp.matches);
-        assert!(!comp.worst_component.is_empty());
-        assert_eq!(comp.worst_component, "admissible_reward");
+    fn oracle_and_backend_match_off_default_hyperparams() {
+        use crate::cross_validate::HyperParams;
+        for hp in [
+            HyperParams { alpha: 2.0, tau: 0.5, symbolic_epsilon: 1e-3, k_recall: 3, n_calib_bins: 12, abstain_below: 0.3 },
+            HyperParams { alpha: 0.25, tau: 4.0, symbolic_epsilon: 1e-4, k_recall: 1, n_calib_bins: 8, abstain_below: 0.6 },
+            HyperParams { alpha: 1.5, tau: 1.5, symbolic_epsilon: 1e-6, k_recall: 2, n_calib_bins: 5, abstain_below: 0.5 },
+        ] {
+            let w = CognoWeights::default();
+            let report =
+                compare_oracle_and_backend_with(&[sample_batch()], &w, &ResourceWeights::default(), 1e-9, hp)
+                    .unwrap();
+            assert!(report.all_match, "parité perdue à {hp:?}");
+        }
     }
-
-    /// Contrat §14 : le gradient numérique (différences finies) doit
-    /// correspondre au gradient analytique dans la tolérance — et un gradient
-    /// analytique faux doit être détecté.
     #[test]
     fn gradient_comparison_matches_or_detects() {
         // f(p) = p0² + 3·p1 → ∇f = [2·p0, 3]

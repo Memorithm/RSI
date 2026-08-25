@@ -85,3 +85,10 @@ jobs:
       # désormais exécuté aussi (M7).
       - name: Tests (workspace, toutes features)
         run: cargo test --locked --workspace --all-features
+
+      # MSRV déclaré = 1.89 (audit a16) : vérifié au moins en `check` pour le
+      # workspace entier — une dépendance ou un idiome plus récent échoue ici.
+      - name: MSRV 1.89 — check
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          cargo +1.89.0 check --locked --workspace --all-features

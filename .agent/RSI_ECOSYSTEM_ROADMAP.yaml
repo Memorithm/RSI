@@ -1,0 +1,159 @@
+schema_version: 1
+kind: rsi_ecosystem_agent_roadmap
+status: active
+last_updated: "2026-08-31"
+repository: Memorithm/RSI
+intended_consumer: autonomous_coding_agent
+merge_policy: never_merge_this_file_to_default_branch_unless_user_explicitly_requests
+published_engineering_roadmap: docs/ROADMAP.md
+
+mission:
+  primary: >-
+    Preserve RSI as a bounded recursive self-improvement research engine whose
+    recursive loop is controlled by explicit stability, safety, checkpoint,
+    replay, observer, veto and evaluation gates. LLM proposals are candidates;
+    the deterministic engine remains authoritative for validation and adoption.
+  ecosystem_goal: >-
+    Interoperate with Forge, CCOS, SciRust, PAPERS-AGENT, SoulSystem and
+    ElasticXxx through explicit contracts while preventing embedded backend
+    snapshots from silently diverging from their owning repositories.
+
+invariants:
+  - LLM_proposes_engine_validates_and_disposes
+  - no_self_modification_is_adopted_without_safety_check_and_measured_improvement_under_the_declared_objective
+  - explicit_safety_override_may_dominate_non_regression_and_must_be_recorded_as_such
+  - checkpoint_replay_and_audit_identity_must_survive_loop_resume
+  - human_veto_and_stop_conditions_must_not_be_bypassed_by_autonomous_modes
+  - dry_run_or_candidate_generation_is_not_promotion
+  - vendored_or_embedded_backend_code_is_not_automatically_authoritative_over_the_source_repository
+  - required_CI_must_be_green_on_exact_PR_head_before_merge
+
+ownership:
+  role: recursive_self_improvement_research_engine_and_loop_controller
+  owns:
+    - RSI_surface_state_substrate_and_meta_optimization_model
+    - bounded_recursive_loop_control_and_stop_conditions
+    - RSI_specific_stability_and_safety_gates
+    - RSI_candidate_adoption_and_replay_semantics
+    - RSI_MCP_and_library_interfaces
+  does_not_own:
+    - Forge_general_execution_driven_search_semantics
+    - CCOS_causal_context_memory_contract
+    - SciRust_general_scientific_or_self_refinement_primitive_ownership
+    - PAPERS_AGENT_literature_research_semantics
+    - SoulSystem_general_agent_and_coding_harness_runtime
+    - ElasticXxx_generic_resource_adaptation
+
+roadmap_coordination:
+  rule: >-
+    docs/ROADMAP.md remains the published engineering plan. This off-main roadmap
+    records persistent ecosystem boundaries, external-backend lineage, promotion
+    state and fail-closed agent policy.
+
+ecosystem_interfaces:
+  Memorithm/forge:
+    relationship: execution_driven_meta_search_and_measured_substrate_backend
+    status: active_but_lineage_must_be_audited
+    contract:
+      - RSI_supplies_objective_and_safety_gate
+      - Forge_supplies_executed_candidates_and_measurements
+      - RSI_revalidates_before_adoption
+  Memorithm/CCOS-Core:
+    relationship: deterministic_audit_and_causal_context_partner
+    status: active_direction
+    rule: RSI_does_not_redefine_ccos_recall_or_memory_contracts
+  Memorithm/scirust:
+    relationship: reusable_scientific_and_refinement_primitive_source
+    status: active_direction
+  Memorithm/PAPERS-AGENT:
+    relationship: literature_knowledge_and_candidate_objective_source
+    status: active_addon_direction
+    rule: literature_suggestions_are_not_empirical_improvement_evidence
+  Memorithm/SoulSystem:
+    relationship: autonomous_agent_host_and_operator_runtime
+    status: planned_versioned_bridge
+    rule: SoulSystem_may_invoke_RSI_tools_but_cannot_bypass_RSI_safety_or_adoption_gates
+  Memorithm/ElasticXxx:
+    relationship: adaptive_physical_resource_partner
+    status: planned
+    rule: RSI_self_improvement_objectives_do_not_override_Elastic_resource_invariants
+  Memorithm/SciRust-Verify:
+    relationship: future_evidence_and_replay_integrity_partner
+    status: planned
+
+roadmap:
+  - id: RSI0
+    name: Published roadmap and current-code reconciliation
+    status: active
+    goals:
+      - verify_L1_L9_completion_against_current_code_and_tests
+      - remove_or_reclassify_stale_status_numbers
+      - preserve_exact_loop_invariants_and_override_semantics
+  - id: RSI1
+    name: Backend lineage and de-duplication audit
+    status: active_priority
+    goals:
+      - compare_embedded_Forge_OctaSoma_CCOS_and_scirust_rsi_code_against_owner_repositories
+      - identify_forks_snapshots_or_local_adapters
+      - prevent_silent_divergence_of_security_or_scoring_semantics
+      - replace_bulk_vendoring_with_versioned_adapter_contracts_where_practical_without_breaking_offline_distribution
+  - id: RSI2
+    name: Executed-task competence surface
+    status: active
+    goals:
+      - extend_from_synthetic_or_anchored_task_profiles_to_executed_public_task_corpora
+      - define_success_failure_cost_and_reproducibility_per_task
+      - distinguish_model_score_from_real_task_success
+  - id: RSI3
+    name: Self-improvement promotion evidence
+    status: active
+    goals:
+      - require_candidate_vs_incumbent_matched_evaluation
+      - holdout_or_anti_overfitting_controls
+      - record_safety_checks_cost_and_side_effects
+      - human_or_policy_gate_for_high_impact_code_or_runtime promotion
+  - id: RSI4
+    name: Loop robustness and fault containment
+    status: planned
+    goals:
+      - crash_safe_long_running_resume
+      - nested_loop_budget_accounting
+      - oscillation_and_attractor_diagnostics
+      - explicit_rollback_boundaries_for_external_side_effects
+  - id: RSI5
+    name: SoulSystem coding-agent integration
+    status: planned
+    goals:
+      - expose_RSI_as_bounded_improvement_advisor_or_tool
+      - never_allow_RSI_to_directly_mutate_repository_default_branches
+      - use_SoulSystem_worktree_and_acceptance_check_contract_for_code_improvement_tasks
+  - id: RSI6
+    name: Elastic resource-aware self-improvement
+    status: planned
+    goals:
+      - model_compute_memory_latency_and_energy_cost_as_explicit_substrate observations
+      - let_ElasticXxx_actuate_resources_under_hard_invariants
+      - prevent_SI_gain_from_hiding_unacceptable_resource_or_safety_cost
+  - id: RSI7
+    name: Evidence and reproducibility productization
+    status: planned
+    goals:
+      - SciRust_Verify_adapter
+      - stable_checkpoint_and_event_schema
+      - external_backend_version_fingerprints
+      - reproducible_public_task_benchmarks
+
+agent_operating_protocol:
+  must_read:
+    - this_off_main_roadmap_at_every_session_start
+    - docs_ROADMAP_md_before_selecting_a_major_engineering_phase
+    - owner_repository_roadmaps_before_modifying_embedded_backend_semantics
+  must_update:
+    - backend_lineage_or_integration_change
+    - self_improvement_candidate_promotion_or_rejection_that_changes_strategy
+    - safety_or_loop_contract_change
+    - roadmap_phase_change
+  fail_closed: >-
+    If this roadmap or docs/ROADMAP.md cannot be read, do not make major
+    self-improvement-promotion, safety, backend-lineage, cross-repository, or
+    merge decisions. Read-only diagnosis is allowed.

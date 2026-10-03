@@ -146,11 +146,21 @@ jobs:
           for controller in memory pids cpu; do
             echo "+$controller" >> /sys/fs/cgroup/rsi-ci/cgroup.subtree_control
           done
+          # La migration cgroup v2 exige un droit d'écriture sur le cgroup
+          # commun le plus proche. Le processus de test part donc d'une
+          # feuille du sous-arbre délégué, tandis que CargoEvaluator crée une
+          # feuille sœur par invocation.
+          sudo mkdir /sys/fs/cgroup/rsi-ci/runner
+          sudo chown "$USER:$(id -gn)" \
+            /sys/fs/cgroup/rsi-ci/runner \
+            /sys/fs/cgroup/rsi-ci/runner/cgroup.procs
       - name: Execute isolated CargoEvaluator probe
         env:
           RSI_TEST_BWRAP: "1"
           RSI_CGROUP_ROOT: /sys/fs/cgroup/rsi-ci
-        run: cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
+        run: |
+          echo $$ > /sys/fs/cgroup/rsi-ci/runner/cgroup.procs
+          cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
 
   # COG-RSI-001 : le wrapper de laboratoire conserve l'emprunt exclusif du
   # tampon KV, reste !Send + !Sync et ne déréférence aucun handle tant que le

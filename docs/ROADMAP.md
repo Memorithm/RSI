@@ -89,6 +89,11 @@ transition de boucle.
   (chargeable via `TaskCorpus::from_json`).
 - **Connaissances `D`** : ✅ port + `CorpusKnowledge` + `PapersKnowledge`
   (sous-processus). Étendre : ingestion incrémentale, dédup sémantique.
+- **Évaluation de code candidat** : ✅ mode non fiable fail-closed sous
+  Bubblewrap et cgroup v2 délégué, sans réseau, avec environnement nettoyé,
+  workspace jetable, budgets agrégés mémoire/PIDs/temps CPU et destruction de
+  tout le groupe au dépassement. Le mode hôte historique reste un choix
+  `TrustedHost` explicite réservé au code et aux dépendances de confiance.
 - **Substrat** : ✅ `MeasuredSubstrate` natif + Forge. Étendre : domaines réels
   (GPU/SIMD via Forge côté toolchain), efficacité matérielle `H` mesurée.
 - **Surface** : ✅ corpus ancré. Étendre : tâches *exécutées* (compétence =

@@ -1485,8 +1485,8 @@ fn build_isolated_cargo_command(
         let sandbox_path = format!("{}:/usr/bin:/bin", cargo_parent.display());
 
         cmd.arg("--bind")
-            .arg(&workspace)
-            .arg(&workspace)
+            .arg(workspace)
+            .arg(workspace)
             .arg("--chdir")
             .arg(workdir)
             .arg("--setenv")
@@ -1630,17 +1630,6 @@ fn parse_bench_score(output: &str) -> Option<f64> {
     })
 }
 
-/// Lance une commande avec **timeout** et **sortie bornée** (stdout+stderr
-/// fusionnés). Rend `(success, output)`. Un dépassement de délai ⇒ kill et
-/// `success = false`. std-only (sondage `try_wait`, lecture en threads).
-fn run_bounded(
-    cmd: Command,
-    timeout: Duration,
-    max_output: u64,
-) -> std::io::Result<(bool, String)> {
-    run_bounded_scoped(cmd, timeout, max_output, None)
-}
-
 fn run_prepared(
     prepared: PreparedCommand,
     timeout: Duration,
@@ -1781,7 +1770,7 @@ unsafe extern "C" {
 fn attach_current_process_to_cgroup(fd: i32) -> std::io::Result<()> {
     unsafe extern "C" {
         fn getpid() -> i32;
-        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+        fn write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
     }
     let mut value = unsafe { getpid() } as u32;
     let mut buf = [0u8; 16];
@@ -1795,7 +1784,7 @@ fn attach_current_process_to_cgroup(fd: i32) -> std::io::Result<()> {
         }
     }
     let slice = &buf[pos..];
-    let written = unsafe { write(fd, slice.as_ptr(), slice.len()) };
+    let written = unsafe { write(fd, slice.as_ptr().cast(), slice.len()) };
     if written == slice.len() as isize {
         Ok(())
     } else {

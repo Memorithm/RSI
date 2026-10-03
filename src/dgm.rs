@@ -106,6 +106,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 // ════════════════════════════════ Erreurs ════════════════════════════════ //
 
 /// Erreur de la boucle d'auto-amélioration.
@@ -1087,6 +1090,92 @@ fn copy_tree_inner(
 
 // ═══════════════════════════════ Évaluateurs ═════════════════════════════ //
 
+/// Politique d'exécution du code candidat.
+///
+/// Le mode par défaut est fail-closed : il exige Bubblewrap + `prlimit`, coupe
+/// le réseau et l'environnement hôte, et applique des limites CPU/mémoire/PIDs.
+/// Le mode hôte historique reste disponible uniquement pour du code de
+/// confiance explicitement déclaré.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CargoExecutionPolicy {
+    /// Code et dépendances de confiance : exécution directe sur l'hôte.
+    TrustedHost,
+    /// Code ou dépendances non fiables : confinement Linux obligatoire.
+    IsolatedUntrusted(IsolationConfig),
+}
+
+impl Default for CargoExecutionPolicy {
+    fn default() -> Self {
+        Self::IsolatedUntrusted(IsolationConfig::default())
+    }
+}
+
+/// Configuration du backend d'isolation Linux.
+///
+/// Les dépendances doivent être disponibles hors ligne (par exemple vendored).
+/// Les seuls arbres hôte exposés en lecture seule sont les runtimes listés ici.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolationConfig {
+    pub bubblewrap_program: PathBuf,
+    pub prlimit_program: PathBuf,
+    pub cargo_program: PathBuf,
+    /// Toolchain rustup exposé en lecture seule, sans exposer le HOME entier.
+    pub rustup_home: Option<PathBuf>,
+    pub read_only_runtime_paths: Vec<PathBuf>,
+    pub max_memory_bytes: u64,
+    pub max_processes: u32,
+    pub max_cpu_seconds: u64,
+}
+
+impl Default for IsolationConfig {
+    fn default() -> Self {
+        let cargo_program = find_program_on_path("cargo")
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/cargo"));
+        let bubblewrap_program = find_program_on_path("bwrap")
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/bwrap"));
+        let prlimit_program = find_program_on_path("prlimit")
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/prlimit"));
+        let rustup_home = std::env::var_os("RUSTUP_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".rustup")))
+            .filter(|p| p.is_absolute() && p.is_dir());
+        let mut read_only_runtime_paths = vec![
+            PathBuf::from("/usr"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/lib"),
+            PathBuf::from("/lib64"),
+        ];
+        if let Some(parent) = cargo_program.parent() {
+            if parent.is_absolute() && !read_only_runtime_paths.contains(&parent.to_path_buf()) {
+                read_only_runtime_paths.push(parent.to_path_buf());
+            }
+        }
+        if let Some(root) = &rustup_home {
+            if !read_only_runtime_paths.contains(root) {
+                read_only_runtime_paths.push(root.clone());
+            }
+        }
+        Self {
+            bubblewrap_program,
+            prlimit_program,
+            cargo_program,
+            rustup_home,
+            read_only_runtime_paths,
+            max_memory_bytes: 4 * 1024 * 1024 * 1024,
+            max_processes: 256,
+            max_cpu_seconds: 300,
+        }
+    }
+}
+
+fn find_program_on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|p| p.join(name))
+            .find(|candidate| candidate.is_absolute() && candidate.is_file())
+    })
+}
+
 /// Construit et teste un workspace candidat avec `cargo`. **Sous-processus
 /// borné** (timeout + sortie plafonnée), conformément à la doctrine de sûreté
 /// de RSI (cf. [`crate::knowledge`]).
@@ -1108,6 +1197,8 @@ pub struct CargoEvaluator {
     pub timeout: Duration,
     /// Plafond d'octets capturés par flux (anti-OOM).
     pub max_output: u64,
+    /// Mode d'exécution. Par défaut : isolation obligatoire et fail-closed.
+    pub execution_policy: CargoExecutionPolicy,
 }
 
 impl Default for CargoEvaluator {
@@ -1119,6 +1210,31 @@ impl Default for CargoEvaluator {
             bench_command: Vec::new(),
             timeout: Duration::from_secs(300),
             max_output: 4 * 1024 * 1024,
+            execution_policy: CargoExecutionPolicy::default(),
+        }
+    }
+}
+
+impl CargoEvaluator {
+    /// Conserve explicitement le comportement historique pour une base de code
+    /// et des dépendances dont l'opérateur garantit la confiance.
+    pub fn trusted_host() -> Self {
+        Self {
+            execution_policy: CargoExecutionPolicy::TrustedHost,
+            ..Self::default()
+        }
+    }
+
+    fn cargo_command(&self, dir: &Path, args: &[String]) -> Result<Command> {
+        match &self.execution_policy {
+            CargoExecutionPolicy::TrustedHost => {
+                let mut cmd = Command::new("cargo");
+                cmd.args(args).current_dir(dir);
+                Ok(cmd)
+            }
+            CargoExecutionPolicy::IsolatedUntrusted(config) => {
+                isolated_cargo_command(dir, args, config)
+            }
         }
     }
 }
@@ -1128,8 +1244,8 @@ impl Evaluator for CargoEvaluator {
         let dir = workspace.join(&self.package_subdir);
 
         // 1. Barrière de compilation.
-        let mut build = Command::new("cargo");
-        build.arg("build").arg("--quiet").current_dir(&dir);
+        let build_args = vec!["build".to_string(), "--quiet".to_string()];
+        let build = self.cargo_command(&dir, &build_args)?;
         let (build_ok, build_out) = run_bounded(build, self.timeout, self.max_output)
             .map_err(|e| DgmError::Evaluation(format!("cargo build: {e}")))?;
         if !build_ok {
@@ -1140,11 +1256,11 @@ impl Evaluator for CargoEvaluator {
         }
 
         // 2. Barrière de tests.
-        let mut test = Command::new("cargo");
-        test.arg("test").arg("--quiet").current_dir(&dir);
+        let mut test_args = vec!["test".to_string(), "--quiet".to_string()];
         for a in &self.test_args {
-            test.arg(a);
+            test_args.push(a.clone());
         }
+        let test = self.cargo_command(&dir, &test_args)?;
         let (test_ok, out) = run_bounded(test, self.timeout, self.max_output)
             .map_err(|e| DgmError::Evaluation(format!("cargo test: {e}")))?;
         let (passed, failed) = match parse_test_counts(&out) {
@@ -1192,11 +1308,7 @@ impl Evaluator for CargoEvaluator {
             const BENCH_TRIES: usize = 3;
             let mut best: Option<f64> = None;
             for _ in 0..BENCH_TRIES {
-                let mut bench = Command::new("cargo");
-                bench.current_dir(&dir);
-                for a in &self.bench_command {
-                    bench.arg(a);
-                }
+                let bench = self.cargo_command(&dir, &self.bench_command)?;
                 let (bench_ok, bench_out) = run_bounded(bench, self.timeout, self.max_output)
                     .map_err(|e| DgmError::Evaluation(format!("cargo bench cmd: {e}")))?;
                 if let Some(s) = parse_bench_score(&bench_out).filter(|_| bench_ok) {
@@ -1228,6 +1340,131 @@ impl Evaluator for CargoEvaluator {
             score,
             notes,
         })
+    }
+}
+
+fn isolated_cargo_command(
+    dir: &Path,
+    cargo_args: &[String],
+    config: &IsolationConfig,
+) -> Result<Command> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (dir, cargo_args, config);
+        return Err(DgmError::Evaluation(
+            "l'exécution non fiable exige le backend Linux Bubblewrap; utilisez TrustedHost uniquement pour du code de confiance"
+                .to_string(),
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let workspace = dir.canonicalize().map_err(|e| {
+            DgmError::Evaluation(format!("workspace sandbox non canonique: {e}"))
+        })?;
+        if !workspace.is_dir() {
+            return Err(DgmError::Evaluation(
+                "workspace sandbox absent ou non répertoire".to_string(),
+            ));
+        }
+        if !config.cargo_program.is_absolute() {
+            return Err(DgmError::Evaluation(
+                "cargo_program doit être un chemin absolu dans le mode non fiable".to_string(),
+            ));
+        }
+        if !config.bubblewrap_program.is_absolute() || !config.prlimit_program.is_absolute() {
+            return Err(DgmError::Evaluation(
+                "bubblewrap_program et prlimit_program doivent être absolus".to_string(),
+            ));
+        }
+        if config.max_memory_bytes == 0
+            || config.max_processes == 0
+            || config.max_cpu_seconds == 0
+        {
+            return Err(DgmError::Evaluation(
+                "les limites mémoire/PIDs/CPU du sandbox doivent être non nulles".to_string(),
+            ));
+        }
+
+        let mut cmd = Command::new(&config.prlimit_program);
+        cmd.arg(format!("--as={}", config.max_memory_bytes))
+            .arg(format!("--nproc={}", config.max_processes))
+            .arg(format!("--cpu={}", config.max_cpu_seconds))
+            .arg("--")
+            .arg(&config.bubblewrap_program)
+            .args([
+                "--die-with-parent",
+                "--new-session",
+                "--unshare-all",
+                "--clearenv",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--tmpfs",
+                "/home",
+                "--dir",
+                "/tmp/home",
+                "--dir",
+                "/tmp/cargo-home",
+            ]);
+
+        for runtime in &config.read_only_runtime_paths {
+            if !runtime.is_absolute() {
+                return Err(DgmError::Evaluation(format!(
+                    "montage runtime non absolu refusé: {}",
+                    runtime.display()
+                )));
+            }
+            if runtime.exists() {
+                cmd.arg("--ro-bind").arg(runtime).arg(runtime);
+            }
+        }
+
+        let cargo_parent = config
+            .cargo_program
+            .parent()
+            .unwrap_or_else(|| Path::new("/usr/bin"));
+        let sandbox_path = format!("{}:/usr/bin:/bin", cargo_parent.display());
+
+        cmd.arg("--bind")
+            .arg(&workspace)
+            .arg(&workspace)
+            .arg("--chdir")
+            .arg(&workspace)
+            .arg("--setenv")
+            .arg("HOME")
+            .arg("/tmp/home")
+            .arg("--setenv")
+            .arg("TMPDIR")
+            .arg("/tmp")
+            .arg("--setenv")
+            .arg("CARGO_HOME")
+            .arg("/tmp/cargo-home")
+            .arg("--setenv")
+            .arg("CARGO_NET_OFFLINE")
+            .arg("true")
+            .arg("--setenv")
+            .arg("PATH")
+            .arg(sandbox_path);
+        if let Some(rustup_home) = &config.rustup_home {
+            if !rustup_home.is_absolute() || !rustup_home.is_dir() {
+                return Err(DgmError::Evaluation(
+                    "RUSTUP_HOME du sandbox doit être un répertoire absolu existant".to_string(),
+                ));
+            }
+            cmd.arg("--setenv")
+                .arg("RUSTUP_HOME")
+                .arg(rustup_home);
+        }
+        cmd.arg("--")
+            .arg(&config.cargo_program)
+            .args(cargo_args)
+            .current_dir(&workspace)
+            .env_clear();
+        Ok(cmd)
     }
 }
 
@@ -1276,7 +1513,21 @@ fn run_bounded(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Un groupe de processus propre garantit que le timeout tue aussi les
+    // descendants (compilateurs, build.rs, tests), pas seulement `cargo`.
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            if setsid() == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
     let mut child = cmd.spawn()?;
+    #[cfg(unix)]
+    let process_group = child.id() as i32;
     let per_stream = (max_output / 2).max(1);
 
     let mut stdout = child.stdout.take();
@@ -1308,6 +1559,9 @@ fn run_bounded(
             Ok(Some(s)) => break Some(s),
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    #[cfg(unix)]
+                    kill_process_tree(&mut child, process_group);
+                    #[cfg(not(unix))]
                     let _ = child.kill();
                     let _ = child.wait();
                     break None; // timeout
@@ -1315,6 +1569,9 @@ fn run_bounded(
                 std::thread::sleep(Duration::from_millis(25));
             }
             Err(_) => {
+                #[cfg(unix)]
+                kill_process_tree(&mut child, process_group);
+                #[cfg(not(unix))]
                 let _ = child.kill();
                 let _ = child.wait();
                 break None;
@@ -1322,11 +1579,14 @@ fn run_bounded(
         }
     };
 
+    // Drain borné par un délai commun : deux flux bloqués ne doublent pas le
+    // budget de sortie après terminaison du processus.
+    let drain_deadline = Instant::now() + Duration::from_secs(2);
     let ob = rx_o
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(drain_deadline.saturating_duration_since(Instant::now()))
         .unwrap_or_default();
     let eb = rx_e
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(drain_deadline.saturating_duration_since(Instant::now()))
         .unwrap_or_default();
     let combined = format!(
         "{}{}",
@@ -1334,6 +1594,22 @@ fn run_bounded(
         String::from_utf8_lossy(&eb)
     );
     Ok((status.map(|s| s.success()).unwrap_or(false), combined))
+}
+
+#[cfg(unix)]
+fn kill_process_tree(child: &mut std::process::Child, process_group: i32) {
+    const SIGKILL: i32 = 9;
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    // PID négatif = groupe de processus POSIX créé par setsid().
+    let _ = unsafe { kill(-process_group, SIGKILL) };
+    let _ = child.kill();
+}
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn setsid() -> i32;
 }
 
 /// Somme les lignes `test result: ok. N passed; M failed` que `cargo` émet par
@@ -2338,6 +2614,60 @@ mod tests {
         let d = unique_tmp_dir().join(tag);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn cargo_evaluator_defaults_to_fail_closed_isolation() {
+        assert!(matches!(
+            CargoEvaluator::default().execution_policy,
+            CargoExecutionPolicy::IsolatedUntrusted(_)
+        ));
+        assert_eq!(
+            CargoEvaluator::trusted_host().execution_policy,
+            CargoExecutionPolicy::TrustedHost
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn isolated_cargo_command_denies_network_and_bounds_resources() {
+        let root = fresh_dir("sandbox-command");
+        let config = IsolationConfig {
+            bubblewrap_program: PathBuf::from("/usr/bin/bwrap"),
+            prlimit_program: PathBuf::from("/usr/bin/prlimit"),
+            cargo_program: PathBuf::from("/usr/bin/cargo"),
+            rustup_home: None,
+            read_only_runtime_paths: vec![PathBuf::from("/usr")],
+            max_memory_bytes: 1024 * 1024,
+            max_processes: 8,
+            max_cpu_seconds: 7,
+        };
+        let cmd = isolated_cargo_command(
+            &root,
+            &["test".to_string(), "--locked".to_string()],
+            &config,
+        )
+        .unwrap();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/usr/bin/prlimit"));
+        for required in [
+            "--as=1048576",
+            "--nproc=8",
+            "--cpu=7",
+            "--unshare-all",
+            "--clearenv",
+            "--die-with-parent",
+            "CARGO_NET_OFFLINE",
+            "true",
+        ] {
+            assert!(args.iter().any(|arg| arg == required), "missing {required}");
+        }
+        assert!(!args.iter().any(|arg| arg == "--share-net"));
+        assert!(args.iter().any(|arg| arg == &root.display().to_string()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

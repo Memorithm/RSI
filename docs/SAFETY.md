@@ -118,8 +118,18 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
 - **Arbre vivant intouché** : la boucle ne mute jamais le dépôt réel ; seule
   [`promote_to_live`] le fait, et l'appelant la garde sur une évaluation
   **tout-au-vert**. Chaque édition est sauvegardée (`.bak`) donc réversible.
-- **Sous-processus bornés** : `cargo build`/`test` sont lancés avec **timeout**
-  (défaut 300 s) et **sortie plafonnée** (défaut 4 MiB/flux), comme `papers`.
+- **Exécution non fiable fail-closed** : par défaut, `cargo build`/`test`/bench
+  passent par Bubblewrap + `prlimit` avec réseau/IPC/PID/UTS/cgroup séparés,
+  environnement nettoyé, montages runtime en lecture seule, workspace jetable
+  seul en écriture et limites CPU/RAM/PIDs. Dépendances disponibles hors ligne
+  requises. L'absence du backend fait échouer l'évaluation ; elle ne déclenche
+  jamais un repli silencieux sur l'hôte.
+- **Mode fiable explicite** : `CargoExecutionPolicy::TrustedHost` (CLI
+  `--trusted-host`) conserve l'exécution historique pour du code **et des
+  dépendances** dont l'opérateur garantit la confiance.
+- **Sous-processus bornés** : chaque commande a un **timeout** (défaut 300 s),
+  une sortie plafonnée (défaut 4 MiB/flux), un drain commun borné et son propre
+  groupe de processus ; un délai tue aussi les descendants.
 - **Déterminisme** : IDs de variantes = hash SHA-256 de la lignée (≠ UUID
   aléatoire), horloge logique `seq` ⇒ archive **bit-exacte reproductible**.
 
@@ -136,7 +146,7 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
 | API dimensions | |Ω|, dim, substrat, pas bornés | `MAX_TASKS=50_000`, `MAX_DIM=1_024`, `MAX_SUBSTRATE=256`, `MAX_STEPS=100_000` |
 | Raffinement | points / propositions bornés | `MAX_REFINE_POINTS=4_096`, `MAX_PROPOSALS_PER_CALL=64` |
 | Sous-processus `papers` | timeout + sortie bornée | `30 s` / `8 MiB` (`knowledge.rs`) |
-| Sous-processus `cargo` (DGM) | timeout + sortie bornée par flux | `300 s` / `4 MiB` (`dgm.rs`) |
+| Sous-processus `cargo` (DGM) | Bubblewrap fail-closed + réseau coupé + env nettoyé + limites RAM/PIDs/CPU + timeout/groupe de processus + sortie bornée | `4 GiB` / `256` / `300 s` / `4 MiB` (`dgm.rs`) |
 | Synthèse | taille d'AST adoptable bornée | `MAX_EXPR_SIZE = 25` (`synthesis.rs`) |
 | Accès numériques JSON | rejet NaN/∞/négatifs | `as_u64`/`as_usize` (`json.rs`) |
 
@@ -180,18 +190,15 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
   **fuel borné** (terminaison garantie). Tout module déclarant un import ou
   dépassant le fuel est rejeté/trappé. C'est la condition d'un domaine exécutant,
   désormais satisfaite.
-- **La boucle DGM/STOP exécute du code source réel — et ce n'est PAS un bac à
-  sable syscall.** `CargoEvaluator` (`src/dgm.rs`) **construit et teste** le code
-  candidat via `cargo` : l'isolation est une **copie temporaire jetable** du
-  workspace (les écritures du candidat ne touchent pas l'arbre vivant) plus un
-  **sous-processus borné** (timeout + sortie plafonnée), mais le `cargo
-  build/test` s'exécute avec **les privilèges du processus hôte** (pas de
-  confinement réseau/fs/syscall comme pour WASM). Les garde-fous réels sont : la
-  **liste blanche** de fichiers, le **patch exact non ambigu**, la **barrière
-  empirique** (compile ▸ tests ▸ score), et le fait que l'arbre vivant n'est mué
-  que par `promote_to_live` (gardé tout-au-vert, avec sauvegarde réversible).
-  **Ne lancer la boucle qu'avec un évaluateur de confiance, sur du code de
-  confiance.** Pour du code non fiable, préférer le domaine WASM.
+- **La boucle DGM/STOP exécute du code source réel.** Le mode par défaut refuse
+  de l'exécuter hors d'un sandbox Linux Bubblewrap borné et sans réseau. Ce
+  confinement réduit fortement les effets hôte, mais ne constitue pas une
+  preuve formelle de sûreté du noyau, de Bubblewrap ou de la toolchain montée en
+  lecture seule. Les dépendances doivent être préparées hors ligne ; aucune
+  récupération réseau n'est autorisée pendant l'évaluation. Le mode
+  `TrustedHost` contourne volontairement le confinement et **ne doit servir
+  qu'à du code et des dépendances de confiance**. Pour des modules autonomes,
+  préférer encore le domaine WASM à imports vides et fuel borné.
 - **Le déterminisme est bit-exact à configuration fixe.** L'évaluation
   parallèle (MetaOptimizer/CMA) préserve l'ordre d'index → bit-exacte. En
   revanche la feature **`simd`** (OFF par défaut) vectorise les réductions

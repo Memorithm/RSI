@@ -2670,6 +2670,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn isolated_cargo_sandbox_runtime_smoke() {
+        // Bubblewrap n'est pas un prérequis des tests de bibliothèque usuels.
+        // Le job CI dédié active cette preuve d'exécution après installation
+        // explicite du backend ; l'absence du backend en production reste un
+        // échec fail-closed, jamais un fallback hôte.
+        if std::env::var_os("RSI_TEST_BWRAP").is_none() {
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = fresh_dir("sandbox-runtime-workspace");
+        let runtime = fresh_dir("sandbox-runtime-tools");
+        let fake_cargo = runtime.join("cargo-probe");
+        write(
+            &runtime,
+            "cargo-probe",
+            "#!/bin/sh\nset -eu\n\
+             [ -z \"${RSI_HOST_SECRET:-}\" ]\n\
+             [ \"${CARGO_NET_OFFLINE:-}\" = true ]\n\
+             [ \"${HOME:-}\" = /tmp/home ]\n\
+             [ ! -e /etc/passwd ]\n\
+             [ \"$(wc -l </proc/net/route)\" -le 1 ]\n\
+             printf sandbox-ok\n",
+        );
+        std::fs::set_permissions(&fake_cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let config = IsolationConfig {
+            bubblewrap_program: find_program_on_path("bwrap").expect("bwrap requis par ce job"),
+            prlimit_program: find_program_on_path("prlimit").expect("prlimit requis par ce job"),
+            cargo_program: fake_cargo,
+            rustup_home: None,
+            read_only_runtime_paths: vec![
+                PathBuf::from("/usr"),
+                PathBuf::from("/bin"),
+                PathBuf::from("/lib"),
+                PathBuf::from("/lib64"),
+                runtime.clone(),
+            ],
+            max_memory_bytes: 512 * 1024 * 1024,
+            max_processes: 4096,
+            max_cpu_seconds: 10,
+        };
+        let mut cmd = isolated_cargo_command(&workspace, &["test".to_string()], &config).unwrap();
+        cmd.env("RSI_HOST_SECRET", "must-not-cross-sandbox");
+        let (ok, output) = run_bounded(cmd, Duration::from_secs(10), 64 * 1024).unwrap();
+        assert!(ok, "sandbox probe failed: {output}");
+        assert_eq!(output, "sandbox-ok");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&runtime);
+    }
+
     #[test]
     fn snapshot_copies_and_isolates() {
         let live = fresh_dir("live");

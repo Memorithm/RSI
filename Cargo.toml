@@ -46,6 +46,10 @@ scirust = ["dep:scirust-rsi", "dep:rand"]
 llm-ollama = []
 llm-claude = []
 llm-claude-ureq = ["llm-claude", "dep:ureq"]
+# Experimental ABI surface only. The wrapper is deliberately absent from
+# default production builds and fails closed until a real llama.cpp inference
+# backend (tokenisation, decode and generation) is qualified end to end.
+llama-ffi-lab = []
 wasm = ["dep:wasmi", "dep:wat"]
 observability = ["dep:tracing"]
 simd = ["dep:wide"]

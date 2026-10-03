@@ -122,8 +122,9 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
   passent par Bubblewrap + cgroup v2 délégué, avec réseau/IPC/PID/UTS/cgroup
   séparés, environnement nettoyé, montages runtime en lecture seule et racine
   du workspace jetable seule en écriture. `memory.max`, `pids.max` et `cpu.max`
-  imposent des budgets **agrégés** à tout l'arbre ; `prlimit` ajoute une défense
-  par processus et le timeout borne la durée totale. Dépendances disponibles
+  imposent des budgets **agrégés** à tout l'arbre. RSI surveille en plus
+  `cpu.stat/usage_usec` et tue le cgroup dès que `max_cpu_seconds` est consommé ;
+  `prlimit` ajoute une défense par processus et le timeout borne la durée totale. Dépendances disponibles
   hors ligne requises. Le noyau doit autoriser les espaces de noms utilisateur
   nécessaires à Bubblewrap et `RSI_CGROUP_ROOT` doit désigner une racine cgroup
   v2 déléguée avec contrôleurs `memory`, `pids` et `cpu`. Toute absence fait
@@ -150,7 +151,7 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
 | API dimensions | |Ω|, dim, substrat, pas bornés | `MAX_TASKS=50_000`, `MAX_DIM=1_024`, `MAX_SUBSTRATE=256`, `MAX_STEPS=100_000` |
 | Raffinement | points / propositions bornés | `MAX_REFINE_POINTS=4_096`, `MAX_PROPOSALS_PER_CALL=64` |
 | Sous-processus `papers` | timeout + sortie bornée | `30 s` / `8 MiB` (`knowledge.rs`) |
-| Sous-processus `cargo` (DGM) | Bubblewrap + cgroup v2 agrégé fail-closed, réseau coupé, env nettoyé, timeout/groupe de processus, sortie bornée | `memory.max=4 GiB` / `pids.max=256` / `cpu.max=1 CPU` / `300 s` / `4 MiB` (`dgm.rs`) |
+| Sous-processus `cargo` (DGM) | Bubblewrap + cgroup v2 agrégé fail-closed, réseau coupé, env nettoyé, budget CPU cumulé via `cpu.stat`, timeout/groupe de processus, sortie bornée | `memory.max=4 GiB` / `pids.max=256` / `cpu.max=1 CPU` / `usage_usec≤300 s` / `timeout=300 s` / `4 MiB` (`dgm.rs`) |
 | Synthèse | taille d'AST adoptable bornée | `MAX_EXPR_SIZE = 25` (`synthesis.rs`) |
 | Accès numériques JSON | rejet NaN/∞/négatifs | `as_u64`/`as_usize` (`json.rs`) |
 

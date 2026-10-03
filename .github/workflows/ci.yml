@@ -123,6 +123,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap util-linux
+          # Ubuntu 24.04 restreint par défaut les user namespaces non privilégiés
+          # via AppArmor. Le runner est jetable ; on active la capacité requise
+          # pour qualifier le vrai backend au lieu de remplacer le test par un mock.
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Execute isolated CargoEvaluator probe
         env:
           RSI_TEST_BWRAP: "1"

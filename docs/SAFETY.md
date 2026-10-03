@@ -122,8 +122,10 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
   passent par Bubblewrap + `prlimit` avec réseau/IPC/PID/UTS/cgroup séparés,
   environnement nettoyé, montages runtime en lecture seule, workspace jetable
   seul en écriture et limites CPU/RAM/PIDs. Dépendances disponibles hors ligne
-  requises. L'absence du backend fait échouer l'évaluation ; elle ne déclenche
-  jamais un repli silencieux sur l'hôte.
+  requises. Le noyau doit autoriser les espaces de noms utilisateur non
+  privilégiés nécessaires à Bubblewrap. L'absence du backend ou de cette
+  capacité fait échouer l'évaluation ; elle ne déclenche jamais un repli
+  silencieux sur l'hôte.
 - **Mode fiable explicite** : `CargoExecutionPolicy::TrustedHost` (CLI
   `--trusted-host`) conserve l'exécution historique pour du code **et des
   dépendances** dont l'opérateur garantit la confiance.

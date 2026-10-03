@@ -159,8 +159,24 @@ jobs:
           RSI_TEST_BWRAP: "1"
           RSI_CGROUP_ROOT: /sys/fs/cgroup/rsi-ci
         run: |
-          echo $$ > /sys/fs/cgroup/rsi-ci/runner/cgroup.procs
-          cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
+          # Le superviseur privilégié effectue la seule migration depuis la
+          # racine du runner hôte, puis abandonne immédiatement ses privilèges.
+          # Rust et le sandbox s'exécutent avec l'UID/GID non privilégié du job.
+          sudo \
+            RUNNER_HOME="$HOME" \
+            RUNNER_PATH="$PATH" \
+            RUNNER_CARGO_HOME="$CARGO_HOME" \
+            RUNNER_RUSTUP_HOME="$RUSTUP_HOME" \
+            RSI_TEST_BWRAP="$RSI_TEST_BWRAP" \
+            RSI_CGROUP_ROOT="$RSI_CGROUP_ROOT" \
+            bash -c '
+              echo $$ > /sys/fs/cgroup/rsi-ci/runner/cgroup.procs
+              exec setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups \
+                env HOME="$RUNNER_HOME" PATH="$RUNNER_PATH" \
+                CARGO_HOME="$RUNNER_CARGO_HOME" RUSTUP_HOME="$RUNNER_RUSTUP_HOME" \
+                RSI_TEST_BWRAP="$RSI_TEST_BWRAP" RSI_CGROUP_ROOT="$RSI_CGROUP_ROOT" \
+                cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
+            '
 
   # COG-RSI-001 : le wrapper de laboratoire conserve l'emprunt exclusif du
   # tampon KV, reste !Send + !Sync et ne déréférence aucun handle tant que le

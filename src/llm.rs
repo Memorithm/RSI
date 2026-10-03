@@ -1524,17 +1524,19 @@ mod ffi_tests {
         let mut unified_mem = [1.0f32; 100];
         let mut context_token = 0_u8;
         let ctx = NonNull::from(&mut context_token).cast();
-        let client = unsafe { LlamaKVCacheFFILabClient::from_raw_context(ctx, &mut unified_mem) };
-        assert_eq!(client.kv_len(), 100);
-        assert!(matches!(
-            client.propose("test", 3),
-            Err(LlmError::Unsupported(_))
-        ));
-        assert!(matches!(
-            client.complete_raw("test"),
-            Err(LlmError::Unsupported(_))
-        ));
-        drop(client);
+        {
+            let client =
+                unsafe { LlamaKVCacheFFILabClient::from_raw_context(ctx, &mut unified_mem) };
+            assert_eq!(client.kv_len(), 100);
+            assert!(matches!(
+                client.propose("test", 3),
+                Err(LlmError::Unsupported(_))
+            ));
+            assert!(matches!(
+                client.complete_raw("test"),
+                Err(LlmError::Unsupported(_))
+            ));
+        }
         assert_eq!(unified_mem, [1.0; 100]);
     }
 }

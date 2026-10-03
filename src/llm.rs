@@ -29,6 +29,8 @@ use std::time::{Duration, Instant};
 pub enum LlmError {
     /// Le backend a échoué (réseau, modèle indisponible…).
     Backend(String),
+    /// Le backend demandé n'est pas qualifié pour une utilisation réelle.
+    Unsupported(String),
     /// Le backend n'a renvoyé aucune proposition.
     Empty,
 }
@@ -1515,20 +1517,25 @@ mod claude_tests {
 #[cfg(test)]
 mod ffi_tests {
     use super::*;
+    use std::ptr::NonNull;
 
     #[test]
-    fn test_llama_ffi_client_zero_copy() {
+    fn llama_ffi_lab_client_fails_closed_without_touching_memory() {
         let mut unified_mem = [1.0f32; 100];
-        let ctx = 12345 as *mut std::ffi::c_void;
-        let client = unsafe { LlamaKVCacheFFIClient::new(ctx, unified_mem.as_mut_ptr(), 100) };
-        let props = client.propose("test", 3).unwrap();
-        assert_eq!(props.len(), 3);
-        assert_eq!(props[0], "proposition_ffi_zero_copy_0");
-
-        let text = client.complete_raw("test").unwrap();
-        assert_eq!(text, "completion_ffi_zero_copy_raw_text");
-        // Vérifie l'écriture directe (zéro-copie) en mémoire unifiée
-        assert_eq!(unified_mem[0], 42.0);
+        let mut context_token = 0_u8;
+        let ctx = NonNull::from(&mut context_token).cast();
+        let client = unsafe { LlamaKVCacheFFILabClient::from_raw_context(ctx, &mut unified_mem) };
+        assert_eq!(client.kv_len(), 100);
+        assert!(matches!(
+            client.propose("test", 3),
+            Err(LlmError::Unsupported(_))
+        ));
+        assert!(matches!(
+            client.complete_raw("test"),
+            Err(LlmError::Unsupported(_))
+        ));
+        drop(client);
+        assert_eq!(unified_mem, [1.0; 100]);
     }
 }
 
@@ -1605,94 +1612,70 @@ pub mod ffi {
     }
 }
 
-/// Client FFI direct communiquant avec l'inférence locale llama.cpp.
-/// Les échanges se font en mémoire unifiée via pointeurs bruts (zéro-copie).
-pub struct LlamaKVCacheFFIClient {
-    /// Contexte d'inférence opaque llama_context.
-    pub ctx: *mut std::ffi::c_void,
-    /// Pointeur brut vers le KV cache en mémoire unifiée (Unified Memory).
-    pub unified_kv_ptr: *mut f32,
-    /// Taille du KV cache (nombre d'éléments de type f32).
-    pub kv_size: usize,
+/// Banc FFI expérimental pour une future intégration llama.cpp.
+///
+/// Ce type n'existe que dans les tests ou avec la feature explicite
+/// `llama-ffi-lab`. Il ne produit jamais d'inférence : tant que tokenisation,
+/// décodage et génération n'ont pas été qualifiés contre un modèle connu, les
+/// appels [`LlmClient`] échouent avec [`LlmError::Unsupported`]. Les handles
+/// restent privés et la durée de vie du tampon KV est portée par le type.
+///
+/// Le marqueur `Rc` rend intentionnellement le wrapper `!Send + !Sync` :
+///
+/// ```compile_fail
+/// use rsi::llm::LlamaKVCacheFFILabClient;
+/// fn require_send<T: Send>() {}
+/// require_send::<LlamaKVCacheFFILabClient<'static>>();
+/// ```
+#[cfg(any(test, feature = "llama-ffi-lab"))]
+pub struct LlamaKVCacheFFILabClient<'kv> {
+    _ctx: std::ptr::NonNull<std::ffi::c_void>,
+    _unified_kv: std::ptr::NonNull<[f32]>,
+    _kv_lifetime: std::marker::PhantomData<&'kv mut [f32]>,
+    _not_send_or_sync: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
-// Implémentations manuelles de Send & Sync car le client manipule des pointeurs bruts.
-// Invariant : l'accès et les appels FFI sous-jacents sont protégés par le design
-// ou exécutés de manière synchrone par l'orchestrateur de boucle.
-unsafe impl Send for LlamaKVCacheFFIClient {}
-unsafe impl Sync for LlamaKVCacheFFIClient {}
-
-impl LlamaKVCacheFFIClient {
-    /// Crée un nouveau client FFI.
+#[cfg(any(test, feature = "llama-ffi-lab"))]
+impl<'kv> LlamaKVCacheFFILabClient<'kv> {
+    /// Construit le banc expérimental sans transférer la propriété du contexte.
     ///
     /// # Safety
-    /// - `ctx` et `unified_kv_ptr` doivent être des pointeurs valides et alloués de manière unifiée.
-    pub unsafe fn new(
-        ctx: *mut std::ffi::c_void,
-        unified_kv_ptr: *mut f32,
-        kv_size: usize,
+    ///
+    /// `ctx` doit désigner un contexte llama.cpp actif pendant toute la durée
+    /// de vie du wrapper. Le wrapper ne déréférence pas ce handle tant que le
+    /// backend réel n'est pas qualifié. `unified_kv` est un emprunt mutable
+    /// exclusif dont la durée de vie est conservée par le type.
+    pub unsafe fn from_raw_context(
+        ctx: std::ptr::NonNull<std::ffi::c_void>,
+        unified_kv: &'kv mut [f32],
     ) -> Self {
-        LlamaKVCacheFFIClient {
-            ctx,
-            unified_kv_ptr,
-            kv_size,
+        Self {
+            _ctx: ctx,
+            _unified_kv: std::ptr::NonNull::from(unified_kv),
+            _kv_lifetime: std::marker::PhantomData,
+            _not_send_or_sync: std::marker::PhantomData,
         }
+    }
+
+    /// Taille du tampon KV emprunté, sans lecture ni écriture FFI.
+    #[must_use]
+    pub fn kv_len(&self) -> usize {
+        self._unified_kv.len()
     }
 }
 
-impl LlmClient for LlamaKVCacheFFIClient {
-    fn propose(&self, _prompt: &str, k: usize) -> Result<Vec<String>, LlmError> {
-        unsafe {
-            // INVARIANTS DE SÛRETÉ :
-            // - `self.ctx` doit être un pointeur valide vers un contexte d'inférence llama_context actif.
-            // - Le KV cache obtenu via FFI ne doit pas dépasser les limites de la mémoire physique (128GB unifiée).
-            // - Aucun autre thread ne doit muter simultanément les adresses pointées par le KV cache récupéré.
-            if self.ctx.is_null() {
-                return Err(LlmError::Backend(
-                    "Le contexte llama.cpp est nul".to_string(),
-                ));
-            }
-
-            // Récupération zéro-copie de la vue du KV cache par FFI direct
-            let view = ffi::llama_get_kv_cache_view(self.ctx, 0);
-
-            // Accès direct en mémoire unifiée sans copie intermédiaire
-            if view.n_cells > 0 && !view.cells.is_null() {
-                let _first_cell = *view.cells; // lecture directe de la cellule
-            }
-
-            if !self.unified_kv_ptr.is_null() && self.kv_size > 0 {
-                // Lecture/écriture directe de contrôle sur la mémoire unifiée
-                let _control_read = *self.unified_kv_ptr;
-            }
-
-            // Génération locale des propositions
-            let mut proposals = Vec::with_capacity(k);
-            for i in 0..k {
-                proposals.push(format!("proposition_ffi_zero_copy_{i}"));
-            }
-            Ok(proposals)
-        }
+#[cfg(any(test, feature = "llama-ffi-lab"))]
+impl LlmClient for LlamaKVCacheFFILabClient<'_> {
+    fn propose(&self, _prompt: &str, _k: usize) -> Result<Vec<String>, LlmError> {
+        Err(LlmError::Unsupported(
+            "llama.cpp FFI lab backend is not qualified for inference".to_string(),
+        ))
     }
 
     fn complete_raw(&self, _prompt: &str) -> Result<String, LlmError> {
-        unsafe {
-            // INVARIANTS DE SÛRETÉ :
-            // - `self.ctx` doit être un pointeur valide non nul.
-            // - `self.unified_kv_ptr` doit pointer vers un tampon de mémoire unifiée de taille valide.
-            if self.ctx.is_null() {
-                return Err(LlmError::Backend(
-                    "Le contexte llama.cpp est nul".to_string(),
-                ));
-            }
-
-            if !self.unified_kv_ptr.is_null() && self.kv_size > 0 {
-                // Simulation d'écriture zéro-copie de token dans le KV cache
-                *self.unified_kv_ptr = 42.0;
-            }
-
-            Ok("completion_ffi_zero_copy_raw_text".to_string())
-        }
+        Err(LlmError::Unsupported(
+            "llama.cpp FFI lab backend is not qualified for inference".to_string(),
+        ))
     }
 }
 

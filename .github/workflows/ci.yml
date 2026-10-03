@@ -106,3 +106,25 @@ jobs:
         run: docker build -t rsi:smoke .
       - name: Sanity rsi-demo
         run: docker run --rm --entrypoint /usr/local/bin/rsi-demo rsi:smoke 2 7 random | tail -n 5
+
+  # COG-RSI-001 : le wrapper de laboratoire conserve l'emprunt exclusif du
+  # tampon KV, reste !Send + !Sync et ne déréférence aucun handle tant que le
+  # backend réel n'est pas qualifié. Miri exerce cette frontière sans fabriquer
+  # de pointeur invalide ni appeler llama.cpp.
+  miri-ffi-wrapper:
+    name: miri · FFI lab wrapper
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned nightly with Miri
+        run: rustup toolchain install nightly-2026-07-02 --profile minimal --component miri
+
+      - name: Qualify the safe FFI lab boundary under Miri
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: >-
+          cargo +nightly-2026-07-02 miri test --locked --lib
+          llama_ffi_lab_client_fails_closed_without_touching_memory

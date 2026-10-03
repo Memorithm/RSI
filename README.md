@@ -422,9 +422,10 @@ cargo run --release --features llm-ollama --bin rsi-dgm -- \
 # DRY-RUN : l'arbre vivant n'est jamais écrit. Ajouter --promote pour appliquer
 # le meilleur variant tout-au-vert (avec sauvegarde réversible). Claude :
 # --features llm-claude-ureq puis --backend claude (ANTHROPIC_API_KEY).
-# Par défaut le code candidat est isolé via Bubblewrap/prlimit, sans réseau et
-# avec dépendances hors ligne. --trusted-host conserve le mode historique mais
-# exige que code ET dépendances soient explicitement réputés fiables.
+# Par défaut le code candidat est isolé via Bubblewrap + cgroup v2 délégué
+# (`RSI_CGROUP_ROOT`), sans réseau et avec dépendances hors ligne.
+# --trusted-host conserve le mode historique mais exige que code ET dépendances
+# soient explicitement réputés fiables.
 ```
 
 - **STOP** (Zelikman 2023) : le proposeur est interchangeable
@@ -437,8 +438,9 @@ cargo run --release --features llm-ollama --bin rsi-dgm -- \
 
 **Sûreté** (cf. [`docs/SAFETY.md`](docs/SAFETY.md) §5bis) : liste blanche de
 fichiers éditables, patch exact **non ambigu** (motif unique), snapshot jetable,
-et exécution `cargo` non fiable fail-closed sous Bubblewrap/prlimit (réseau
-coupé, environnement nettoyé, ressources et groupe de processus bornés).
+et exécution `cargo` non fiable fail-closed sous Bubblewrap + cgroup v2
+(réseau coupé, environnement nettoyé, budgets agrégés RAM/PIDs/CPU et groupe de
+processus borné).
 L'arbre vivant n'est mué que par [`promote_to_live`] (gardé tout-au-vert,
 sauvegarde réversible). IDs de variantes déterministes (hash de lignée) ⇒
 archive **reproductible**. Le mode `--trusted-host` n'est admis que pour du code

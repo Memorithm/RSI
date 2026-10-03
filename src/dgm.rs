@@ -106,8 +106,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "linux")]
+use std::fs::File;
 
 // ════════════════════════════════ Erreurs ════════════════════════════════ //
 
@@ -1122,9 +1126,14 @@ pub struct IsolationConfig {
     /// Toolchain rustup exposé en lecture seule, sans exposer le HOME entier.
     pub rustup_home: Option<PathBuf>,
     pub read_only_runtime_paths: Vec<PathBuf>,
+    /// Racine cgroup v2 déléguée à RSI. Aucun fallback sans cgroup.
+    pub cgroup_root: PathBuf,
     pub max_memory_bytes: u64,
     pub max_processes: u32,
     pub max_cpu_seconds: u64,
+    /// Quota CPU agrégé par période cgroup v2 (`cpu.max`).
+    pub cpu_quota_micros: u64,
+    pub cpu_period_micros: u64,
 }
 
 impl Default for IsolationConfig {
@@ -1161,9 +1170,14 @@ impl Default for IsolationConfig {
             cargo_program,
             rustup_home,
             read_only_runtime_paths,
+            cgroup_root: std::env::var_os("RSI_CGROUP_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/sys/fs/cgroup/rsi")),
             max_memory_bytes: 4 * 1024 * 1024 * 1024,
             max_processes: 256,
             max_cpu_seconds: 300,
+            cpu_quota_micros: 100_000,
+            cpu_period_micros: 100_000,
         }
     }
 }
@@ -1225,15 +1239,23 @@ impl CargoEvaluator {
         }
     }
 
-    fn cargo_command(&self, dir: &Path, args: &[String]) -> Result<Command> {
+    fn cargo_command(
+        &self,
+        workspace: &Path,
+        dir: &Path,
+        args: &[String],
+    ) -> Result<PreparedCommand> {
         match &self.execution_policy {
             CargoExecutionPolicy::TrustedHost => {
                 let mut cmd = Command::new("cargo");
                 cmd.args(args).current_dir(dir);
-                Ok(cmd)
+                Ok(PreparedCommand {
+                    command: cmd,
+                    cgroup: None,
+                })
             }
             CargoExecutionPolicy::IsolatedUntrusted(config) => {
-                isolated_cargo_command(dir, args, config)
+                isolated_cargo_command(workspace, dir, args, config)
             }
         }
     }
@@ -1245,8 +1267,8 @@ impl Evaluator for CargoEvaluator {
 
         // 1. Barrière de compilation.
         let build_args = vec!["build".to_string(), "--quiet".to_string()];
-        let build = self.cargo_command(&dir, &build_args)?;
-        let (build_ok, build_out) = run_bounded(build, self.timeout, self.max_output)
+        let build = self.cargo_command(workspace, &dir, &build_args)?;
+        let (build_ok, build_out) = run_prepared(build, self.timeout, self.max_output)
             .map_err(|e| DgmError::Evaluation(format!("cargo build: {e}")))?;
         if !build_ok {
             return Ok(Fitness::broken(format!(
@@ -1260,8 +1282,8 @@ impl Evaluator for CargoEvaluator {
         for a in &self.test_args {
             test_args.push(a.clone());
         }
-        let test = self.cargo_command(&dir, &test_args)?;
-        let (test_ok, out) = run_bounded(test, self.timeout, self.max_output)
+        let test = self.cargo_command(workspace, &dir, &test_args)?;
+        let (test_ok, out) = run_prepared(test, self.timeout, self.max_output)
             .map_err(|e| DgmError::Evaluation(format!("cargo test: {e}")))?;
         let (passed, failed) = match parse_test_counts(&out) {
             Ok(c) => c,
@@ -1308,8 +1330,8 @@ impl Evaluator for CargoEvaluator {
             const BENCH_TRIES: usize = 3;
             let mut best: Option<f64> = None;
             for _ in 0..BENCH_TRIES {
-                let bench = self.cargo_command(&dir, &self.bench_command)?;
-                let (bench_ok, bench_out) = run_bounded(bench, self.timeout, self.max_output)
+                let bench = self.cargo_command(workspace, &dir, &self.bench_command)?;
+                let (bench_ok, bench_out) = run_prepared(bench, self.timeout, self.max_output)
                     .map_err(|e| DgmError::Evaluation(format!("cargo bench cmd: {e}")))?;
                 if let Some(s) = parse_bench_score(&bench_out).filter(|_| bench_ok) {
                     best = Some(best.map_or(s, |b: f64| b.max(s)));
@@ -1343,14 +1365,20 @@ impl Evaluator for CargoEvaluator {
     }
 }
 
+struct PreparedCommand {
+    command: Command,
+    cgroup: Option<CgroupScope>,
+}
+
 fn isolated_cargo_command(
+    workspace_root: &Path,
     dir: &Path,
     cargo_args: &[String],
     config: &IsolationConfig,
-) -> Result<Command> {
+) -> Result<PreparedCommand> {
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (dir, cargo_args, config);
+        let _ = (workspace_root, dir, cargo_args, config);
         return Err(DgmError::Evaluation(
             "l'exécution non fiable exige le backend Linux Bubblewrap; utilisez TrustedHost uniquement pour du code de confiance"
                 .to_string(),
@@ -1359,12 +1387,20 @@ fn isolated_cargo_command(
 
     #[cfg(target_os = "linux")]
     {
-        let workspace = dir.canonicalize().map_err(|e| {
+        let workspace = workspace_root.canonicalize().map_err(|e| {
             DgmError::Evaluation(format!("workspace sandbox non canonique: {e}"))
+        })?;
+        let workdir = dir.canonicalize().map_err(|e| {
+            DgmError::Evaluation(format!("package_subdir sandbox non canonique: {e}"))
         })?;
         if !workspace.is_dir() {
             return Err(DgmError::Evaluation(
                 "workspace sandbox absent ou non répertoire".to_string(),
+            ));
+        }
+        if !workdir.is_dir() || !workdir.starts_with(&workspace) {
+            return Err(DgmError::Evaluation(
+                "package_subdir doit rester dans la racine du snapshot".to_string(),
             ));
         }
         if !config.cargo_program.is_absolute() {
@@ -1380,12 +1416,31 @@ fn isolated_cargo_command(
         if config.max_memory_bytes == 0
             || config.max_processes == 0
             || config.max_cpu_seconds == 0
+            || config.cpu_quota_micros == 0
+            || config.cpu_period_micros == 0
         {
             return Err(DgmError::Evaluation(
                 "les limites mémoire/PIDs/CPU du sandbox doivent être non nulles".to_string(),
             ));
         }
 
+        let cgroup = CgroupScope::create(config)?;
+        let mut cmd = build_isolated_cargo_command(&workspace, &workdir, cargo_args, config)?;
+        cmd.current_dir(&workspace).env_clear();
+        Ok(PreparedCommand {
+            command: cmd,
+            cgroup: Some(cgroup),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn build_isolated_cargo_command(
+    workspace: &Path,
+    workdir: &Path,
+    cargo_args: &[String],
+    config: &IsolationConfig,
+) -> Result<Command> {
         let mut cmd = Command::new(&config.prlimit_program);
         cmd.arg(format!("--as={}", config.max_memory_bytes))
             .arg(format!("--nproc={}", config.max_processes))
@@ -1433,7 +1488,7 @@ fn isolated_cargo_command(
             .arg(&workspace)
             .arg(&workspace)
             .arg("--chdir")
-            .arg(&workspace)
+            .arg(workdir)
             .arg("--setenv")
             .arg("HOME")
             .arg("/tmp/home")
@@ -1461,10 +1516,83 @@ fn isolated_cargo_command(
         }
         cmd.arg("--")
             .arg(&config.cargo_program)
-            .args(cargo_args)
-            .current_dir(&workspace)
-            .env_clear();
+            .args(cargo_args);
         Ok(cmd)
+}
+
+#[cfg(target_os = "linux")]
+static CGROUP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "linux")]
+struct CgroupScope {
+    path: PathBuf,
+}
+
+#[cfg(not(target_os = "linux"))]
+struct CgroupScope;
+
+#[cfg(target_os = "linux")]
+impl CgroupScope {
+    fn create(config: &IsolationConfig) -> Result<Self> {
+        if !config.cgroup_root.is_absolute() {
+            return Err(DgmError::Evaluation(
+                "cgroup_root doit être un chemin absolu délégué".to_string(),
+            ));
+        }
+        let id = CGROUP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = config
+            .cgroup_root
+            .join(format!("cargo-{}-{id}", std::process::id()));
+        std::fs::create_dir(&path).map_err(|e| {
+            DgmError::Evaluation(format!(
+                "cgroup v2 non disponible ou non délégué ({}): {e}",
+                path.display()
+            ))
+        })?;
+        let scope = Self { path };
+        scope.write("memory.max", &config.max_memory_bytes.to_string())?;
+        if scope.path.join("memory.swap.max").exists() {
+            scope.write("memory.swap.max", "0")?;
+        }
+        scope.write("pids.max", &config.max_processes.to_string())?;
+        scope.write(
+            "cpu.max",
+            &format!("{} {}", config.cpu_quota_micros, config.cpu_period_micros),
+        )?;
+        Ok(scope)
+    }
+
+    fn write(&self, name: &str, value: &str) -> Result<()> {
+        std::fs::write(self.path.join(name), value).map_err(|e| {
+            DgmError::Evaluation(format!("configuration cgroup {name} refusée: {e}"))
+        })
+    }
+
+    fn attach_file(&self) -> std::io::Result<File> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(self.path.join("cgroup.procs"))
+    }
+
+    fn kill_all(&self) {
+        let kill = self.path.join("cgroup.kill");
+        if kill.exists() {
+            let _ = std::fs::write(kill, "1");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for CgroupScope {
+    fn drop(&mut self) {
+        self.kill_all();
+        for _ in 0..20 {
+            match std::fs::remove_dir(&self.path) {
+                Ok(()) => return,
+                Err(_) => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        let _ = std::fs::remove_dir(&self.path);
     }
 }
 
@@ -1506,18 +1634,53 @@ fn parse_bench_score(output: &str) -> Option<f64> {
 /// fusionnés). Rend `(success, output)`. Un dépassement de délai ⇒ kill et
 /// `success = false`. std-only (sondage `try_wait`, lecture en threads).
 fn run_bounded(
-    mut cmd: Command,
+    cmd: Command,
     timeout: Duration,
     max_output: u64,
 ) -> std::io::Result<(bool, String)> {
+    run_bounded_scoped(cmd, timeout, max_output, None)
+}
+
+fn run_prepared(
+    prepared: PreparedCommand,
+    timeout: Duration,
+    max_output: u64,
+) -> std::io::Result<(bool, String)> {
+    run_bounded_scoped(
+        prepared.command,
+        timeout,
+        max_output,
+        prepared.cgroup,
+    )
+}
+
+fn run_bounded_scoped(
+    mut cmd: Command,
+    timeout: Duration,
+    max_output: u64,
+    cgroup: Option<CgroupScope>,
+) -> std::io::Result<(bool, String)> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = &cgroup;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    let cgroup_file = cgroup
+        .as_ref()
+        .map(CgroupScope::attach_file)
+        .transpose()?;
+    #[cfg(target_os = "linux")]
+    let cgroup_fd = cgroup_file.as_ref().map(AsRawFd::as_raw_fd);
     // Un groupe de processus propre garantit que le timeout tue aussi les
     // descendants (compilateurs, build.rs, tests), pas seulement `cargo`.
     #[cfg(unix)]
     unsafe {
-        cmd.pre_exec(|| {
+        cmd.pre_exec(move || {
+            #[cfg(target_os = "linux")]
+            if let Some(fd) = cgroup_fd {
+                attach_current_process_to_cgroup(fd)?;
+            }
             if setsid() == -1 {
                 Err(std::io::Error::last_os_error())
             } else {
@@ -1526,6 +1689,8 @@ fn run_bounded(
         });
     }
     let mut child = cmd.spawn()?;
+    #[cfg(target_os = "linux")]
+    drop(cgroup_file);
     #[cfg(unix)]
     let process_group = child.id() as i32;
     let per_stream = (max_output / 2).max(1);
@@ -1610,6 +1775,32 @@ fn kill_process_tree(child: &mut std::process::Child, process_group: i32) {
 #[cfg(unix)]
 unsafe extern "C" {
     fn setsid() -> i32;
+}
+
+#[cfg(target_os = "linux")]
+fn attach_current_process_to_cgroup(fd: i32) -> std::io::Result<()> {
+    unsafe extern "C" {
+        fn getpid() -> i32;
+        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+    }
+    let mut value = unsafe { getpid() } as u32;
+    let mut buf = [0u8; 16];
+    let mut pos = buf.len();
+    loop {
+        pos -= 1;
+        buf[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let slice = &buf[pos..];
+    let written = unsafe { write(fd, slice.as_ptr(), slice.len()) };
+    if written == slice.len() as isize {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 /// Somme les lignes `test result: ok. N passed; M failed` que `cargo` émet par
@@ -2632,18 +2823,24 @@ mod tests {
     #[test]
     fn isolated_cargo_command_denies_network_and_bounds_resources() {
         let root = fresh_dir("sandbox-command");
+        let member = root.join("member");
+        std::fs::create_dir(&member).unwrap();
         let config = IsolationConfig {
             bubblewrap_program: PathBuf::from("/usr/bin/bwrap"),
             prlimit_program: PathBuf::from("/usr/bin/prlimit"),
             cargo_program: PathBuf::from("/usr/bin/cargo"),
             rustup_home: None,
             read_only_runtime_paths: vec![PathBuf::from("/usr")],
+            cgroup_root: PathBuf::from("/sys/fs/cgroup/rsi-test"),
             max_memory_bytes: 1024 * 1024,
             max_processes: 8,
             max_cpu_seconds: 7,
+            cpu_quota_micros: 50_000,
+            cpu_period_micros: 100_000,
         };
-        let cmd = isolated_cargo_command(
+        let cmd = build_isolated_cargo_command(
             &root,
+            &member,
             &["test".to_string(), "--locked".to_string()],
             &config,
         )
@@ -2667,6 +2864,10 @@ mod tests {
         }
         assert!(!args.iter().any(|arg| arg == "--share-net"));
         assert!(args.iter().any(|arg| arg == &root.display().to_string()));
+        let chdir = args.iter().position(|arg| arg == "--chdir").unwrap();
+        assert_eq!(args[chdir + 1], member.display().to_string());
+        let bind = args.iter().position(|arg| arg == "--bind").unwrap();
+        assert_eq!(args[bind + 1], root.display().to_string());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2710,13 +2911,27 @@ mod tests {
                 PathBuf::from("/lib64"),
                 runtime.clone(),
             ],
+            cgroup_root: std::env::var_os("RSI_CGROUP_ROOT")
+                .map(PathBuf::from)
+                .expect("RSI_CGROUP_ROOT délégué requis par ce job"),
             max_memory_bytes: 512 * 1024 * 1024,
             max_processes: 4096,
             max_cpu_seconds: 10,
+            cpu_quota_micros: 100_000,
+            cpu_period_micros: 100_000,
         };
-        let mut cmd = isolated_cargo_command(&workspace, &["test".to_string()], &config).unwrap();
-        cmd.env("RSI_HOST_SECRET", "must-not-cross-sandbox");
-        let (ok, output) = run_bounded(cmd, Duration::from_secs(10), 64 * 1024).unwrap();
+        let mut prepared = isolated_cargo_command(
+            &workspace,
+            &workspace,
+            &["test".to_string()],
+            &config,
+        )
+        .unwrap();
+        prepared
+            .command
+            .env("RSI_HOST_SECRET", "must-not-cross-sandbox");
+        let (ok, output) =
+            run_prepared(prepared, Duration::from_secs(10), 64 * 1024).unwrap();
         assert!(ok, "sandbox probe failed: {output}");
         assert_eq!(output, "sandbox-ok");
 

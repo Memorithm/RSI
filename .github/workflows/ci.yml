@@ -107,6 +107,27 @@ jobs:
       - name: Sanity rsi-demo
         run: docker run --rm --entrypoint /usr/local/bin/rsi-demo rsi:smoke 2 7 random | tail -n 5
 
+  # COG-RSI-003 : preuve d'exécution du confinement, au-delà de l'inspection
+  # statique des arguments. Le candidat ne voit ni secret hôte, ni route réseau,
+  # ni /etc ; Bubblewrap/prlimit absents font échouer ce job (fail-closed).
+  cargo-sandbox-smoke:
+    name: cargo sandbox · no host secret/network
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Bubblewrap backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap util-linux
+      - name: Execute isolated CargoEvaluator probe
+        env:
+          RSI_TEST_BWRAP: "1"
+        run: cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
+
   # COG-RSI-001 : le wrapper de laboratoire conserve l'emprunt exclusif du
   # tampon KV, reste !Send + !Sync et ne déréférence aucun handle tant que le
   # backend réel n'est pas qualifié. Miri exerce cette frontière sans fabriquer

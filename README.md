@@ -439,8 +439,8 @@ cargo run --release --features llm-ollama --bin rsi-dgm -- \
 **Sûreté** (cf. [`docs/SAFETY.md`](docs/SAFETY.md) §5bis) : liste blanche de
 fichiers éditables, patch exact **non ambigu** (motif unique), snapshot jetable,
 et exécution `cargo` non fiable fail-closed sous Bubblewrap + cgroup v2
-(réseau coupé, environnement nettoyé, budgets agrégés RAM/PIDs/CPU et groupe de
-processus borné).
+(réseau coupé, environnement nettoyé, budgets agrégés RAM/PIDs, quota CPU et
+temps CPU cumulé suivis par cgroup, groupe de processus borné).
 L'arbre vivant n'est mué que par [`promote_to_live`] (gardé tout-au-vert,
 sauvegarde réversible). IDs de variantes déterministes (hash de lignée) ⇒
 archive **reproductible**. Le mode `--trusted-host` n'est admis que pour du code

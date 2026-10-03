@@ -1526,6 +1526,7 @@ static CGROUP_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "linux")]
 struct CgroupScope {
     path: PathBuf,
+    cpu_budget_micros: u64,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1549,7 +1550,14 @@ impl CgroupScope {
                 path.display()
             ))
         })?;
-        let scope = Self { path };
+        let cpu_budget_micros = config
+            .max_cpu_seconds
+            .checked_mul(1_000_000)
+            .ok_or_else(|| DgmError::Evaluation("budget CPU cgroup hors plage".to_string()))?;
+        let scope = Self {
+            path,
+            cpu_budget_micros,
+        };
         scope.write("memory.max", &config.max_memory_bytes.to_string())?;
         if scope.path.join("memory.swap.max").exists() {
             scope.write("memory.swap.max", "0")?;
@@ -1580,6 +1588,29 @@ impl CgroupScope {
             let _ = std::fs::write(kill, "1");
         }
     }
+
+    fn cpu_budget_exhausted(&self) -> std::io::Result<bool> {
+        let stat = std::fs::read_to_string(self.path.join("cpu.stat"))?;
+        let usage = parse_cgroup_cpu_usage_micros(&stat).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cpu.stat cgroup v2 sans usage_usec",
+            )
+        })?;
+        Ok(usage >= self.cpu_budget_micros)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_cgroup_cpu_usage_micros(stat: &str) -> Option<u64> {
+    stat.lines().find_map(|line| {
+        let mut fields = line.split_ascii_whitespace();
+        if fields.next()? == "usage_usec" {
+            fields.next()?.parse().ok()
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -1708,10 +1739,37 @@ fn run_bounded_scoped(
     }
 
     let deadline = Instant::now() + timeout;
+    let mut forced_failure = None;
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
             Ok(None) => {
+                #[cfg(target_os = "linux")]
+                if let Some(scope) = cgroup.as_ref() {
+                    match scope.cpu_budget_exhausted() {
+                        Ok(true) => {
+                            forced_failure = Some(
+                                "budget CPU agrégé cgroup v2 épuisé".to_string(),
+                            );
+                            scope.kill_all();
+                            #[cfg(unix)]
+                            kill_process_tree(&mut child, process_group);
+                            let _ = child.wait();
+                            break None;
+                        }
+                        Err(e) => {
+                            forced_failure = Some(format!(
+                                "lecture du budget CPU cgroup v2 impossible: {e}"
+                            ));
+                            scope.kill_all();
+                            #[cfg(unix)]
+                            kill_process_tree(&mut child, process_group);
+                            let _ = child.wait();
+                            break None;
+                        }
+                        Ok(false) => {}
+                    }
+                }
                 if Instant::now() >= deadline {
                     #[cfg(unix)]
                     kill_process_tree(&mut child, process_group);
@@ -1742,11 +1800,15 @@ fn run_bounded_scoped(
     let eb = rx_e
         .recv_timeout(drain_deadline.saturating_duration_since(Instant::now()))
         .unwrap_or_default();
-    let combined = format!(
+    let mut combined = format!(
         "{}{}",
         String::from_utf8_lossy(&ob),
         String::from_utf8_lossy(&eb)
     );
+    if let Some(reason) = forced_failure {
+        combined.push_str("\nRSI_SANDBOX_FAILURE=");
+        combined.push_str(&reason);
+    }
     Ok((status.map(|s| s.success()).unwrap_or(false), combined))
 }
 
@@ -2879,6 +2941,13 @@ mod tests {
             &runtime,
             "cargo-probe",
             "#!/bin/sh\nset -eu\n\
+             if [ \"${1:-}\" = burn-cpu ]; then\n\
+               sh -c 'while :; do :; done' &\n\
+               sh -c 'while :; do :; done' &\n\
+               sh -c 'while :; do :; done' &\n\
+               sh -c 'while :; do :; done' &\n\
+               wait\n\
+             fi\n\
              [ -z \"${RSI_HOST_SECRET:-}\" ]\n\
              [ \"${CARGO_NET_OFFLINE:-}\" = true ]\n\
              [ \"${HOME:-}\" = /tmp/home ]\n\
@@ -2924,8 +2993,37 @@ mod tests {
         assert!(ok, "sandbox probe failed: {output}");
         assert_eq!(output, "sandbox-ok");
 
+        let mut cpu_config = config.clone();
+        cpu_config.max_cpu_seconds = 1;
+        let cpu_probe = isolated_cargo_command(
+            &workspace,
+            &workspace,
+            &["burn-cpu".to_string()],
+            &cpu_config,
+        )
+        .unwrap();
+        let started = Instant::now();
+        let (ok, output) =
+            run_prepared(cpu_probe, Duration::from_secs(8), 64 * 1024).unwrap();
+        assert!(!ok, "aggregate CPU budget was not enforced");
+        assert!(
+            output.contains("budget CPU agrégé"),
+            "missing aggregate CPU failure evidence: {output}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(6));
+
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_dir_all(&runtime);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parses_cgroup_v2_cpu_usage() {
+        assert_eq!(
+            parse_cgroup_cpu_usage_micros("usage_usec 12345\nuser_usec 9000\nsystem_usec 3345\n"),
+            Some(12_345)
+        );
+        assert_eq!(parse_cgroup_cpu_usage_micros("user_usec 1\n"), None);
     }
 
     #[test]

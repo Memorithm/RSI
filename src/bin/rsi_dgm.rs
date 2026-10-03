@@ -29,6 +29,7 @@
 //!   --ollama-host HOST                                            (défaut 127.0.0.1)
 //!   --ollama-port PORT                                            (défaut 11434)
 //!   --timeout SECS        délai max par invocation cargo          (défaut 300)
+//!   --trusted-host        désactive l'isolation (code/dépendances de confiance)
 //!   --promote             applique le meilleur variant à l'arbre vivant
 //!   --backups DIR         sauvegardes pour --promote        (défaut <ws>/.rsi_backups)
 //! ```
@@ -37,8 +38,9 @@ use std::process::exit;
 use std::time::Duration;
 
 use rsi::dgm::{
-    Archive, CargoEvaluator, CodeModel, DgmConfig, DgmEngine, DgmError, Evaluator, LlmCodeModel,
-    LlmProposer, Prediction, StepOutcome, VerdictPredictor, WorkspaceSnapshot,
+    Archive, CargoEvaluator, CargoExecutionPolicy, CodeModel, DgmConfig, DgmEngine, DgmError,
+    Evaluator, LlmCodeModel, LlmProposer, Prediction, StepOutcome, VerdictPredictor,
+    WorkspaceSnapshot,
 };
 
 const VALUE_FLAGS: &[&str] = &[
@@ -147,6 +149,7 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
     let promote = args.iter().any(|a| a == "--promote");
+    let trusted_host = args.iter().any(|a| a == "--trusted-host");
 
     // --- Backend LLM : CONNEXION AUTOMATIQUE. -------------------------------- //
     // Résolution, du plus explicite au plus automatique :
@@ -276,6 +279,12 @@ fn main() {
             .map(|s| s.split_whitespace().map(|t| t.to_string()).collect())
             .unwrap_or_default(),
         timeout: Duration::from_secs(timeout_secs),
+        execution_policy: if trusted_host {
+            eprintln!("⚠ exécution hôte explicitement activée : code et dépendances réputés fiables");
+            CargoExecutionPolicy::TrustedHost
+        } else {
+            CargoExecutionPolicy::default()
+        },
         ..Default::default()
     };
 

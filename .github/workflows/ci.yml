@@ -109,7 +109,7 @@ jobs:
 
   # COG-RSI-003 : preuve d'exécution du confinement, au-delà de l'inspection
   # statique des arguments. Le candidat ne voit ni secret hôte, ni route réseau,
-  # ni /etc ; Bubblewrap/prlimit absents font échouer ce job (fail-closed).
+  # ni /etc ; Bubblewrap, prlimit ou cgroup v2 absents font échouer ce job.
   cargo-sandbox-smoke:
     name: cargo sandbox · no host secret/network
     runs-on: ubuntu-latest
@@ -129,9 +129,27 @@ jobs:
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      - name: Delegate aggregate cgroup v2 budgets
+        run: |
+          test -f /sys/fs/cgroup/cgroup.controllers
+          for controller in memory pids cpu; do
+            grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers
+            if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control; then
+              echo "+$controller" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+            fi
+          done
+          sudo mkdir /sys/fs/cgroup/rsi-ci
+          sudo chown "$USER:$(id -gn)" \
+            /sys/fs/cgroup/rsi-ci \
+            /sys/fs/cgroup/rsi-ci/cgroup.procs \
+            /sys/fs/cgroup/rsi-ci/cgroup.subtree_control
+          for controller in memory pids cpu; do
+            echo "+$controller" >> /sys/fs/cgroup/rsi-ci/cgroup.subtree_control
+          done
       - name: Execute isolated CargoEvaluator probe
         env:
           RSI_TEST_BWRAP: "1"
+          RSI_CGROUP_ROOT: /sys/fs/cgroup/rsi-ci
         run: cargo test --locked --lib isolated_cargo_sandbox_runtime_smoke
 
   # COG-RSI-001 : le wrapper de laboratoire conserve l'emprunt exclusif du

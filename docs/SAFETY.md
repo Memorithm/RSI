@@ -119,13 +119,15 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
   [`promote_to_live`] le fait, et l'appelant la garde sur une évaluation
   **tout-au-vert**. Chaque édition est sauvegardée (`.bak`) donc réversible.
 - **Exécution non fiable fail-closed** : par défaut, `cargo build`/`test`/bench
-  passent par Bubblewrap + `prlimit` avec réseau/IPC/PID/UTS/cgroup séparés,
-  environnement nettoyé, montages runtime en lecture seule, workspace jetable
-  seul en écriture et limites CPU/RAM/PIDs. Dépendances disponibles hors ligne
-  requises. Le noyau doit autoriser les espaces de noms utilisateur non
-  privilégiés nécessaires à Bubblewrap. L'absence du backend ou de cette
-  capacité fait échouer l'évaluation ; elle ne déclenche jamais un repli
-  silencieux sur l'hôte.
+  passent par Bubblewrap + cgroup v2 délégué, avec réseau/IPC/PID/UTS/cgroup
+  séparés, environnement nettoyé, montages runtime en lecture seule et racine
+  du workspace jetable seule en écriture. `memory.max`, `pids.max` et `cpu.max`
+  imposent des budgets **agrégés** à tout l'arbre ; `prlimit` ajoute une défense
+  par processus et le timeout borne la durée totale. Dépendances disponibles
+  hors ligne requises. Le noyau doit autoriser les espaces de noms utilisateur
+  nécessaires à Bubblewrap et `RSI_CGROUP_ROOT` doit désigner une racine cgroup
+  v2 déléguée avec contrôleurs `memory`, `pids` et `cpu`. Toute absence fait
+  échouer l'évaluation, sans repli silencieux sur l'hôte.
 - **Mode fiable explicite** : `CargoExecutionPolicy::TrustedHost` (CLI
   `--trusted-host`) conserve l'exécution historique pour du code **et des
   dépendances** dont l'opérateur garantit la confiance.
@@ -148,7 +150,7 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
 | API dimensions | |Ω|, dim, substrat, pas bornés | `MAX_TASKS=50_000`, `MAX_DIM=1_024`, `MAX_SUBSTRATE=256`, `MAX_STEPS=100_000` |
 | Raffinement | points / propositions bornés | `MAX_REFINE_POINTS=4_096`, `MAX_PROPOSALS_PER_CALL=64` |
 | Sous-processus `papers` | timeout + sortie bornée | `30 s` / `8 MiB` (`knowledge.rs`) |
-| Sous-processus `cargo` (DGM) | Bubblewrap fail-closed + réseau coupé + env nettoyé + limites RAM/PIDs/CPU + timeout/groupe de processus + sortie bornée | `4 GiB` / `256` / `300 s` / `4 MiB` (`dgm.rs`) |
+| Sous-processus `cargo` (DGM) | Bubblewrap + cgroup v2 agrégé fail-closed, réseau coupé, env nettoyé, timeout/groupe de processus, sortie bornée | `memory.max=4 GiB` / `pids.max=256` / `cpu.max=1 CPU` / `300 s` / `4 MiB` (`dgm.rs`) |
 | Synthèse | taille d'AST adoptable bornée | `MAX_EXPR_SIZE = 25` (`synthesis.rs`) |
 | Accès numériques JSON | rejet NaN/∞/négatifs | `as_u64`/`as_usize` (`json.rs`) |
 
@@ -193,7 +195,7 @@ peut le **construire et le tester** (`CargoEvaluator`). Ses garde-fous :
   dépassant le fuel est rejeté/trappé. C'est la condition d'un domaine exécutant,
   désormais satisfaite.
 - **La boucle DGM/STOP exécute du code source réel.** Le mode par défaut refuse
-  de l'exécuter hors d'un sandbox Linux Bubblewrap borné et sans réseau. Ce
+  de l'exécuter hors d'un sandbox Linux Bubblewrap + cgroup v2 borné et sans réseau. Ce
   confinement réduit fortement les effets hôte, mais ne constitue pas une
   preuve formelle de sûreté du noyau, de Bubblewrap ou de la toolchain montée en
   lecture seule. Les dépendances doivent être préparées hors ligne ; aucune

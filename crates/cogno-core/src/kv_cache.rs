@@ -16,7 +16,10 @@ pub struct TensorView<'a> {
 
 impl<'a> TensorView<'a> {
     pub fn new(data: &'a [f64], dims: &'a [usize]) -> CognoResult<Self> {
-        let n: usize = dims.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d)).ok_or(CognoError::SizeOverflow)?;
+        let n: usize = dims
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or(CognoError::SizeOverflow)?;
         if n != data.len() {
             return Err(CognoError::LengthMismatch {
                 expected: n,
@@ -42,7 +45,10 @@ pub struct TensorViewMut<'a> {
 
 impl<'a> TensorViewMut<'a> {
     pub fn new(data: &'a mut [f64], dims: &'a [usize]) -> CognoResult<Self> {
-        let n: usize = dims.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d)).ok_or(CognoError::SizeOverflow)?;
+        let n: usize = dims
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or(CognoError::SizeOverflow)?;
         if n != data.len() {
             return Err(CognoError::LengthMismatch {
                 expected: n,
@@ -129,11 +135,8 @@ pub trait BoundedKvCache {
     fn used_tokens(&self) -> usize;
     fn reserved_bytes(&self) -> usize;
 
-    fn try_append(
-        &mut self,
-        key: TensorView<'_>,
-        value: TensorView<'_>,
-    ) -> Result<(), Self::Error>;
+    fn try_append(&mut self, key: TensorView<'_>, value: TensorView<'_>)
+        -> Result<(), Self::Error>;
 
     fn decode_into(
         &self,

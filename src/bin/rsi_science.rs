@@ -62,7 +62,9 @@ fn main() {
     println!("actionable_goals={}", goals.len());
 
     if goals.is_empty() {
-        println!("Aucun claim de méthode actionnable. Aucune amélioration n'est supposée ni promue.");
+        println!(
+            "Aucun claim de méthode actionnable. Aucune amélioration n'est supposée ni promue."
+        );
         return;
     }
 

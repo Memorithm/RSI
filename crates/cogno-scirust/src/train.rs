@@ -155,7 +155,10 @@ pub fn validate_f32_representable(f64_values: &[f64], tolerance: f64) -> CognoRe
 }
 
 /// Ancien nom (déprécié) : le nom promettait plus que ce qui est testé.
-#[deprecated(since = "0.1.1", note = "renommé validate_f32_representable (portée honnête)")]
+#[deprecated(
+    since = "0.1.1",
+    note = "renommé validate_f32_representable (portée honnête)"
+)]
 pub fn validate_f32_path(f64_values: &[f64], tolerance: f64) -> CognoResult<()> {
     validate_f32_representable(f64_values, tolerance)
 }
@@ -207,9 +210,9 @@ impl<'a> ControlledRollout<'a> {
         let mem_cost = y.len();
         let lat_cost = t0.elapsed().as_millis() as usize;
         let ctx_cost = x.len();
-        let verdict =
-            self.gate
-                .verify(x, &y, provenance, mem_cost, lat_cost, ctx_cost)?;
+        let verdict = self
+            .gate
+            .verify(x, &y, provenance, mem_cost, lat_cost, ctx_cost)?;
         Ok(Rollout {
             x: x.to_vec(),
             y,
@@ -277,8 +280,8 @@ pub fn compute_ppo_loss(samples: &[PpoSample], config: &PpoConfig) -> CognoResul
         }
         let ratio = (s.log_prob_new - s.log_prob_old).exp();
         let unclipped = ratio * s.advantage;
-        let clipped = ratio.clamp(1.0 - config.clip_epsilon, 1.0 + config.clip_epsilon)
-            * s.advantage;
+        let clipped =
+            ratio.clamp(1.0 - config.clip_epsilon, 1.0 + config.clip_epsilon) * s.advantage;
         total += unclipped.min(clipped);
     }
     let n = samples.len().max(1) as f64;

@@ -64,10 +64,7 @@ fn main() {
             let mut terminated = false;
             let mut sink = [0u8; DRAIN_CHUNK];
             while drained < MAX_TOTAL_DRAIN {
-                match (&mut reader)
-                    .take(DRAIN_CHUNK as u64)
-                    .read(&mut sink)
-                {
+                match (&mut reader).take(DRAIN_CHUNK as u64).read(&mut sink) {
                     Ok(0) => {
                         terminated = true; // EOF
                         break;

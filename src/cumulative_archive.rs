@@ -102,7 +102,9 @@ impl CumulativeArchive {
     }
 
     pub fn get(&self, state_id: &str) -> Option<&CumulativeRecord> {
-        self.records.iter().find(|record| record.state_id == state_id)
+        self.records
+            .iter()
+            .find(|record| record.state_id == state_id)
     }
 
     pub fn materialized_root(&self, state_id: &str) -> Option<&Path> {
@@ -134,7 +136,9 @@ impl CumulativeArchive {
                 let children = self
                     .records
                     .iter()
-                    .filter(|child| child.parent_state_id.as_deref() == Some(record.state_id.as_str()))
+                    .filter(|child| {
+                        child.parent_state_id.as_deref() == Some(record.state_id.as_str())
+                    })
                     .count() as f64;
                 let quality = if record.fitness.compiles { 1.0 } else { 0.1 };
                 quality * (1.0 / (1.0 + children)) + f64::EPSILON
@@ -165,16 +169,15 @@ impl CumulativeArchive {
             .get(parent_state_id)
             .cloned()
             .ok_or_else(|| CumulativeArchiveError::UnknownParent(parent_state_id.to_string()))?;
-        let parent = self
-            .states
-            .get(parent_state_id)
-            .ok_or_else(|| CumulativeArchiveError::UnmaterializedParent(parent_state_id.to_string()))?;
+        let parent = self.states.get(parent_state_id).ok_or_else(|| {
+            CumulativeArchiveError::UnmaterializedParent(parent_state_id.to_string())
+        })?;
         let patch_set_id = patch_set.identity()?;
         let child = parent.child(&patch_set)?;
         let state_id = child.state_id().to_string();
-        let fitness = evaluator.evaluate(child.root()).map_err(|error| {
-            CumulativeArchiveError::Evaluation(error.to_string())
-        })?;
+        let fitness = evaluator
+            .evaluate(child.root())
+            .map_err(|error| CumulativeArchiveError::Evaluation(error.to_string()))?;
         let accepted = (!require_all_green || fitness.all_green())
             && fitness.is_better_than(&parent_record.fitness);
 
@@ -302,10 +305,7 @@ impl CumulativeArchive {
 
     /// Rebuild every accepted state from the supplied baseline and verify all
     /// serialized state/PatchSet identities while replaying.
-    pub fn from_json(
-        raw: &str,
-        source_root: &Path,
-    ) -> Result<Self, CumulativeArchiveError> {
+    pub fn from_json(raw: &str, source_root: &Path) -> Result<Self, CumulativeArchiveError> {
         let json = Json::parse(raw).map_err(CumulativeArchiveError::Decode)?;
         let version = json
             .get("schema_version")
@@ -413,13 +413,31 @@ pub enum CumulativeArchiveError {
     UnmaterializedParent(String),
     UnknownState(String),
     DuplicateState(String),
-    BaselineMismatch { expected: String, observed: String },
-    PatchIdentityMismatch { expected: String, observed: String },
-    StateIdentityMismatch { expected: String, observed: String },
-    StaleLiveTree { expected: String, observed: String },
+    BaselineMismatch {
+        expected: String,
+        observed: String,
+    },
+    PatchIdentityMismatch {
+        expected: String,
+        observed: String,
+    },
+    StateIdentityMismatch {
+        expected: String,
+        observed: String,
+    },
+    StaleLiveTree {
+        expected: String,
+        observed: String,
+    },
     BackupExists(PathBuf),
-    PromotionVerification { expected: String, observed: String },
-    RollbackFailed { promotion_error: String, rollback_error: String },
+    PromotionVerification {
+        expected: String,
+        observed: String,
+    },
+    RollbackFailed {
+        promotion_error: String,
+        rollback_error: String,
+    },
     Io(String),
 }
 
@@ -450,7 +468,9 @@ impl fmt::Display for CumulativeArchiveError {
                 f,
                 "stale live tree: expected {expected}, observed {observed}"
             ),
-            Self::BackupExists(path) => write!(f, "promotion backup already exists: {}", path.display()),
+            Self::BackupExists(path) => {
+                write!(f, "promotion backup already exists: {}", path.display())
+            }
             Self::PromotionVerification { expected, observed } => write!(
                 f,
                 "promotion verification failed: expected {expected}, observed {observed}"
@@ -593,10 +613,7 @@ fn patch_set_from_json(json: &Json) -> Result<PatchSet, CumulativeArchiveError> 
                 required_str(operation, "replacement")?,
             ),
             "create" => FileOperation::create(path, required_str(operation, "content")?),
-            "delete" => FileOperation::delete(
-                path,
-                required_str(operation, "expected_sha256")?,
-            ),
+            "delete" => FileOperation::delete(path, required_str(operation, "expected_sha256")?),
             other => {
                 return Err(CumulativeArchiveError::Decode(format!(
                     "unsupported PatchSet operation: {other}"
@@ -642,14 +659,8 @@ fn fitness_from_json(json: &Json) -> Result<Fitness, CumulativeArchiveError> {
     };
     Ok(Fitness {
         compiles,
-        tests_passed: json
-            .get("tests_passed")
-            .and_then(Json::as_u64)
-            .unwrap_or(0) as u32,
-        tests_failed: json
-            .get("tests_failed")
-            .and_then(Json::as_u64)
-            .unwrap_or(0) as u32,
+        tests_passed: json.get("tests_passed").and_then(Json::as_u64).unwrap_or(0) as u32,
+        tests_failed: json.get("tests_failed").and_then(Json::as_u64).unwrap_or(0) as u32,
         score,
         notes: json
             .get("notes")
@@ -717,7 +728,10 @@ fn copy_mutable_tree(source: &Path, destination: &Path) -> Result<(), Cumulative
     Ok(())
 }
 
-fn replace_mutable_tree(live_root: &Path, source_root: &Path) -> Result<(), CumulativeArchiveError> {
+fn replace_mutable_tree(
+    live_root: &Path,
+    source_root: &Path,
+) -> Result<(), CumulativeArchiveError> {
     let source = mutable_files(source_root)?;
     let live = mutable_files(live_root)?;
     let source_names: BTreeSet<&str> = source.keys().map(String::as_str).collect();
@@ -753,10 +767,8 @@ mod tests {
 
     fn fresh_root(tag: &str) -> PathBuf {
         let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "rsi-p3-2-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rsi-p3-2-{tag}-{}-{seq}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src/a.rs"), "a=0\n").unwrap();
@@ -809,8 +821,7 @@ mod tests {
         let first = archive
             .evaluate_child(
                 &root_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")]).unwrap(),
                 "A",
                 &score_eval(),
                 true,
@@ -820,8 +831,7 @@ mod tests {
         let second = archive
             .evaluate_child(
                 &first.state_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")]).unwrap(),
                 "B",
                 &score_eval(),
                 true,
@@ -829,8 +839,14 @@ mod tests {
             .unwrap();
         assert!(second.accepted);
         let root = archive.materialized_root(&second.state_id).unwrap();
-        assert_eq!(std::fs::read_to_string(root.join("src/a.rs")).unwrap(), "a=1\n");
-        assert_eq!(std::fs::read_to_string(root.join("src/b.rs")).unwrap(), "b=1\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/a.rs")).unwrap(),
+            "a=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/b.rs")).unwrap(),
+            "b=1\n"
+        );
         let _ = std::fs::remove_dir_all(live);
     }
 
@@ -843,8 +859,7 @@ mod tests {
         let outcome = archive
             .evaluate_child(
                 &root_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")]).unwrap(),
                 "regression",
                 &evaluator,
                 true,
@@ -853,7 +868,10 @@ mod tests {
         assert!(!outcome.accepted);
         assert_eq!(archive.len(), 1);
         let root = archive.materialized_root(&root_id).unwrap();
-        assert_eq!(std::fs::read_to_string(root.join("src/a.rs")).unwrap(), "a=0\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/a.rs")).unwrap(),
+            "a=0\n"
+        );
         let _ = std::fs::remove_dir_all(live);
     }
 
@@ -865,8 +883,7 @@ mod tests {
         let first = archive
             .evaluate_child(
                 &root_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")]).unwrap(),
                 "A",
                 &score_eval(),
                 true,
@@ -875,8 +892,7 @@ mod tests {
         let second = archive
             .evaluate_child(
                 &first.state_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")]).unwrap(),
                 "B",
                 &score_eval(),
                 true,
@@ -887,8 +903,14 @@ mod tests {
         assert_eq!(replayed.to_json(), encoded);
         assert_eq!(replayed.records().last().unwrap().state_id, second.state_id);
         let replayed_root = replayed.materialized_root(&second.state_id).unwrap();
-        assert_eq!(std::fs::read_to_string(replayed_root.join("src/a.rs")).unwrap(), "a=1\n");
-        assert_eq!(std::fs::read_to_string(replayed_root.join("src/b.rs")).unwrap(), "b=1\n");
+        assert_eq!(
+            std::fs::read_to_string(replayed_root.join("src/a.rs")).unwrap(),
+            "a=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(replayed_root.join("src/b.rs")).unwrap(),
+            "b=1\n"
+        );
         let _ = std::fs::remove_dir_all(live);
     }
 
@@ -905,8 +927,7 @@ mod tests {
         let first = archive
             .evaluate_child(
                 &baseline_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")]).unwrap(),
                 "A",
                 &score_eval(),
                 true,
@@ -915,8 +936,7 @@ mod tests {
         let second = archive
             .evaluate_child(
                 &first.state_id,
-                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")])
-                    .unwrap(),
+                PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")]).unwrap(),
                 "B",
                 &score_eval(),
                 true,
@@ -927,8 +947,14 @@ mod tests {
             .promote_complete_state(&second.state_id, &live, &baseline_id, &backups)
             .unwrap();
         assert!(receipt.backup_path.exists());
-        assert_eq!(std::fs::read_to_string(live.join("src/a.rs")).unwrap(), "a=1\n");
-        assert_eq!(std::fs::read_to_string(live.join("src/b.rs")).unwrap(), "b=1\n");
+        assert_eq!(
+            std::fs::read_to_string(live.join("src/a.rs")).unwrap(),
+            "a=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(live.join("src/b.rs")).unwrap(),
+            "b=1\n"
+        );
 
         let stale_live = fresh_root("stale");
         let stale_backups = std::env::temp_dir().join(format!(
@@ -940,7 +966,10 @@ mod tests {
         let error = archive
             .promote_complete_state(&second.state_id, &stale_live, &baseline_id, &stale_backups)
             .unwrap_err();
-        assert!(matches!(error, CumulativeArchiveError::StaleLiveTree { .. }));
+        assert!(matches!(
+            error,
+            CumulativeArchiveError::StaleLiveTree { .. }
+        ));
         assert_eq!(
             std::fs::read_to_string(stale_live.join("src/a.rs")).unwrap(),
             "a=external\n"

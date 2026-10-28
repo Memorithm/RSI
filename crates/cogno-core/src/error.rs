@@ -18,7 +18,11 @@ pub enum CognoError {
     /// Dépassement arithmétique de taille (multiplication non bornée).
     SizeOverflow,
     /// Dépassement de capacité (cache KV, tampon, budget).
-    CapacityOverflow { what: &'static str, capacity: usize, requested: usize },
+    CapacityOverflow {
+        what: &'static str,
+        capacity: usize,
+        requested: usize,
+    },
     /// Entrée invalide (paramètre hors contrat).
     InvalidInput(&'static str),
     /// Backend non disponible / non initialisé.
@@ -35,8 +39,15 @@ impl std::fmt::Display for CognoError {
             }
             CognoError::MaskMismatch(what) => write!(f, "masque invalide : {what}"),
             CognoError::SizeOverflow => write!(f, "dépassement arithmétique de taille"),
-            CognoError::CapacityOverflow { what, capacity, requested } => {
-                write!(f, "dépassement de capacité {what} : {capacity} < {requested}")
+            CognoError::CapacityOverflow {
+                what,
+                capacity,
+                requested,
+            } => {
+                write!(
+                    f,
+                    "dépassement de capacité {what} : {capacity} < {requested}"
+                )
             }
             CognoError::InvalidInput(what) => write!(f, "entrée invalide : {what}"),
             CognoError::BackendUnavailable(what) => write!(f, "backend indisponible : {what}"),

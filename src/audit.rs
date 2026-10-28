@@ -181,7 +181,9 @@ impl HashChainLog {
 
     /// Comme [`AuditLog::verify`], plus ancre attendue : détecte la troncature.
     pub fn verify_against(&self, expected_head: &str, expected_len: usize) -> bool {
-        self.verify() && ct_digest_eq(&self.chain_head(), expected_head) && self.events.len() == expected_len
+        self.verify()
+            && ct_digest_eq(&self.chain_head(), expected_head)
+            && self.events.len() == expected_len
     }
 
     /// Exporte le journal en JSON **ingestable par CCOS** (`ingest_source`),
@@ -342,7 +344,10 @@ mod tests {
         }
         let mut forged = HashChainLog::with_key(b"secret-key");
         forged.events = forged_events;
-        assert!(!forged.verify(), "réécriture sans clé détectée par le signataire");
+        assert!(
+            !forged.verify(),
+            "réécriture sans clé détectée par le signataire"
+        );
 
         // symétrique : un journal NU accepte ses propres maillons (comportement
         // historique inchangé) mais pas les maillons HMAC d'autrui

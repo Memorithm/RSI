@@ -15,7 +15,7 @@
 //! bornes explicites). La décomposition complète est exposée dans
 //! [`CognoObjectiveBreakdown`].
 
-use crate::calib::{compute_brier_calibration, CalibrationPoint, CalibrationMetrics};
+use crate::calib::{compute_brier_calibration, CalibrationMetrics, CalibrationPoint};
 use crate::error::{CognoError, CognoResult};
 use crate::memory::{compute_memory_objective, MemoryMetrics, MemorySample};
 use crate::numeric::{CompensatedSum, FiniteScalar, NonNegativeFinite};
@@ -171,9 +171,7 @@ pub fn compute_cogno_objective(
         FiniteScalar::try_new(d).map_err(|_| CognoError::NonFinite("log_ratio"))?;
         kl.add(d);
     }
-    let ref_log_ratio = FiniteScalar::try_new(
-        -weights.beta_ns.value() * (kl.finish() / n_rl),
-    )?;
+    let ref_log_ratio = FiniteScalar::try_new(-weights.beta_ns.value() * (kl.finish() / n_rl))?;
 
     // --- 3. J_pref ---
     let j_pref = compute_preference_objective(&input.preference_pairs, alpha)?;
@@ -189,15 +187,13 @@ pub fn compute_cogno_objective(
     let pretrain_obj = FiniteScalar::try_new(weights.gamma_ns.value() * input.pretrain_logp_mean)?;
 
     // --- 7. calibration (Brier) + métriques ---
-    let (brier, cal_metrics) = compute_brier_calibration(
-        &input.calibration_points,
-        n_calib_bins,
-        abstain_below,
-    )?;
+    let (brier, cal_metrics) =
+        compute_brier_calibration(&input.calibration_points, n_calib_bins, abstain_below)?;
     let cal_loss = NonNegativeFinite::try_new(weights.lambda_cal.value() * brier.value())?;
 
     // --- 8. ressources ---
-    let res_loss = compute_resource_loss_batch(&input.resource_costs, resource_weights, &Default::default())?;
+    let res_loss =
+        compute_resource_loss_batch(&input.resource_costs, resource_weights, &Default::default())?;
     let res_term = NonNegativeFinite::try_new(weights.lambda_eff.value() * res_loss.value())?;
 
     // --- somme finale compensée, ordre exact de l'équation §9 ---
@@ -276,7 +272,8 @@ pub fn compute_cogno01_loss(
     let (j_mem, mem_metrics) = compute_memory_objective(memory_samples, tau, 1)?;
     let l_infonce = -j_mem.value();
 
-    let (brier, cal_metrics) = compute_brier_calibration(calibration_points, n_calib_bins, abstain_below)?;
+    let (brier, cal_metrics) =
+        compute_brier_calibration(calibration_points, n_calib_bins, abstain_below)?;
 
     let res = compute_resource_loss_batch(resource_costs, resource_weights, &Default::default())?;
 
@@ -342,8 +339,16 @@ mod tests {
         )
         .unwrap();
         assert!((b.admissible_reward.value() - 1.75).abs() < 1e-12);
-        assert!((b.total_objective.value() - 1.75).abs() < 1e-12, "J={}", b.total_objective.value());
-        assert!((b.total_loss.value() - (-1.75)).abs() < 1e-12, "L={}", b.total_loss.value());
+        assert!(
+            (b.total_objective.value() - 1.75).abs() < 1e-12,
+            "J={}",
+            b.total_objective.value()
+        );
+        assert!(
+            (b.total_loss.value() - (-1.75)).abs() < 1e-12,
+            "L={}",
+            b.total_loss.value()
+        );
     }
 
     /// Cas analytique pairwise : `J_pref = log(4/5)`, objectif = η·J_pref.
@@ -368,7 +373,18 @@ mod tests {
             resource_costs: vec![],
         };
         let w = CognoWeights::try_new(0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();
-        let (b, _) = compute_cogno_objective(&input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5).unwrap();
+        let (b, _) = compute_cogno_objective(
+            &input,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        )
+        .unwrap();
         let expected = 2.0 * (4.0_f64 / 5.0).ln();
         assert!((b.preference_objective.value() - expected).abs() < 1e-9);
         assert!((b.total_objective.value() - expected).abs() < 1e-9);
@@ -390,7 +406,18 @@ mod tests {
             resource_costs: vec![],
         };
         let w = CognoWeights::try_new(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0).unwrap();
-        let (b, _) = compute_cogno_objective(&input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5).unwrap();
+        let (b, _) = compute_cogno_objective(
+            &input,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        )
+        .unwrap();
         let expected = (1.0 + 1e-6_f64).ln();
         assert!((b.symbolic_objective.value() - expected).abs() < 1e-9);
     }

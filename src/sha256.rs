@@ -302,7 +302,10 @@ mod tests {
         // clé longue que le bloc → condensée d'abord (RFC 4231 cas 6)
         let long_key = [0xaa; 131];
         assert_eq!(
-            hmac_sha256_hex(&long_key, b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            hmac_sha256_hex(
+                &long_key,
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            ),
             "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
         );
     }

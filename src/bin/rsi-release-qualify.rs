@@ -28,7 +28,10 @@ fn main() {
         "compatibility_fingerprint={}",
         artifacts.report.compatibility_fingerprint
     );
-    println!("trajectory={}", output.join("engineering-trajectory.json").display());
+    println!(
+        "trajectory={}",
+        output.join("engineering-trajectory.json").display()
+    );
     println!(
         "report={}",
         output.join("qualification-report.json").display()

@@ -148,7 +148,14 @@ mod tests {
     fn adamw_descents_on_quadratic() {
         let mut p = vec![1.0, 1.0];
         // f(p) = p0² + p1² → grad = 2p
-        let mut opt = AdamW::new(AdamWConfig { lr: 0.1, ..Default::default() }, 2).unwrap();
+        let mut opt = AdamW::new(
+            AdamWConfig {
+                lr: 0.1,
+                ..Default::default()
+            },
+            2,
+        )
+        .unwrap();
         for _ in 0..200 {
             let g = vec![2.0 * p[0], 2.0 * p[1]];
             opt.step(&mut p, &g).unwrap();
@@ -187,13 +194,62 @@ mod tests {
     /// `1 − β^t` ; lr/eps non positifs ; clip non positif).
     #[test]
     fn rejects_invalid_configs() {
-        assert!(AdamW::new(AdamWConfig { beta1: 1.0, ..Default::default() }, 1).is_err());
-        assert!(AdamW::new(AdamWConfig { beta2: 1.5, ..Default::default() }, 1).is_err());
-        assert!(AdamW::new(AdamWConfig { lr: 0.0, ..Default::default() }, 1).is_err());
-        assert!(AdamW::new(AdamWConfig { eps: -1e-8, ..Default::default() }, 1).is_err());
-        assert!(AdamW::new(AdamWConfig { weight_decay: -0.1, ..Default::default() }, 1).is_err());
-        assert!(AdamW::new(AdamWConfig { grad_clip: Some(0.0), ..Default::default() }, 1).is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                beta1: 1.0,
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                beta2: 1.5,
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                lr: 0.0,
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                eps: -1e-8,
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                weight_decay: -0.1,
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
+        assert!(AdamW::new(
+            AdamWConfig {
+                grad_clip: Some(0.0),
+                ..Default::default()
+            },
+            1
+        )
+        .is_err());
         // désactiver le clip reste valide
-        assert!(AdamW::new(AdamWConfig { grad_clip: None, ..Default::default() }, 1).is_ok());
+        assert!(AdamW::new(
+            AdamWConfig {
+                grad_clip: None,
+                ..Default::default()
+            },
+            1
+        )
+        .is_ok());
     }
 }

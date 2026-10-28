@@ -58,12 +58,13 @@ impl ProposalBudget {
                 return Err(ProposalError::PathNotAllowed(path.to_string()));
             }
             let cost = operation_cost(operation, workspace_root)?;
-            touched = touched.checked_add(cost).ok_or(
-                ProposalError::TouchedByteBudgetExceeded {
-                    actual: u64::MAX,
-                    limit: self.max_touched_bytes,
-                },
-            )?;
+            touched =
+                touched
+                    .checked_add(cost)
+                    .ok_or(ProposalError::TouchedByteBudgetExceeded {
+                        actual: u64::MAX,
+                        limit: self.max_touched_bytes,
+                    })?;
             if touched > self.max_touched_bytes {
                 return Err(ProposalError::TouchedByteBudgetExceeded {
                     actual: touched,
@@ -137,9 +138,7 @@ impl BoundedProposal {
                     required_str(op, "replacement")?,
                 ),
                 "create" => FileOperation::create(path, required_str(op, "content")?),
-                "delete" => {
-                    FileOperation::delete(path, required_str(op, "expected_sha256")?)
-                }
+                "delete" => FileOperation::delete(path, required_str(op, "expected_sha256")?),
                 other => {
                     return Err(ProposalError::Envelope(format!(
                         "unsupported operation kind: {other}"
@@ -314,13 +313,9 @@ mod tests {
             "{{\"operations\":[{{\"kind\":\"modify_exact\",\"path\":\"src/a.rs\",\"expected\":\"1\",\"replacement\":\"2\"}},{{\"kind\":\"create\",\"path\":\"src/new.rs\",\"content\":\"new\"}},{{\"kind\":\"delete\",\"path\":\"src/b.rs\",\"expected_sha256\":\"{delete_hash}\"}}],\"rationale\":\"bounded migration\"}}"
         );
         let allowed = vec!["src/a.rs".into(), "src/new.rs".into(), "src/b.rs".into()];
-        let proposal = BoundedProposal::from_json_envelope(
-            &raw,
-            ProposalBudget::new(3, 64),
-            &root,
-            &allowed,
-        )
-        .unwrap();
+        let proposal =
+            BoundedProposal::from_json_envelope(&raw, ProposalBudget::new(3, 64), &root, &allowed)
+                .unwrap();
         assert_eq!(proposal.patch_set.len(), 3);
         assert_eq!(proposal.rationale, "bounded migration");
         let _ = std::fs::remove_dir_all(root);
@@ -360,7 +355,8 @@ mod tests {
     #[test]
     fn delete_budget_charges_actual_file_size() {
         let root = workspace();
-        let set = PatchSet::new(vec![FileOperation::delete("src/b.rs", hex(b"remove-me"))]).unwrap();
+        let set =
+            PatchSet::new(vec![FileOperation::delete("src/b.rs", hex(b"remove-me"))]).unwrap();
         let allowed = vec!["src/b.rs".into()];
         assert!(matches!(
             ProposalBudget::new(1, 3).validate(&set, &root, &allowed),

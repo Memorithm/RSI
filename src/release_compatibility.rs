@@ -6,7 +6,7 @@
 //! heads therefore cannot silently alter a replayable engineering release.
 
 use crate::compatibility::{
-    COMPATIBILITY_SCHEMA_VERSION, CompatibilityError, CompatibilitySet, RepositoryRevision,
+    CompatibilityError, CompatibilitySet, RepositoryRevision, COMPATIBILITY_SCHEMA_VERSION,
 };
 use crate::json::Json;
 use crate::sha256::sha256;
@@ -125,12 +125,12 @@ impl ReleaseCompatibilityLock {
             ))?
             .iter()
             .map(|item| {
-                item.as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| ReleaseCompatibilityError::InvalidValue {
+                item.as_str().map(str::to_owned).ok_or_else(|| {
+                    ReleaseCompatibilityError::InvalidValue {
                         field: "qualification_evidence",
                         value: item.to_string(),
-                    })
+                    }
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -276,10 +276,7 @@ fn compatibility_json(compatibility: &CompatibilitySet) -> Json {
     root
 }
 
-fn exact_u64(
-    value: Option<&Json>,
-    field: &'static str,
-) -> Result<u64, ReleaseCompatibilityError> {
+fn exact_u64(value: Option<&Json>, field: &'static str) -> Result<u64, ReleaseCompatibilityError> {
     let value = value.ok_or(ReleaseCompatibilityError::MissingField(field))?;
     let number = value
         .as_f64()
@@ -287,11 +284,7 @@ fn exact_u64(
             field,
             value: value.to_string(),
         })?;
-    if !number.is_finite()
-        || number < 0.0
-        || number.fract() != 0.0
-        || number > u64::MAX as f64
-    {
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64 {
         return Err(ReleaseCompatibilityError::InvalidValue {
             field,
             value: value.to_string(),
@@ -313,10 +306,7 @@ fn validate_text(field: &'static str, value: &str) -> Result<(), ReleaseCompatib
     Ok(())
 }
 
-fn required_string(
-    value: &Json,
-    field: &'static str,
-) -> Result<String, ReleaseCompatibilityError> {
+fn required_string(value: &Json, field: &'static str) -> Result<String, ReleaseCompatibilityError> {
     value
         .get(field)
         .and_then(Json::as_str)
@@ -416,8 +406,7 @@ mod tests {
 
     #[test]
     fn moving_branch_names_cannot_enter_the_lock() {
-        let error = RepositoryRevision::new("Memorithm/scirust", "master", "scirust")
-            .unwrap_err();
+        let error = RepositoryRevision::new("Memorithm/scirust", "master", "scirust").unwrap_err();
         assert!(matches!(error, CompatibilityError::InvalidRevision(_)));
     }
 
@@ -427,12 +416,8 @@ mod tests {
             vec![
                 RepositoryRevision::new("Memorithm/RSI", RSI_P8_5, "rsi").unwrap(),
                 RepositoryRevision::new("Memorithm/scirust", SCIRUST_P7_3, "scirust").unwrap(),
-                RepositoryRevision::new(
-                    "Memorithm/scirust",
-                    SCIRUST_RSI_CANONICAL,
-                    "scirust-rsi",
-                )
-                .unwrap(),
+                RepositoryRevision::new("Memorithm/scirust", SCIRUST_RSI_CANONICAL, "scirust-rsi")
+                    .unwrap(),
             ],
             "rustc 1.97.1 (qualification); MSRV 1.89",
             vec!["cogno:hard-gates".to_string()],
@@ -460,7 +445,11 @@ mod tests {
         let rebuilt = ReleaseCompatibilityLock::new(
             lock.compatibility().clone(),
             lock.cogno_contract_version(),
-            lock.qualification_evidence().iter().rev().cloned().collect(),
+            lock.qualification_evidence()
+                .iter()
+                .rev()
+                .cloned()
+                .collect(),
         )
         .unwrap();
         assert_eq!(rebuilt.to_json_string(), lock.to_json_string());

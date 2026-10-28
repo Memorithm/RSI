@@ -391,7 +391,10 @@ fn normalize_relative(input: &str) -> Result<String, PatchSetError> {
                 }
                 parts.push(s);
             }
-            Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
                 return Err(PatchSetError::UnsafePath(input.to_string()));
             }
         }
@@ -536,7 +539,10 @@ mod tests {
             FileOperation::modify_exact("src/lib.rs", "alpha", "gamma"),
             FileOperation::create("src/lib.rs", "must not overwrite"),
         ]);
-        assert!(set.is_err(), "same-path conflicts must fail before materialization");
+        assert!(
+            set.is_err(),
+            "same-path conflicts must fail before materialization"
+        );
 
         let set = PatchSet::new(vec![
             FileOperation::modify_exact("src/lib.rs", "alpha", "gamma"),

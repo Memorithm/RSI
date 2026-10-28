@@ -206,13 +206,14 @@ impl BenchmarkRecord {
             .map(|sample| {
                 sample
                     .as_f64()
-                    .ok_or(EngineeringTrajectoryError::InvalidNumber("benchmark.samples"))
+                    .ok_or(EngineeringTrajectoryError::InvalidNumber(
+                        "benchmark.samples",
+                    ))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let summary = value
-            .get("summary")
-            .and_then(Json::as_f64)
-            .ok_or(EngineeringTrajectoryError::InvalidNumber("benchmark.summary"))?;
+        let summary = value.get("summary").and_then(Json::as_f64).ok_or(
+            EngineeringTrajectoryError::InvalidNumber("benchmark.summary"),
+        )?;
         Self::new(
             required_string(value, "metric")?,
             required_string(value, "unit")?,
@@ -336,7 +337,12 @@ impl EngineeringTrajectory {
         root.set("admissibility", self.admissibility.to_json())
             .set(
                 "benchmarks",
-                Json::Arr(self.benchmarks.iter().map(BenchmarkRecord::to_json).collect()),
+                Json::Arr(
+                    self.benchmarks
+                        .iter()
+                        .map(BenchmarkRecord::to_json)
+                        .collect(),
+                ),
             )
             .set(
                 "compatibility",
@@ -355,7 +361,12 @@ impl EngineeringTrajectory {
             )
             .set(
                 "later_verdicts",
-                Json::Arr(self.later_verdicts.iter().map(LaterVerdict::to_json).collect()),
+                Json::Arr(
+                    self.later_verdicts
+                        .iter()
+                        .map(LaterVerdict::to_json)
+                        .collect(),
+                ),
             )
             .set("parent_state_id", Json::Str(self.parent_state_id.clone()))
             .set("patch_set", patch_set_json(&self.patch_set)?)
@@ -464,25 +475,39 @@ impl fmt::Display for EngineeringTrajectoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json(error) => write!(f, "engineering trajectory JSON error: {error}"),
-            Self::Compatibility(error) => write!(f, "engineering trajectory compatibility: {error}"),
+            Self::Compatibility(error) => {
+                write!(f, "engineering trajectory compatibility: {error}")
+            }
             Self::PatchSet(error) => write!(f, "engineering trajectory PatchSet: {error}"),
             Self::MissingField(field) => write!(f, "engineering trajectory field missing: {field}"),
             Self::EmptyField(field) => write!(f, "engineering trajectory field empty: {field}"),
             Self::UnsupportedVersion(version) => {
-                write!(f, "unsupported engineering trajectory schema version: {version}")
+                write!(
+                    f,
+                    "unsupported engineering trajectory schema version: {version}"
+                )
             }
             Self::InvalidIdentity { field, value } => {
                 write!(f, "invalid immutable identity for {field}: {value}")
             }
             Self::InvalidValue { field, value } => {
-                write!(f, "invalid engineering trajectory value for {field}: {value}")
+                write!(
+                    f,
+                    "invalid engineering trajectory value for {field}: {value}"
+                )
             }
             Self::InvalidNumber(field) => write!(f, "non-finite or missing number in {field}"),
             Self::IdentityMismatch { expected, actual } => {
-                write!(f, "PatchSet identity mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "PatchSet identity mismatch: expected {expected}, got {actual}"
+                )
             }
             Self::InadmissibleAcceptedVerdict => {
-                write!(f, "accepted trajectory must have every COGNO hard gate passing")
+                write!(
+                    f,
+                    "accepted trajectory must have every COGNO hard gate passing"
+                )
             }
         }
     }
@@ -513,7 +538,10 @@ fn validate_identity(field: &'static str, value: &str) -> Result<(), Engineering
     Ok(())
 }
 
-fn required_string(value: &Json, field: &'static str) -> Result<String, EngineeringTrajectoryError> {
+fn required_string(
+    value: &Json,
+    field: &'static str,
+) -> Result<String, EngineeringTrajectoryError> {
     value
         .get(field)
         .and_then(Json::as_str)
@@ -541,13 +569,7 @@ fn patch_set_json(patch_set: &PatchSet) -> Result<Json, EngineeringTrajectoryErr
     )
     .set(
         "operations",
-        Json::Arr(
-            patch_set
-                .operations()
-                .iter()
-                .map(operation_json)
-                .collect(),
-        ),
+        Json::Arr(patch_set.operations().iter().map(operation_json).collect()),
     );
     Ok(out)
 }
@@ -635,12 +657,8 @@ mod tests {
             vec![
                 RepositoryRevision::new("Memorithm/RSI", "a".repeat(40), "rsi").unwrap(),
                 RepositoryRevision::new("Memorithm/scirust", "b".repeat(40), "scirust").unwrap(),
-                RepositoryRevision::new(
-                    "Memorithm/FLAT-ATTENTION",
-                    "c".repeat(40),
-                    "flat",
-                )
-                .unwrap(),
+                RepositoryRevision::new("Memorithm/FLAT-ATTENTION", "c".repeat(40), "flat")
+                    .unwrap(),
             ],
             "rustc 1.89.0",
             vec!["flat-attention".into(), "wgpu".into()],
@@ -690,7 +708,9 @@ mod tests {
             } else {
                 "policy gate rejected candidate".into()
             },
-            later_verdicts: vec![LaterVerdict::new("ci", admitted, "final-head CI verdict").unwrap()],
+            later_verdicts: vec![
+                LaterVerdict::new("ci", admitted, "final-head CI verdict").unwrap()
+            ],
         }
     }
 

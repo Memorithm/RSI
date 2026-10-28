@@ -244,8 +244,7 @@ impl MetaSearch for ForgeMetaSearch {
                         .unwrap_or(baseline_si);
                     if si >= baseline_si {
                         // audit m10 : préserve les hyperparams DGM (cf. meta.rs)
-                        let mut revised =
-                            MetaStrategy::decode(&ind.cand.theta, n_software);
+                        let mut revised = MetaStrategy::decode(&ind.cand.theta, n_software);
                         revised.dgm = baseline.dgm.clone();
                         (revised, si)
                     } else {

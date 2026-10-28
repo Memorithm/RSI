@@ -280,7 +280,9 @@ fn main() {
             .unwrap_or_default(),
         timeout: Duration::from_secs(timeout_secs),
         execution_policy: if trusted_host {
-            eprintln!("⚠ exécution hôte explicitement activée : code et dépendances réputés fiables");
+            eprintln!(
+                "⚠ exécution hôte explicitement activée : code et dépendances réputés fiables"
+            );
             CargoExecutionPolicy::TrustedHost
         } else {
             CargoExecutionPolicy::default()
@@ -304,8 +306,11 @@ fn main() {
 
     // --- Boucle. ------------------------------------------------------------ //
     // audit m30/m11 : NaN/inf ici rendait TOUTE variante inacceptable
-    let min_gain: f64 =
-        rsi::cli::parse_f64_nonneg(flag_value(&args, "--min-gain").as_deref(), "--min-gain", 0.0);
+    let min_gain: f64 = rsi::cli::parse_f64_nonneg(
+        flag_value(&args, "--min-gain").as_deref(),
+        "--min-gain",
+        0.0,
+    );
     let revise: u32 = flag_value(&args, "--revise")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);

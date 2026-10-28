@@ -84,10 +84,7 @@ impl<'a> AdmissibilityGate<'a> {
                 ctx_tokens,
             });
         }
-        if !self
-            .budget
-            .permits(mem_bytes, lat_ms, ctx_tokens)
-        {
+        if !self.budget.permits(mem_bytes, lat_ms, ctx_tokens) {
             // identifie le premier budget dépassé (diagnostic)
             let viol = if mem_bytes > self.budget.mem_bytes {
                 Some("budget_mem")
@@ -169,7 +166,9 @@ mod tests {
             budget: &ResourceBudget::default(),
         };
         // violation dure → inadmissible (même avec budgets OK)
-        let v = gate.verify(b"x", b"fn main() { unsafe {} }", b"p", 10, 1, 1).unwrap();
+        let v = gate
+            .verify(b"x", b"fn main() { unsafe {} }", b"p", 10, 1, 1)
+            .unwrap();
         assert!(!v.admissible);
         assert_eq!(v.first_violation, Some("no_forbidden_substring"));
         // conforme → admissible

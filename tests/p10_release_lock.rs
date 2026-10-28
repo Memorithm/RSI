@@ -75,11 +75,15 @@ fn p10_evidence_records_all_slices_without_promoting_an_sgemm_winner() {
     assert!(sgemm_has_no_promoted_winner(sgemm));
 
     assert!(
-        evidence.iter().any(|record| record.starts_with("flat:m24:")),
+        evidence
+            .iter()
+            .any(|record| record.starts_with("flat:m24:")),
         "missing exact FLAT M24 evidence"
     );
     assert!(
-        evidence.iter().any(|record| record.starts_with("rsi:p9.2:")),
+        evidence
+            .iter()
+            .any(|record| record.starts_with("rsi:p9.2:")),
         "missing frozen RSI predecessor evidence"
     );
 }

@@ -69,11 +69,11 @@ pub mod engineering_proposal;
 pub mod engineering_trajectory;
 pub mod evaluation_pipeline;
 pub mod flat_attention_evaluator;
+pub mod flywheel;
 #[cfg(feature = "forge")]
 pub mod forge_meta;
 #[cfg(feature = "forge")]
 pub mod forge_substrate;
-pub mod flywheel;
 pub mod hw_probe;
 pub mod json;
 pub mod kernels;
@@ -120,41 +120,39 @@ pub use api::{ApiResult, RsiApi};
 pub use ascent::{ascend, Guard, RefineTask, Report, StopReason as AscentStop};
 pub use audit::{AuditEvent, AuditLog, HashChainLog, TraceEvent};
 pub use autopilot_feature::{
-    FEATURE_IMPLEMENTATION_CONTRACT_SCHEMA_VERSION, FEATURE_TEST_MANIFEST_SCHEMA_VERSION,
     FeatureImplementationContract, FeatureRegimeError, FeatureTestApproval, FrozenFeatureTests,
-    FrozenTestArtifact,
+    FrozenTestArtifact, FEATURE_IMPLEMENTATION_CONTRACT_SCHEMA_VERSION,
+    FEATURE_TEST_MANIFEST_SCHEMA_VERSION,
 };
 pub use autopilot_intake::{
-    AUTOPILOT_SPEC_SCHEMA_VERSION, AcceptanceCheck, AcceptanceCriterion, AutopilotIntakeError,
-    AutopilotSpecDraft, ExplorationObservation, ExplorationSource, ExploredObjective,
-    FrozenAutopilotSpec, IntakeQuestion, IntakeQuestionnaire, QuestionAnswer, RepositoryExploration,
-    RepositoryScope, ResolvedIntake, ResolvedQuestion, SpecBudget,
+    AcceptanceCheck, AcceptanceCriterion, AutopilotIntakeError, AutopilotSpecDraft,
+    ExplorationObservation, ExplorationSource, ExploredObjective, FrozenAutopilotSpec,
+    IntakeQuestion, IntakeQuestionnaire, QuestionAnswer, RepositoryExploration, RepositoryScope,
+    ResolvedIntake, ResolvedQuestion, SpecBudget, AUTOPILOT_SPEC_SCHEMA_VERSION,
 };
 pub use autopilot_perf::{
-    PERF_BENCHMARK_SCHEMA_VERSION, AntiNoisePolicy, BenchmarkCase, BenchmarkCaseSpec,
-    BenchmarkClass, BenchmarkEnvironment, FrozenBenchmarkArtifact, FrozenPerfBenchmark,
-    MetricDirection, PerfBenchmarkApproval, PerfBenchmarkDraft, PerfCaseResult,
-    PerfComparisonReport, PerfMeasurementBatch, PerfRegimeError,
+    AntiNoisePolicy, BenchmarkCase, BenchmarkCaseSpec, BenchmarkClass, BenchmarkEnvironment,
+    FrozenBenchmarkArtifact, FrozenPerfBenchmark, MetricDirection, PerfBenchmarkApproval,
+    PerfBenchmarkDraft, PerfCaseResult, PerfComparisonReport, PerfMeasurementBatch,
+    PerfRegimeError, PERF_BENCHMARK_SCHEMA_VERSION,
 };
 pub use autopilot_pr::{
-    AUTOPILOT_PR_PLAN_SCHEMA_VERSION, AutopilotPrError, AutopilotPullRequestPlan,
-    ExternalPrVerdict, ExternalVerdictKind, HostingAction, PullRequestEmissionReceipt,
-    PullRequestPlanDraft, append_external_pr_verdict,
+    append_external_pr_verdict, AutopilotPrError, AutopilotPullRequestPlan, ExternalPrVerdict,
+    ExternalVerdictKind, HostingAction, PullRequestEmissionReceipt, PullRequestPlanDraft,
+    AUTOPILOT_PR_PLAN_SCHEMA_VERSION,
 };
 pub use autopilot_task_dag::{
-    AUTOPILOT_TASK_DAG_SCHEMA_VERSION, AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError,
-    AutopilotTaskDraft, HardGateProfile, TaskBudget, TaskDagPolicy, TaskEditAllowance,
-    TaskOperation, TaskRegime,
+    AutopilotTask, AutopilotTaskDag, AutopilotTaskDagError, AutopilotTaskDraft, HardGateProfile,
+    TaskBudget, TaskDagPolicy, TaskEditAllowance, TaskOperation, TaskRegime,
+    AUTOPILOT_TASK_DAG_SCHEMA_VERSION,
 };
-pub use candidate_state::{
-    CandidateState, CandidateStateError, CandidateStoragePolicy, TreeUsage,
-};
+pub use candidate_state::{CandidateState, CandidateStateError, CandidateStoragePolicy, TreeUsage};
 #[cfg(feature = "ccos")]
 pub use ccos_audit::CcosAudit;
 pub use checkpoint::Checkpoint;
 pub use cma::SepCmaEs;
 pub use compatibility::{
-    COMPATIBILITY_SCHEMA_VERSION, CompatibilityError, CompatibilitySet, RepositoryRevision,
+    CompatibilityError, CompatibilitySet, RepositoryRevision, COMPATIBILITY_SCHEMA_VERSION,
 };
 pub use convergence::{ConvergenceDetector, Trend};
 pub use criticality::{RiskConfig, RiskModel, RiskReport, RiskSignals};
@@ -164,8 +162,8 @@ pub use cross_repo_workspace::{
     LocalRepositorySource,
 };
 pub use cumulative_archive::{
-    CUMULATIVE_ARCHIVE_SCHEMA_VERSION, CumulativeArchive, CumulativeArchiveError,
-    CumulativeOutcome, CumulativeRecord, PromotionReceipt,
+    CumulativeArchive, CumulativeArchiveError, CumulativeOutcome, CumulativeRecord,
+    PromotionReceipt, CUMULATIVE_ARCHIVE_SCHEMA_VERSION,
 };
 pub use dynamics::{Dynamics, StabilityConfig, StepInfo};
 pub use engineering_evaluator::{
@@ -175,9 +173,9 @@ pub use engineering_evaluator::{
 };
 pub use engineering_proposal::{BoundedProposal, ProposalBudget, ProposalCost, ProposalError};
 pub use engineering_trajectory::{
-    AdmissibilityBreakdown, BenchmarkRecord, ENGINEERING_TRAJECTORY_SCHEMA_VERSION,
-    EngineeringTrajectory, EngineeringTrajectoryError, EngineeringVerdict, GateStatus, LaterVerdict,
-    ProposerMetadata,
+    AdmissibilityBreakdown, BenchmarkRecord, EngineeringTrajectory, EngineeringTrajectoryError,
+    EngineeringVerdict, GateStatus, LaterVerdict, ProposerMetadata,
+    ENGINEERING_TRAJECTORY_SCHEMA_VERSION,
 };
 pub use evaluation_pipeline::{
     BoundedEvidencePipeline, EvaluationCommandHost, EvaluationEvidence, EvaluationPipelineError,
@@ -201,16 +199,14 @@ pub use memory::{ContextMemory, LinearContextMemory};
 /// silencieuses sur les valeurs numériques invalides).
 pub mod cli {
     /// Parse une valeur de flag en `f64` fini et >= 0 ; message + défaut sinon.
-    pub fn parse_f64_nonneg(
-        raw: Option<&str>,
-        flag: &str,
-        default: f64,
-    ) -> f64 {
+    pub fn parse_f64_nonneg(raw: Option<&str>, flag: &str, default: f64) -> f64 {
         match raw {
             Some(v) => match v.parse::<f64>() {
                 Ok(x) if x.is_finite() && x >= 0.0 => x,
                 _ => {
-                    eprintln!("attention : {flag}='{v}' invalide (fini >= 0 requis), défaut utilisé");
+                    eprintln!(
+                        "attention : {flag}='{v}' invalide (fini >= 0 requis), défaut utilisé"
+                    );
                     default
                 }
             },
@@ -235,12 +231,12 @@ pub use patchset_trajectory::{
     PatchSetTrajectory, PatchSetTrajectoryError, PATCHSET_TRAJECTORY_SCHEMA_VERSION,
 };
 pub use release_compatibility::{
+    current_release_compatibility_lock, ReleaseCompatibilityError, ReleaseCompatibilityLock,
     CURRENT_RELEASE_COMPATIBILITY_LOCK_JSON, RELEASE_COMPATIBILITY_LOCK_SCHEMA_VERSION,
-    ReleaseCompatibilityError, ReleaseCompatibilityLock, current_release_compatibility_lock,
 };
 pub use release_qualification::{
-    RELEASE_QUALIFICATION_SCHEMA_VERSION, ReleaseQualificationArtifacts,
-    ReleaseQualificationError, ReleaseQualificationReport, run_local_release_qualification,
+    run_local_release_qualification, ReleaseQualificationArtifacts, ReleaseQualificationError,
+    ReleaseQualificationReport, RELEASE_QUALIFICATION_SCHEMA_VERSION,
 };
 pub use rng::Rng;
 pub use schedule::{LoopSchedule, MetaMeta};
@@ -250,11 +246,9 @@ pub use surface::{
     Bottleneck, CapabilityModel, CeilingModel, IntelligenceSurface, PowerCeiling, SigmoidCapability,
 };
 pub use swarm::{run_swarm, run_swarm_demo, SwarmMember, SwarmResult};
-pub use synthesis::{
-    symbolic_equal, Conjecture, ConjectureGenerator, Expr, SymbolicSynthesis,
-};
+pub use synthesis::{symbolic_equal, Conjecture, ConjectureGenerator, Expr, SymbolicSynthesis};
 pub use tasks::{GroundedCapability, Task, TaskCorpus};
 pub use web_crawl::{
-    CrawledPage, CrawlLimits, CrawlerOptions, CrawlReport, DdgResult, DuckDuckGoSearch, SearchResult,
-    TextIndex, WebCrawler, WebCrawlerContext,
+    CrawlLimits, CrawlReport, CrawledPage, CrawlerOptions, DdgResult, DuckDuckGoSearch,
+    SearchResult, TextIndex, WebCrawler, WebCrawlerContext,
 };

@@ -464,7 +464,6 @@ fn build_request(
 
 // ════════════════ Connexion automatique (découverte de modèles) ══════════ //
 
-
 /// Plafond d'octets lus sur une réponse HTTP Ollama (anti-OOM : l'ancien
 /// `read_to_string` faisait confiance au serveur pour fermer la connexion).
 #[cfg(feature = "llm-ollama")]
@@ -516,8 +515,8 @@ pub fn ollama_installed_models(
     stream
         .write_all(req.as_bytes())
         .map_err(|e| LlmError::Backend(format!("écriture: {e}")))?;
-    let raw =
-        read_response_bounded(&mut stream).map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
+    let raw = read_response_bounded(&mut stream)
+        .map_err(|e| LlmError::Backend(format!("lecture: {e}")))?;
     parse_tags_response(&raw)
 }
 

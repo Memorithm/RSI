@@ -23,8 +23,7 @@ impl OctaSomaMemory {
     /// `high_dim` est la dimension exacte des embeddings RSI.
     pub fn new(high_dim: usize, seed: u64) -> Self {
         Self {
-            mem: HybridMemory::new(high_dim, seed, SIMHASH_BITS)
-                .with_shortlist(DEFAULT_SHORTLIST),
+            mem: HybridMemory::new(high_dim, seed, SIMHASH_BITS).with_shortlist(DEFAULT_SHORTLIST),
         }
     }
 

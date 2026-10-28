@@ -54,7 +54,11 @@ impl PatchSetTrajectory {
         )
         .set(
             "patchset_id",
-            Json::Str(self.patch_set.identity().map_err(PatchSetTrajectoryError::PatchSet)?),
+            Json::Str(
+                self.patch_set
+                    .identity()
+                    .map_err(PatchSetTrajectoryError::PatchSet)?,
+            ),
         )
         .set("operations", operations_json(&self.patch_set))
         .set("rationale", Json::Str(self.rationale.clone()))
@@ -123,7 +127,10 @@ impl PatchSetTrajectory {
                 .ok_or(PatchSetTrajectoryError::Missing("compiles"))?,
             tests_passed: u32_checked(&json, "tests_passed")?,
             tests_failed: u32_checked(&json, "tests_failed")?,
-            score: json.get("score").and_then(Json::as_f64).unwrap_or(f64::NEG_INFINITY),
+            score: json
+                .get("score")
+                .and_then(Json::as_f64)
+                .unwrap_or(f64::NEG_INFINITY),
             output: json
                 .get("output")
                 .and_then(Json::as_str)
@@ -153,7 +160,10 @@ impl fmt::Display for PatchSetTrajectoryError {
             Self::InvalidOperation(msg) => write!(f, "invalid trajectory operation: {msg}"),
             Self::IntegerOverflow(field) => write!(f, "trajectory integer out of range: {field}"),
             Self::IdentityMismatch { expected, actual } => {
-                write!(f, "PatchSet identity mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "PatchSet identity mismatch: expected {expected}, got {actual}"
+                )
             }
         }
     }
@@ -219,7 +229,10 @@ fn operation_from_json(json: &Json) -> Result<FileOperation, PatchSetTrajectoryE
     }
 }
 
-fn string_field<'a>(json: &'a Json, field: &'static str) -> Result<&'a str, PatchSetTrajectoryError> {
+fn string_field<'a>(
+    json: &'a Json,
+    field: &'static str,
+) -> Result<&'a str, PatchSetTrajectoryError> {
     json.get(field)
         .and_then(Json::as_str)
         .ok_or(PatchSetTrajectoryError::Missing(field))
@@ -264,7 +277,10 @@ mod tests {
         assert_eq!(line.lines().count(), 1);
         let decoded = PatchSetTrajectory::from_jsonl(&line).unwrap();
         assert_eq!(decoded.patch_set, original.patch_set);
-        assert_eq!(decoded.patch_set.identity().unwrap(), original.patch_set.identity().unwrap());
+        assert_eq!(
+            decoded.patch_set.identity().unwrap(),
+            original.patch_set.identity().unwrap()
+        );
         assert_eq!(decoded.compiles, original.compiles);
         assert_eq!(decoded.tests_passed, original.tests_passed);
         assert_eq!(decoded.score, original.score);

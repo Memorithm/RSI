@@ -119,9 +119,7 @@ impl Sequence {
     ///-delà du masque sont traités comme inactifs).
     pub fn with_mask(tokens: Vec<f64>, mask: Mask) -> CognoResult<Self> {
         if mask.len() > tokens.len() {
-            return Err(CognoError::MaskMismatch(
-                "masque plus long que la séquence",
-            ));
+            return Err(CognoError::MaskMismatch("masque plus long que la séquence"));
         }
         Ok(Sequence { tokens, mask })
     }
@@ -211,7 +209,10 @@ impl SequenceBatch {
     }
 
     /// Ancien nom (déprécié) conservé pour compatibilité immédiate.
-    #[deprecated(since = "0.1.1", note = "renommé mean_of_masked_means (convention macro)")]
+    #[deprecated(
+        since = "0.1.1",
+        note = "renommé mean_of_masked_means (convention macro)"
+    )]
     pub fn mean_masked_sum(&self) -> f64 {
         self.mean_of_masked_means()
     }
@@ -245,11 +246,8 @@ mod tests {
     #[test]
     fn sequence_partial_mask_pads() {
         // séquence de 4, masque partiel sur les 2 premiers (pad à droite)
-        let seq = Sequence::with_mask(
-            vec![1.0, 2.0, 3.0, 4.0],
-            Mask::try_new(vec![1, 1]).unwrap(),
-        )
-        .unwrap();
+        let seq = Sequence::with_mask(vec![1.0, 2.0, 3.0, 4.0], Mask::try_new(vec![1, 1]).unwrap())
+            .unwrap();
         // seuls les 2 premiers comptent
         assert!((seq.masked_sum() - 3.0).abs() < 1e-12);
         assert!((seq.masked_mean() - 1.5).abs() < 1e-12);

@@ -213,9 +213,7 @@ fn contains_sub(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
-    haystack
-        .windows(needle.len())
-        .any(|w| w == needle)
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 /// Validateur de **contraintes d'espace de travail** : vérifie que `y` ne
@@ -254,10 +252,7 @@ impl SymbolicValidator for WorkspaceConstraintsValidator {
         }
         // au moins un chemin doit être sous un préfixe autorisé (sinon le
         // travail est hors périmètre → violation)
-        let allowed = self
-            .allowed_prefixes
-            .iter()
-            .any(|p| s.contains(p));
+        let allowed = self.allowed_prefixes.iter().any(|p| s.contains(p));
         if allowed {
             REWARD_COMPLIANT + bonus.min(1.0)
         } else {
@@ -511,7 +506,10 @@ mod tests {
     fn no_unsafe_validator_penalizes_unsafe() {
         let v = NoUnsafeValidator;
         assert!(v.validate(b"", b"fn main() {}", 0.0) > 0.0);
-        assert_eq!(v.validate(b"", b"unsafe { let x = 1; }", 0.0), REWARD_VIOLATION);
+        assert_eq!(
+            v.validate(b"", b"unsafe { let x = 1; }", 0.0),
+            REWARD_VIOLATION
+        );
     }
 
     #[test]
@@ -567,28 +565,42 @@ mod tests {
         let mut b1 = PerTraceBuffer::new(4);
         let mut b2 = PerTraceBuffer::new(4);
         let l_bad = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut bad, 0.0, &mut s1, &mut b1);
-        let l_good = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut good, 0.0, &mut s2, &mut b2);
-        assert!(l_good < l_bad, "meilleure récompense ⇒ perte plus faible : {l_bad} vs {l_good}");
+        let l_good =
+            compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut good, 0.0, &mut s2, &mut b2);
+        assert!(
+            l_good < l_bad,
+            "meilleure récompense ⇒ perte plus faible : {l_bad} vs {l_good}"
+        );
     }
 
     #[test]
     fn kl_penalty_worsens_loss_when_diverging() {
-        let cfg = MetaNSConfig { beta_ns: 1.0, gamma_ns: 0.0 };
+        let cfg = MetaNSConfig {
+            beta_ns: 1.0,
+            gamma_ns: 0.0,
+        };
         let mut close = [AgentExecutionTrace::new(-0.5, -0.5, b"y", b"x")]; // KL=0
-        // divergence : la politique surpondère y (lp_φ > lp_sft) → KL = 2.5
+                                                                            // divergence : la politique surpondère y (lp_φ > lp_sft) → KL = 2.5
         let mut far = [AgentExecutionTrace::new(-0.5, -3.0, b"y", b"x")];
         let mut s1 = MetaNSState::new();
         let mut s2 = MetaNSState::new();
         let mut b1 = PerTraceBuffer::new(4);
         let mut b2 = PerTraceBuffer::new(4);
-        let l_close = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut close, 0.0, &mut s1, &mut b1);
+        let l_close =
+            compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut close, 0.0, &mut s1, &mut b1);
         let l_far = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut far, 0.0, &mut s2, &mut b2);
-        assert!(l_far > l_close, "KL élevée ⇒ perte plus grande : {l_close} vs {l_far}");
+        assert!(
+            l_far > l_close,
+            "KL élevée ⇒ perte plus grande : {l_close} vs {l_far}"
+        );
     }
 
     #[test]
     fn pretrain_term_reduces_loss() {
-        let cfg = MetaNSConfig { beta_ns: 0.0, gamma_ns: 1.0 };
+        let cfg = MetaNSConfig {
+            beta_ns: 0.0,
+            gamma_ns: 1.0,
+        };
         let mut traces: [AgentExecutionTrace; 0] = [];
         let mut s1 = MetaNSState::new();
         let mut s2 = MetaNSState::new();
@@ -693,9 +705,18 @@ mod tests {
         use crate::rng::Rng;
         let mut rng = Rng::new(2026);
         let cfgs = [
-            MetaNSConfig { beta_ns: 0.0, gamma_ns: 0.0 },
-            MetaNSConfig { beta_ns: 0.1, gamma_ns: 0.01 },
-            MetaNSConfig { beta_ns: 10.0, gamma_ns: 5.0 },
+            MetaNSConfig {
+                beta_ns: 0.0,
+                gamma_ns: 0.0,
+            },
+            MetaNSConfig {
+                beta_ns: 0.1,
+                gamma_ns: 0.01,
+            },
+            MetaNSConfig {
+                beta_ns: 10.0,
+                gamma_ns: 5.0,
+            },
         ];
         for cfg in &cfgs {
             for batch in [1usize, 2, 8, 64] {
@@ -720,7 +741,10 @@ mod tests {
                     &mut s,
                     &mut b,
                 );
-                assert!(loss.is_finite(), "perte non finie pour cfg={cfg:?} batch={batch}");
+                assert!(
+                    loss.is_finite(),
+                    "perte non finie pour cfg={cfg:?} batch={batch}"
+                );
                 // borne : récompense ∈ [-10, 2] et KL ≤ 20 ⇒ |loss| ≤ ~10 + 200 + |pretrain|
                 assert!(
                     loss.abs() < 1_000.0,
@@ -736,7 +760,10 @@ mod tests {
     #[test]
     fn property_loss_monotone_decreasing_in_reward() {
         use crate::rng::Rng;
-        let cfg = MetaNSConfig { beta_ns: 0.1, gamma_ns: 0.0 };
+        let cfg = MetaNSConfig {
+            beta_ns: 0.1,
+            gamma_ns: 0.0,
+        };
         let mut rng = Rng::new(7);
         for _ in 0..20 {
             let lp = -rng.uniform_range(0.1, 3.0);
@@ -747,8 +774,22 @@ mod tests {
             let mut s2 = MetaNSState::new();
             let mut b1 = PerTraceBuffer::new(2);
             let mut b2 = PerTraceBuffer::new(2);
-            let l_good = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut good.clone(), 0.0, &mut s1, &mut b1);
-            let l_bad = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut bad.clone(), 0.0, &mut s2, &mut b2);
+            let l_good = compute_meta_ns_loss(
+                &cfg,
+                &NoUnsafeValidator,
+                &mut good.clone(),
+                0.0,
+                &mut s1,
+                &mut b1,
+            );
+            let l_bad = compute_meta_ns_loss(
+                &cfg,
+                &NoUnsafeValidator,
+                &mut bad.clone(),
+                0.0,
+                &mut s2,
+                &mut b2,
+            );
             assert!(
                 l_good <= l_bad,
                 "la perte doit décroître avec la récompense : {l_good} > {l_bad}"
@@ -760,15 +801,30 @@ mod tests {
     /// la pénalité KL régularise bien la politique contre la dérive.
     #[test]
     fn property_loss_increasing_in_kl() {
-        let cfg = MetaNSConfig { beta_ns: 2.0, gamma_ns: 0.0 };
+        let cfg = MetaNSConfig {
+            beta_ns: 2.0,
+            gamma_ns: 0.0,
+        };
         // même récompense (artefact identique), KL croissante (lp_φ - lp_sft)
         let base_lp_sft = -0.5;
         let mut prev = f64::NEG_INFINITY;
         for lp_policy in [-0.5, -1.0, -2.0, -4.0, -8.0] {
-            let traces = [AgentExecutionTrace::new(lp_policy, base_lp_sft, b"fn main() {}", b"x")];
+            let traces = [AgentExecutionTrace::new(
+                lp_policy,
+                base_lp_sft,
+                b"fn main() {}",
+                b"x",
+            )];
             let mut s = MetaNSState::new();
             let mut b = PerTraceBuffer::new(2);
-            let loss = compute_meta_ns_loss(&cfg, &NoUnsafeValidator, &mut traces.clone(), 0.0, &mut s, &mut b);
+            let loss = compute_meta_ns_loss(
+                &cfg,
+                &NoUnsafeValidator,
+                &mut traces.clone(),
+                0.0,
+                &mut s,
+                &mut b,
+            );
             assert!(
                 loss >= prev - 1e-12,
                 "perte non croissante en KL : {loss} < {prev}"
@@ -787,7 +843,11 @@ mod tests {
         for _ in 0..32 {
             let lp = -rng.uniform_range(0.0, 8.0);
             let lpsft = -rng.uniform_range(0.0, 8.0);
-            let artifact: &'static [u8] = if rng.uniform() < 0.5 { b"fn a() {}" } else { b"fn b() {}" };
+            let artifact: &'static [u8] = if rng.uniform() < 0.5 {
+                b"fn a() {}"
+            } else {
+                b"fn b() {}"
+            };
             traces.push(AgentExecutionTrace::new(lp, lpsft, artifact, b"ctx"));
         }
         let run = || {

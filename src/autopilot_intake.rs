@@ -124,9 +124,7 @@ impl RepositoryExploration {
         validate_repository(&repository)?;
         validate_revision(&revision)?;
         if observations.is_empty() {
-            return Err(AutopilotIntakeError::EmptyField(
-                "exploration.observations",
-            ));
+            return Err(AutopilotIntakeError::EmptyField("exploration.observations"));
         }
         observations.sort();
         observations.dedup();
@@ -657,9 +655,10 @@ impl ResolvedIntake {
                     scope.role.clone(),
                 ));
             }
-            let explored = self.explored.explorations.iter().any(|item| {
-                item.repository == scope.repository && item.revision == scope.revision
-            });
+            let explored =
+                self.explored.explorations.iter().any(|item| {
+                    item.repository == scope.repository && item.revision == scope.revision
+                });
             if !explored {
                 return Err(AutopilotIntakeError::UnexploredRepositoryRevision {
                     repository: scope.repository.clone(),
@@ -788,7 +787,12 @@ impl FrozenAutopilotSpec {
         .set("context", Json::Str(self.context.clone()))
         .set(
             "decisions",
-            Json::Arr(self.decisions.iter().map(ResolvedQuestion::to_json).collect()),
+            Json::Arr(
+                self.decisions
+                    .iter()
+                    .map(ResolvedQuestion::to_json)
+                    .collect(),
+            ),
         )
         .set(
             "explorations",
@@ -968,8 +972,7 @@ fn validate_repository(repository: &str) -> Result<(), AutopilotIntakeError> {
 }
 
 fn validate_revision(revision: &str) -> Result<(), AutopilotIntakeError> {
-    if !matches!(revision.len(), 40 | 64)
-        || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if !matches!(revision.len(), 40 | 64) || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(AutopilotIntakeError::InvalidRevision(revision.to_string()));
     }
@@ -992,7 +995,9 @@ fn validate_relative_path(field: &'static str, value: &str) -> Result<(), Autopi
         || value.ends_with('/')
         || value.contains('\\')
         || value.contains('\0')
-        || value.split('/').any(|part| part.is_empty() || matches!(part, "." | ".."));
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."));
     if invalid {
         return Err(AutopilotIntakeError::InvalidPath {
             field,
@@ -1061,11 +1066,17 @@ mod tests {
             explorations,
         )
         .unwrap()
-        .questionnaire(vec![
-            IntakeQuestion::new("scope", "Should generated specs stay inside RSI?").unwrap(),
-        ])
+        .questionnaire(vec![IntakeQuestion::new(
+            "scope",
+            "Should generated specs stay inside RSI?",
+        )
+        .unwrap()])
         .unwrap()
-        .resolve(vec![QuestionAnswer::new("scope", "yes, RSI only for this slice").unwrap()])
+        .resolve(vec![QuestionAnswer::new(
+            "scope",
+            "yes, RSI only for this slice",
+        )
+        .unwrap()])
         .unwrap()
     }
 
@@ -1074,7 +1085,10 @@ mod tests {
             "rsi",
             "Memorithm/RSI",
             revision(rev),
-            vec!["src/autopilot_intake.rs".to_string(), "src/lib.rs".to_string()],
+            vec![
+                "src/autopilot_intake.rs".to_string(),
+                "src/lib.rs".to_string(),
+            ],
         )
         .unwrap();
         let criterion = AcceptanceCriterion::new(
@@ -1085,7 +1099,10 @@ mod tests {
         .unwrap();
         AutopilotSpecDraft::new(
             vec![criterion],
-            vec!["automatic merge".to_string(), "direct main writes".to_string()],
+            vec![
+                "automatic merge".to_string(),
+                "direct main writes".to_string(),
+            ],
             SpecBudget::new(32, 3_600_000, 200_000).unwrap(),
             vec![scope],
         )
@@ -1131,14 +1148,12 @@ mod tests {
     #[test]
     fn acceptance_criterion_cannot_reference_unlisted_repository_role() {
         let mut value = draft('a');
-        value.acceptance_criteria = vec![
-            AcceptanceCriterion::new(
-                "foreign",
-                "must not silently expand scope",
-                AcceptanceCheck::file_present("scirust", "Cargo.toml").unwrap(),
-            )
-            .unwrap(),
-        ];
+        value.acceptance_criteria = vec![AcceptanceCriterion::new(
+            "foreign",
+            "must not silently expand scope",
+            AcceptanceCheck::file_present("scirust", "Cargo.toml").unwrap(),
+        )
+        .unwrap()];
         let error = resolved(vec![exploration("Memorithm/RSI", 'a', "src/lib.rs")])
             .freeze(value)
             .unwrap_err();
@@ -1223,7 +1238,12 @@ mod tests {
     fn traversal_and_noncanonical_paths_are_rejected() {
         for path in ["../src/lib.rs", "/tmp/file", "src//lib.rs", "./src/lib.rs"] {
             assert!(matches!(
-                RepositoryScope::new("rsi", "Memorithm/RSI", revision('a'), vec![path.to_string()]),
+                RepositoryScope::new(
+                    "rsi",
+                    "Memorithm/RSI",
+                    revision('a'),
+                    vec![path.to_string()]
+                ),
                 Err(AutopilotIntakeError::InvalidPath { .. })
             ));
         }

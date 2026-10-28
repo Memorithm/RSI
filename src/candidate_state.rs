@@ -133,7 +133,9 @@ impl CandidateState {
     /// Materialize `patch_set` on top of this exact state, never on the live
     /// baseline. The parent remains untouched regardless of success or failure.
     pub fn child(&self, patch_set: &PatchSet) -> Result<Self, CandidateStateError> {
-        let patch_set_id = patch_set.identity().map_err(CandidateStateError::PatchSet)?;
+        let patch_set_id = patch_set
+            .identity()
+            .map_err(CandidateStateError::PatchSet)?;
         let snapshot = patch_set
             .materialize(self.root())
             .map_err(CandidateStateError::PatchSet)?;
@@ -201,7 +203,9 @@ pub enum CandidateStateError {
 impl fmt::Display for CandidateStateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPolicy(message) => write!(f, "invalid candidate storage policy: {message}"),
+            Self::InvalidPolicy(message) => {
+                write!(f, "invalid candidate storage policy: {message}")
+            }
             Self::StorageLimitExceeded {
                 kind,
                 actual,
@@ -376,10 +380,10 @@ mod tests {
     fn grandchild_materializes_all_accepted_ancestor_changes() {
         let source = fixture();
         let baseline = CandidateState::baseline(&source, policy()).unwrap();
-        let patch_a = PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")])
-            .unwrap();
-        let patch_b = PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")])
-            .unwrap();
+        let patch_a =
+            PatchSet::new(vec![FileOperation::modify_exact("src/a.rs", "a=0", "a=1")]).unwrap();
+        let patch_b =
+            PatchSet::new(vec![FileOperation::modify_exact("src/b.rs", "b=0", "b=1")]).unwrap();
 
         let after_a = baseline.child(&patch_a).unwrap();
         let after_a_b = after_a.child(&patch_b).unwrap();

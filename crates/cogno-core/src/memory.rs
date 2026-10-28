@@ -256,15 +256,19 @@ mod tests {
             positive: if aligned { unit(0, 4) } else { unit(1, 4) },
             // négatif : pour un échantillon mal classé, le négatif est le
             // contexte lui-même (similarité 1) → le positif (sim 0) est battu
-            negatives: if aligned { vec![unit(1, 4)] } else { vec![unit(0, 4)] },
+            negatives: if aligned {
+                vec![unit(1, 4)]
+            } else {
+                vec![unit(0, 4)]
+            },
             category: cat,
             conflicting_rule: conf,
             held_out: held,
         };
         let samples = vec![
-            mk(0, 0, false, true), // cat 0, aligné
+            mk(0, 0, false, true),  // cat 0, aligné
             mk(1, 0, false, false), // cat 1, mal classé
-            mk(2, 7, true, true), // cat 2, conflictuelle + held-out, aligné
+            mk(2, 7, true, true),   // cat 2, conflictuelle + held-out, aligné
         ];
         let (_j, m) = compute_memory_objective(&samples, 1.0, 1).unwrap();
         assert_eq!(m.recall_by_category.len(), 3);

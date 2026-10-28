@@ -61,7 +61,11 @@ impl PaddedBatch {
         for i in 0..self.rows.len() {
             let active = self.masks[i].iter().filter(|&&m| m == 1).count();
             let sum = if active == 0 { 0.0 } else { self.masked_sum(i) };
-            acc += if active == 0 { 0.0 } else { sum / active as f64 };
+            acc += if active == 0 {
+                0.0
+            } else {
+                sum / active as f64
+            };
         }
         acc / self.rows.len() as f64
     }
@@ -78,7 +82,11 @@ impl PaddedBatch {
                 active += m as usize;
             }
         }
-        if active == 0 { 0.0 } else { sum / active as f64 }
+        if active == 0 {
+            0.0
+        } else {
+            sum / active as f64
+        }
     }
 }
 
@@ -129,9 +137,13 @@ pub fn compare_seq_oracle_and_backend(
     // homogènes, micro ≠ macro doit être observable (sinon on ne testerait
     // rien face à une future régression qui confondrait les deux).
     let unequal = batch.sequences.len() > 1
-        && batch.sequences.iter().map(|s| s.len()).any(|l| l != batch.max_len);
-    let divergence_observed =
-        !unequal || (padded.micro_masked_mean() - padded.macro_mean_of_masked_means()).abs() > 1e-12;
+        && batch
+            .sequences
+            .iter()
+            .map(|s| s.len())
+            .any(|l| l != batch.max_len);
+    let divergence_observed = !unequal
+        || (padded.micro_masked_mean() - padded.macro_mean_of_masked_means()).abs() > 1e-12;
 
     Ok(SeqParityReport {
         batches_tested: 1,

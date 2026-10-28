@@ -21,7 +21,7 @@ pub struct RewardBreakdown {
     pub heldout: f64,
     pub regression_penalty: f64,
     pub complexity_penalty: f64,
-    pub uncertainty: f64, // U ∈ [0,1]
+    pub uncertainty: f64,        // U ∈ [0,1]
     pub uncertainty_weight: f64, // κ_u ≥ 0
     /// Somme finale (compensée, dans l'ordre des termes).
     pub total: f64,
@@ -60,10 +60,14 @@ impl RewardBreakdown {
             FiniteScalar::try_new(v).map_err(|_| crate::error::CognoError::NonFinite(name))?;
         }
         if !(0.0..=1.0).contains(&feedback_quality) {
-            return Err(crate::error::CognoError::InvalidInput("feedback_quality ∈ [0,1]"));
+            return Err(crate::error::CognoError::InvalidInput(
+                "feedback_quality ∈ [0,1]",
+            ));
         }
         if !(0.0..=1.0).contains(&uncertainty) {
-            return Err(crate::error::CognoError::InvalidInput("uncertainty ∈ [0,1]"));
+            return Err(crate::error::CognoError::InvalidInput(
+                "uncertainty ∈ [0,1]",
+            ));
         }
         if uncertainty_weight < 0.0 {
             return Err(crate::error::CognoError::InvalidInput("κ_u ≥ 0"));
@@ -134,15 +138,15 @@ mod tests {
     #[test]
     fn decomposition_is_exact_and_ordered() {
         let r = RewardBreakdown::compute(
-            1.0, // formal
-            0.5, // feedback
-            1.0, // q_e
+            1.0,  // formal
+            0.5,  // feedback
+            1.0,  // q_e
             0.25, // tests
             0.25, // heldout
-            0.1, // régression
+            0.1,  // régression
             0.05, // complexité
-            0.5, // U
-            0.2, // κ_u
+            0.5,  // U
+            0.2,  // κ_u
         )
         .unwrap();
         // total = 1.0 + 0.5 + 0.25 + 0.25 − 0.1 − 0.05 − 0.1 = 1.75
@@ -158,6 +162,8 @@ mod tests {
     fn rejects_invalid_domains() {
         assert!(RewardBreakdown::compute(1.0, 0.0, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).is_err());
         assert!(RewardBreakdown::compute(1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -0.1, 0.0).is_err());
-        assert!(RewardBreakdown::compute(f64::NAN, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).is_err());
+        assert!(
+            RewardBreakdown::compute(f64::NAN, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).is_err()
+        );
     }
 }

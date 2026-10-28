@@ -96,7 +96,12 @@ mod tests {
         };
         let j = compute_preference_objective(&[p], 1.0).unwrap();
         let expected = (4.0_f64 / 5.0).ln();
-        assert!((j.value() - expected).abs() < 1e-12, "j={} expected={}", j.value(), expected);
+        assert!(
+            (j.value() - expected).abs() < 1e-12,
+            "j={} expected={}",
+            j.value(),
+            expected
+        );
     }
 
     #[test]

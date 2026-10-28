@@ -424,8 +424,10 @@ impl<'a> ExprParser<'a> {
                             _ => Err("parenthèse fermante manquante après fonction".to_string()),
                         }
                     }
-                    _ => Err("une fonction nécessite une parenthèse : exp(x), ln(x), sin(x), cos(x)"
-                        .to_string()),
+                    _ => Err(
+                        "une fonction nécessite une parenthèse : exp(x), ln(x), sin(x), cos(x)"
+                            .to_string(),
+                    ),
                 }
             }
             Some(Tok::LParen) => {
@@ -632,7 +634,8 @@ pub fn symbolic_equal(a: &Expr, b: &Expr, samples: usize) -> bool {
         let deg = sa.size().max(sb.size()) + 1;
         for i in 0..=deg {
             let x = -2.0 + 4.0 * i as f64 / deg as f64;
-            if (sa.eval(x) - sb.eval(x)).abs() > 1e-6 * (1.0 + sa.eval(x).abs() + sb.eval(x).abs()) {
+            if (sa.eval(x) - sb.eval(x)).abs() > 1e-6 * (1.0 + sa.eval(x).abs() + sb.eval(x).abs())
+            {
                 return false;
             }
         }
@@ -743,9 +746,7 @@ fn structurally_eq(a: &Expr, b: &Expr) -> bool {
 fn is_polynomial(e: &Expr) -> bool {
     match e {
         Expr::X | Expr::Const(_) => true,
-        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
-            is_polynomial(a) && is_polynomial(b)
-        }
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => is_polynomial(a) && is_polynomial(b),
         Expr::Neg(a) => is_polynomial(a),
         Expr::Pow(a, _) => is_polynomial(a),
         Expr::Div(_, _) | Expr::Exp(_) | Expr::Ln(_) | Expr::Sin(_) | Expr::Cos(_) => false,
@@ -926,8 +927,10 @@ fn is_trivial_conjecture(a: &Expr, b: &Expr) -> bool {
     // un côté est `x` (ou une variable nue) et l'autre une forme `c·x` / `x/c`
     let is_bare_x = |e: &Expr| matches!(e, Expr::X);
     let is_scale_of_x = |e: &Expr| match e {
-        Expr::Mul(x, y) => (matches!(x.as_ref(), Expr::X) && matches!(y.as_ref(), Expr::Const(_)))
-            || (matches!(y.as_ref(), Expr::X) && matches!(x.as_ref(), Expr::Const(_))),
+        Expr::Mul(x, y) => {
+            (matches!(x.as_ref(), Expr::X) && matches!(y.as_ref(), Expr::Const(_)))
+                || (matches!(y.as_ref(), Expr::X) && matches!(x.as_ref(), Expr::Const(_)))
+        }
         Expr::Div(x, y) => matches!(x.as_ref(), Expr::X) && matches!(y.as_ref(), Expr::Const(_)),
         _ => false,
     };
@@ -1220,7 +1223,7 @@ mod tests {
         assert!((d.eval(10.0) - 5.0).abs() < 1e-12);
         let z = Expr::Div(Box::new(Expr::Const(1.0)), Box::new(Expr::Const(0.0)));
         assert!(z.eval(0.0).is_nan()); // division par zéro → NaN
-        // puissance
+                                       // puissance
         let p = Expr::Pow(Box::new(Expr::X), 3);
         assert!((p.eval(3.0) - 27.0).abs() < 1e-12);
         // exp / ln
@@ -1229,7 +1232,7 @@ mod tests {
         let l = Expr::Ln(Box::new(Expr::X));
         assert!((l.eval(std::f64::consts::E) - 1.0).abs() < 1e-12);
         assert!(l.eval(-1.0).is_nan()); // ln de négatif → NaN
-        // sin / cos
+                                        // sin / cos
         let s = Expr::Sin(Box::new(Expr::X));
         assert!((s.eval(0.0) - 0.0).abs() < 1e-12);
         let c = Expr::Cos(Box::new(Expr::X));
@@ -1267,8 +1270,7 @@ mod tests {
     #[test]
     fn extended_synthesis_still_improves() {
         // cible trigonométrique : la grammaire étendue doit la retrouver
-        let mut task =
-            SymbolicSynthesis::from_target(|x| x.sin(), -1.0, 1.0, 21, 5);
+        let mut task = SymbolicSynthesis::from_target(|x| x.sin(), -1.0, 1.0, 21, 5);
         let init = task.seed_candidate();
         let init_fit = task.score(&init);
         let guard = Guard::new()
@@ -1289,7 +1291,10 @@ mod tests {
         // (x+1)^2 = x^2 + 2x + 1  (polynomiale, exacte)
         let a = Expr::parse("(x + 1) ^ 2").unwrap();
         let b = Expr::parse("x * x + 2 * x + 1").unwrap();
-        assert!(symbolic_equal(&a, &b, 50), "identité polynomiale non détectée");
+        assert!(
+            symbolic_equal(&a, &b, 50),
+            "identité polynomiale non détectée"
+        );
 
         // x/x = 1 (réécriture)
         let c = Expr::parse("x / x").unwrap();
@@ -1327,7 +1332,10 @@ mod tests {
         let trig = found
             .iter()
             .find(|c| c.statement.contains("sin") && c.statement.contains("cos"));
-        assert!(trig.is_some(), "identité trigonométrique non découverte : {found:?}");
+        assert!(
+            trig.is_some(),
+            "identité trigonométrique non découverte : {found:?}"
+        );
         assert!(trig.unwrap().confidence >= 0.99);
     }
 

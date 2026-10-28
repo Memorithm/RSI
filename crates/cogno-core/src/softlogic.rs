@@ -106,10 +106,7 @@ impl SoftRule {
 /// `ε > 0` (constante de stabilité) ; par défaut `1e-6`. Contribution par
 /// règle : `w_j · log(ε + s_j)` — une règle totalement violée (`s=0`) donne
 /// `w·log ε` (fini, très négatif), jamais `−∞`.
-pub fn compute_symbolic_objective(
-    rules: &[SoftRule],
-    epsilon: f64,
-) -> CognoResult<FiniteScalar> {
+pub fn compute_symbolic_objective(rules: &[SoftRule], epsilon: f64) -> CognoResult<FiniteScalar> {
     if epsilon <= 0.0 || !epsilon.is_finite() {
         return Err(CognoError::InvalidInput("ε > 0"));
     }

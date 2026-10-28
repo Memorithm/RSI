@@ -15,7 +15,10 @@ use std::path::Path;
 
 /// Complete hard-gate evidence collection for one materialized candidate.
 pub trait EngineeringEvidenceCollector {
-    fn collect(&self, workspace: &Path) -> Result<EngineeringAdmissibility, EngineeringEvaluationError>;
+    fn collect(
+        &self,
+        workspace: &Path,
+    ) -> Result<EngineeringAdmissibility, EngineeringEvaluationError>;
 }
 
 /// Ranking measurement, deliberately separate from admissibility evidence.
@@ -65,7 +68,10 @@ where
         Self { collector, ranker }
     }
 
-    pub fn evaluate(&self, workspace: &Path) -> Result<EngineeringEvaluation, EngineeringEvaluationError> {
+    pub fn evaluate(
+        &self,
+        workspace: &Path,
+    ) -> Result<EngineeringEvaluation, EngineeringEvaluationError> {
         let admissibility = self.collector.collect(workspace)?;
         let verdict = admissibility.verdict();
         if !verdict.admissible {
@@ -107,7 +113,10 @@ where
         Self { evaluator }
     }
 
-    pub fn collect(&self, workspace: &Path) -> Result<CargoGateEvidence, EngineeringEvaluationError> {
+    pub fn collect(
+        &self,
+        workspace: &Path,
+    ) -> Result<CargoGateEvidence, EngineeringEvaluationError> {
         let fitness = self
             .evaluator
             .evaluate(workspace)
@@ -180,7 +189,9 @@ pub enum EngineeringEvaluationError {
 impl fmt::Display for EngineeringEvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Evidence(message) => write!(f, "engineering evidence collection failed: {message}"),
+            Self::Evidence(message) => {
+                write!(f, "engineering evidence collection failed: {message}")
+            }
             Self::Ranking(message) => write!(f, "engineering ranking failed: {message}"),
             Self::InvalidRankingScore => write!(f, "engineering ranking score must be finite"),
         }

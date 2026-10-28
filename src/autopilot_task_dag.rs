@@ -6,9 +6,7 @@
 //! PERF tasks carry an explicit benchmark-profile identifier; FEATURE tasks do
 //! not gain benchmark semantics until P8.3/P8.4 define their execution regimes.
 
-use crate::autopilot_intake::{
-    AcceptanceCheck, FrozenAutopilotSpec, RepositoryScope, SpecBudget,
-};
+use crate::autopilot_intake::{AcceptanceCheck, FrozenAutopilotSpec, RepositoryScope, SpecBudget};
 use crate::json::Json;
 use crate::sha256::sha256;
 use std::collections::{BTreeMap, BTreeSet};
@@ -135,9 +133,7 @@ impl TaskRegime {
         Self::Feature
     }
 
-    pub fn perf(
-        benchmark_profile_id: impl Into<String>,
-    ) -> Result<Self, AutopilotTaskDagError> {
+    pub fn perf(benchmark_profile_id: impl Into<String>) -> Result<Self, AutopilotTaskDagError> {
         let benchmark_profile_id = benchmark_profile_id.into();
         validate_identifier("benchmark_profile_id", &benchmark_profile_id)?;
         Ok(Self::Perf {
@@ -215,12 +211,7 @@ impl HardGateProfile {
     }
 
     fn to_json(&self) -> Json {
-        Json::Arr(
-            self.required_gates()
-                .into_iter()
-                .map(Json::Str)
-                .collect(),
-        )
+        Json::Arr(self.required_gates().into_iter().map(Json::Str).collect())
     }
 }
 
@@ -425,7 +416,10 @@ impl AutopilotTask {
                 Json::Arr(self.dependencies.iter().cloned().map(Json::Str).collect()),
             )
             .set("description", Json::Str(self.description.clone()))
-            .set("done_criterion_id", Json::Str(self.done_criterion_id.clone()))
+            .set(
+                "done_criterion_id",
+                Json::Str(self.done_criterion_id.clone()),
+            )
             .set(
                 "edit_allowances",
                 Json::Arr(
@@ -526,11 +520,8 @@ impl AutopilotTaskDag {
                 total_candidate_evaluations,
                 task.budget.max_candidate_evaluations,
             )?;
-            total_llm_steps = checked_budget_add(
-                "llm_steps",
-                total_llm_steps,
-                task.budget.max_llm_steps,
-            )?;
+            total_llm_steps =
+                checked_budget_add("llm_steps", total_llm_steps, task.budget.max_llm_steps)?;
             total_wall_time_ms = checked_budget_add(
                 "wall_time_ms",
                 total_wall_time_ms,
@@ -540,10 +531,12 @@ impl AutopilotTaskDag {
         }
 
         if total_candidate_evaluations > policy.max_total_candidate_evaluations {
-            return Err(AutopilotTaskDagError::TotalCandidateEvaluationLimitExceeded {
-                actual: total_candidate_evaluations,
-                maximum: policy.max_total_candidate_evaluations,
-            });
+            return Err(
+                AutopilotTaskDagError::TotalCandidateEvaluationLimitExceeded {
+                    actual: total_candidate_evaluations,
+                    maximum: policy.max_total_candidate_evaluations,
+                },
+            );
         }
         validate_objective_budget(
             spec.budget(),
@@ -832,12 +825,13 @@ fn validate_task_scope(
                 repository_role: role.to_string(),
             });
         }
-        let frozen = spec_scope
-            .get(role)
-            .ok_or_else(|| AutopilotTaskDagError::UnknownRepositoryRole {
-                task_id: task.id.clone(),
-                repository_role: role.to_string(),
-            })?;
+        let frozen =
+            spec_scope
+                .get(role)
+                .ok_or_else(|| AutopilotTaskDagError::UnknownRepositoryRole {
+                    task_id: task.id.clone(),
+                    repository_role: role.to_string(),
+                })?;
         for path in allowance.allowed_path_prefixes() {
             if !frozen
                 .allowed_path_prefixes
@@ -853,12 +847,12 @@ fn validate_task_scope(
         }
     }
 
-    let criterion = criteria.get(task.done_criterion_id.as_str()).ok_or_else(|| {
-        AutopilotTaskDagError::UnknownDoneCriterion {
+    let criterion = criteria
+        .get(task.done_criterion_id.as_str())
+        .ok_or_else(|| AutopilotTaskDagError::UnknownDoneCriterion {
             task_id: task.id.clone(),
             criterion_id: task.done_criterion_id.clone(),
-        }
-    })?;
+        })?;
     let criterion_role = acceptance_repository_role(&criterion.check);
     if !task_roles.contains(criterion_role) {
         return Err(AutopilotTaskDagError::DoneCriterionOutsideTaskSubset {
@@ -1049,31 +1043,24 @@ mod tests {
             RepositoryExploration::new(
                 "Memorithm/RSI",
                 revision('a'),
-                vec![
-                    ExplorationObservation::new(
-                        "code",
-                        ExplorationSource::repository_file("src/lib.rs", digest('b')).unwrap(),
-                        "inspected RSI public module boundary",
-                    )
-                    .unwrap(),
-                ],
+                vec![ExplorationObservation::new(
+                    "code",
+                    ExplorationSource::repository_file("src/lib.rs", digest('b')).unwrap(),
+                    "inspected RSI public module boundary",
+                )
+                .unwrap()],
             )
             .unwrap(),
             RepositoryExploration::new(
                 "Memorithm/scirust",
                 revision('c'),
-                vec![
-                    ExplorationObservation::new(
-                        "code",
-                        ExplorationSource::repository_file(
-                            "scirust-sciagent/src/lib.rs",
-                            digest('d'),
-                        )
+                vec![ExplorationObservation::new(
+                    "code",
+                    ExplorationSource::repository_file("scirust-sciagent/src/lib.rs", digest('d'))
                         .unwrap(),
-                        "inspected SciAgent integration boundary",
-                    )
-                    .unwrap(),
-                ],
+                    "inspected SciAgent integration boundary",
+                )
+                .unwrap()],
             )
             .unwrap(),
         ];
@@ -1195,32 +1182,14 @@ mod tests {
     #[test]
     fn dag_rejects_unknown_dependencies_and_cycles() {
         let spec = frozen_spec();
-        let unknown = task(
-            "a",
-            vec!["missing".to_string()],
-            "rsi",
-            "src",
-            "rsi-tests",
-        );
+        let unknown = task("a", vec!["missing".to_string()], "rsi", "src", "rsi-tests");
         assert!(matches!(
             AutopilotTaskDag::new(&spec, vec![unknown], policy()),
             Err(AutopilotTaskDagError::UnknownDependency { .. })
         ));
 
-        let first = task(
-            "a",
-            vec!["b".to_string()],
-            "rsi",
-            "src",
-            "rsi-tests",
-        );
-        let second = task(
-            "b",
-            vec!["a".to_string()],
-            "rsi",
-            "tests",
-            "rsi-tests",
-        );
+        let first = task("a", vec!["b".to_string()], "rsi", "src", "rsi-tests");
+        let second = task("b", vec!["a".to_string()], "rsi", "tests", "rsi-tests");
         assert!(matches!(
             AutopilotTaskDag::new(&spec, vec![first, second], policy()),
             Err(AutopilotTaskDagError::CycleDetected(_))
@@ -1231,13 +1200,7 @@ mod tests {
     fn aggregate_task_budget_cannot_exceed_frozen_objective_budget() {
         let spec = frozen_spec();
         let mut first = task("a", Vec::new(), "rsi", "src", "rsi-tests");
-        let mut second = task(
-            "b",
-            vec!["a".to_string()],
-            "rsi",
-            "tests",
-            "rsi-tests",
-        );
+        let mut second = task("b", vec!["a".to_string()], "rsi", "tests", "rsi-tests");
         first.budget.max_tokens = 15_000;
         second.budget.max_tokens = 15_000;
         assert!(matches!(
@@ -1253,7 +1216,13 @@ mod tests {
     fn topological_order_and_hash_are_deterministic() {
         let spec = frozen_spec();
         let a = task("a", Vec::new(), "rsi", "src", "rsi-tests");
-        let b = task("b", Vec::new(), "scirust", "scirust-sciagent", "sciagent-check");
+        let b = task(
+            "b",
+            Vec::new(),
+            "scirust",
+            "scirust-sciagent",
+            "sciagent-check",
+        );
         let c = task(
             "c",
             vec!["a".to_string(), "b".to_string()],
@@ -1261,12 +1230,8 @@ mod tests {
             "tests",
             "rsi-tests",
         );
-        let first = AutopilotTaskDag::new(
-            &spec,
-            vec![c.clone(), b.clone(), a.clone()],
-            policy(),
-        )
-        .unwrap();
+        let first =
+            AutopilotTaskDag::new(&spec, vec![c.clone(), b.clone(), a.clone()], policy()).unwrap();
         let second = AutopilotTaskDag::new(&spec, vec![a, c, b], policy()).unwrap();
         assert_eq!(first.topological_order(), &["a", "b", "c"]);
         assert_eq!(first.dag_sha256(), second.dag_sha256());

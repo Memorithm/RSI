@@ -75,10 +75,7 @@ impl EvaluationPlanPolicy {
         max_arguments: usize,
         max_argument_bytes: usize,
     ) -> Result<Self, EvaluationPipelineError> {
-        if max_steps == 0
-            || max_timeout_ms == 0
-            || max_output_limit == 0
-            || max_argument_bytes == 0
+        if max_steps == 0 || max_timeout_ms == 0 || max_output_limit == 0 || max_argument_bytes == 0
         {
             return Err(EvaluationPipelineError::InvalidPlan(
                 "step, timeout, output and argument-byte limits must be positive".into(),
@@ -113,7 +110,8 @@ impl EvaluationPlan {
         if steps.len() > policy.max_steps {
             return Err(EvaluationPipelineError::InvalidPlan(format!(
                 "step limit exceeded: {} > {}",
-                steps.len(), policy.max_steps
+                steps.len(),
+                policy.max_steps
             )));
         }
         for (index, step) in steps.iter().enumerate() {
@@ -230,9 +228,12 @@ impl BoundedEvidencePipeline {
     ) -> Result<EvaluationEvidence, EvaluationPipelineError> {
         let mut evidence = Vec::with_capacity(plan.steps.len());
         for step in &plan.steps {
-            let repository_root = workspace
-                .root_for_role(&step.repository_role)
-                .ok_or_else(|| EvaluationPipelineError::UnknownRole(step.repository_role.clone()))?;
+            let repository_root =
+                workspace
+                    .root_for_role(&step.repository_role)
+                    .ok_or_else(|| {
+                        EvaluationPipelineError::UnknownRole(step.repository_role.clone())
+                    })?;
             let resolved = host
                 .resolve(
                     &step.command_kind,
@@ -255,7 +256,10 @@ impl BoundedEvidencePipeline {
 pub enum EvaluationPipelineError {
     InvalidPlan(String),
     UnknownRole(String),
-    HostPolicy { command_kind: String, message: String },
+    HostPolicy {
+        command_kind: String,
+        message: String,
+    },
     InvalidResolvedCommand(String),
     Spawn(String),
     Wait(String),
@@ -281,7 +285,10 @@ impl fmt::Display for EvaluationPipelineError {
             Self::Wait(message) => write!(f, "evaluation process wait failed: {message}"),
             Self::CaptureThreadPanic => write!(f, "evaluation output capture thread panicked"),
             Self::CaptureThreadHung => {
-                write!(f, "evaluation output capture did not terminate within grace period")
+                write!(
+                    f,
+                    "evaluation output capture did not terminate within grace period"
+                )
             }
         }
     }
@@ -449,10 +456,7 @@ fn exit_code(status: ExitStatus) -> Option<i32> {
     status.code()
 }
 
-fn checked_text(
-    field: &'static str,
-    value: String,
-) -> Result<String, EvaluationPipelineError> {
+fn checked_text(field: &'static str, value: String) -> Result<String, EvaluationPipelineError> {
     if value.is_empty() || value.trim() != value || value.chars().any(char::is_control) {
         return Err(EvaluationPipelineError::InvalidPlan(format!(
             "invalid {field}"
@@ -482,15 +486,9 @@ mod tests {
         .unwrap();
         assert!(EvaluationPlan::new(vec![too_slow], policy()).is_err());
 
-        let too_large = EvaluationStep::new(
-            "rsi",
-            "test",
-            vec![],
-            100,
-            129,
-            EvidenceKind::RequiredTests,
-        )
-        .unwrap();
+        let too_large =
+            EvaluationStep::new("rsi", "test", vec![], 100, 129, EvidenceKind::RequiredTests)
+                .unwrap();
         assert!(EvaluationPlan::new(vec![too_large], policy()).is_err());
 
         let too_many_args = EvaluationStep::new(
@@ -519,9 +517,7 @@ mod tests {
         use super::*;
         use crate::candidate_state::CandidateStoragePolicy;
         use crate::compatibility::{CompatibilitySet, RepositoryRevision};
-        use crate::cross_repo_workspace::{
-            CrossRepoWorkspacePolicy, LocalRepositorySource,
-        };
+        use crate::cross_repo_workspace::{CrossRepoWorkspacePolicy, LocalRepositorySource};
         use std::sync::atomic::{AtomicU64, Ordering};
 
         static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -542,13 +538,19 @@ mod tests {
                 match command_kind {
                     "emit" => Ok(ResolvedCommand::new(
                         "sh",
-                        vec!["-c".into(), "printf 1234567890; printf abcdefghij >&2".into()],
+                        vec![
+                            "-c".into(),
+                            "printf 1234567890; printf abcdefghij >&2".into(),
+                        ],
                     )),
                     "sleep" => Ok(ResolvedCommand::new(
                         "sh",
                         vec!["-c".into(), "sleep 1".into()],
                     )),
-                    "pass" => Ok(ResolvedCommand::new("sh", vec!["-c".into(), "exit 0".into()])),
+                    "pass" => Ok(ResolvedCommand::new(
+                        "sh",
+                        vec!["-c".into(), "exit 0".into()],
+                    )),
                     _ => Err("unknown host command kind".into()),
                 }
             }
@@ -610,15 +612,10 @@ mod tests {
         fn host_defined_command_runs_without_candidate_shell_control() {
             let (workspace, root) = workspace();
             let plan = EvaluationPlan::new(
-                vec![EvaluationStep::new(
-                    "rsi",
-                    "pass",
-                    vec![],
-                    500,
-                    64,
-                    EvidenceKind::Build,
-                )
-                .unwrap()],
+                vec![
+                    EvaluationStep::new("rsi", "pass", vec![], 500, 64, EvidenceKind::Build)
+                        .unwrap(),
+                ],
                 policy(),
             )
             .unwrap();
@@ -673,7 +670,10 @@ mod tests {
             )
             .unwrap();
             let evidence = BoundedEvidencePipeline::run(&workspace, &plan, &Host).unwrap();
-            assert_eq!(evidence.steps[0].stdout.len() + evidence.steps[0].stderr.len(), 12);
+            assert_eq!(
+                evidence.steps[0].stdout.len() + evidence.steps[0].stderr.len(),
+                12
+            );
             assert!(evidence.steps[0].output_truncated);
             assert!(evidence.steps[1].timed_out);
             assert!(!evidence.steps[1].success);

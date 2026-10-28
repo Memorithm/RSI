@@ -34,26 +34,31 @@ pub mod memory;
 pub mod numeric;
 pub mod objective;
 pub mod pref;
-pub mod reward;
 pub mod resource;
+pub mod reward;
 pub mod seq;
 pub mod softlogic;
 
 pub use admissible::{AdmissibilityGate, AdmissibilityVerdict, HardValidator, ProvenanceValidator};
 pub use budget::{NormalizedCosts, ResourceBudget, ResourceWeights};
-pub use calib::{CalibrationMetrics, CalibrationPoint, compute_brier_calibration};
-pub use determinism::{DeterminismRecord, ExecutionMode, fingerprint};
+pub use calib::{compute_brier_calibration, CalibrationMetrics, CalibrationPoint};
+pub use determinism::{fingerprint, DeterminismRecord, ExecutionMode};
 pub use engineering::{
     CheckStatus, EngineeringAdmissibility, EngineeringAdmissibilityVerdict, EngineeringCheck,
     EngineeringGateKind, EngineeringPolicyCheck,
 };
-pub use error::{CognoError, CognoResult, checked_add, checked_mul};
-pub use kv_cache::{BoundedKvCache, FixedKvCache, KvCacheConfig, KvCacheError, TensorView, TensorViewMut};
-pub use memory::{MemoryMetrics, MemorySample, compute_memory_objective, cosine_similarity};
+pub use error::{checked_add, checked_mul, CognoError, CognoResult};
+pub use kv_cache::{
+    BoundedKvCache, FixedKvCache, KvCacheConfig, KvCacheError, TensorView, TensorViewMut,
+};
+pub use memory::{compute_memory_objective, cosine_similarity, MemoryMetrics, MemorySample};
 pub use numeric::{CompensatedSum, FiniteScalar, NonNegativeFinite};
-pub use objective::{CognoObjectiveBreakdown, CognoObjectiveInput, CognoWeights, compute_cogno_objective, compute_cogno01_loss};
-pub use pref::{PreferencePair, compute_preference_objective, sigmoid_stable};
-pub use reward::{RewardBreakdown, compute_reward_breakdown};
-pub use resource::{ResourceCosts, compute_resource_loss_batch};
+pub use objective::{
+    compute_cogno01_loss, compute_cogno_objective, CognoObjectiveBreakdown, CognoObjectiveInput,
+    CognoWeights,
+};
+pub use pref::{compute_preference_objective, sigmoid_stable, PreferencePair};
+pub use resource::{compute_resource_loss_batch, ResourceCosts};
+pub use reward::{compute_reward_breakdown, RewardBreakdown};
 pub use seq::{Mask, Sequence, SequenceBatch};
-pub use softlogic::{SoftLogic, SoftRule, compute_symbolic_objective};
+pub use softlogic::{compute_symbolic_objective, SoftLogic, SoftRule};

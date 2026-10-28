@@ -41,10 +41,7 @@ impl PerfBenchmarkApproval {
     fn to_json(&self) -> Json {
         let mut out = Json::obj();
         out.set("authority", Json::Str(self.authority.clone()))
-            .set(
-                "evidence_sha256",
-                Json::Str(self.evidence_sha256.clone()),
-            );
+            .set("evidence_sha256", Json::Str(self.evidence_sha256.clone()));
         out
     }
 }
@@ -80,14 +77,8 @@ impl BenchmarkEnvironment {
 
     fn to_json(&self) -> Json {
         let mut out = Json::obj();
-        out.set(
-            "hardware_sha256",
-            Json::Str(self.hardware_sha256.clone()),
-        )
-        .set(
-            "software_sha256",
-            Json::Str(self.software_sha256.clone()),
-        );
+        out.set("hardware_sha256", Json::Str(self.hardware_sha256.clone()))
+            .set("software_sha256", Json::Str(self.software_sha256.clone()));
         out
     }
 }
@@ -725,10 +716,22 @@ impl PerfComparisonReport {
 #[derive(Debug)]
 pub enum PerfRegimeError {
     EmptyField(&'static str),
-    InvalidText { field: &'static str, value: String },
-    InvalidIdentifier { field: &'static str, value: String },
-    InvalidDigest { field: &'static str, value: String },
-    InvalidPath { field: &'static str, value: String },
+    InvalidText {
+        field: &'static str,
+        value: String,
+    },
+    InvalidIdentifier {
+        field: &'static str,
+        value: String,
+    },
+    InvalidDigest {
+        field: &'static str,
+        value: String,
+    },
+    InvalidPath {
+        field: &'static str,
+        value: String,
+    },
     InvalidArgument(String),
     InvalidSpec(String),
     InvalidDag(String),
@@ -738,31 +741,58 @@ pub enum PerfRegimeError {
     InsufficientRepetition,
     InvalidAntiNoisePolicy,
     SampleBudgetOverflow,
-    SampleBudgetExceeded { actual: usize, maximum: usize },
+    SampleBudgetExceeded {
+        actual: usize,
+        maximum: usize,
+    },
     DuplicateBenchmarkCase(String),
     NoEndToEndPromotionGate,
-    BenchmarkCaseOutsideTaskRepositories { case_id: String, repository_role: String },
-    DuplicateBenchmarkArtifact { repository_role: String, path: String },
-    BenchmarkArtifactOutsideTaskRepositories { repository_role: String, path: String },
-    BenchmarkArtifactOutsideFrozenSpec { repository_role: String, path: String },
+    BenchmarkCaseOutsideTaskRepositories {
+        case_id: String,
+        repository_role: String,
+    },
+    DuplicateBenchmarkArtifact {
+        repository_role: String,
+        path: String,
+    },
+    BenchmarkArtifactOutsideTaskRepositories {
+        repository_role: String,
+        path: String,
+    },
+    BenchmarkArtifactOutsideFrozenSpec {
+        repository_role: String,
+        path: String,
+    },
     TaskAllowanceTouchesFrozenBenchmark {
         repository_role: String,
         frozen_path: String,
         allowed_prefix: String,
     },
-    FrozenProfileHashMismatch { expected: String, actual: String },
+    FrozenProfileHashMismatch {
+        expected: String,
+        actual: String,
+    },
     ProfileContextMismatch,
     PatchSet(PatchSetError),
     RepositoryOutsidePerfTask(String),
     RepositoryIsReadOnly(String),
-    CandidateTouchesFrozenBenchmark { repository_role: String, path: String },
+    CandidateTouchesFrozenBenchmark {
+        repository_role: String,
+        path: String,
+    },
     CandidateOperationOutsideAllowance {
         repository_role: String,
         path: String,
         operation: TaskOperation,
     },
-    InvalidSamples { case_id: String, batch_id: String },
-    DuplicateMeasurementBatch { case_id: String, batch_id: String },
+    InvalidSamples {
+        case_id: String,
+        batch_id: String,
+    },
+    DuplicateMeasurementBatch {
+        case_id: String,
+        batch_id: String,
+    },
     BatchCountMismatch {
         case_id: String,
         expected: usize,
@@ -770,7 +800,10 @@ pub enum PerfRegimeError {
         candidate: usize,
     },
     UnpairedBatches(String),
-    WrongEnvironment { case_id: String, batch_id: String },
+    WrongEnvironment {
+        case_id: String,
+        batch_id: String,
+    },
     SampleCountMismatch {
         case_id: String,
         batch_id: String,
@@ -803,7 +836,10 @@ fn verify_spec_and_dag(
     Ok(())
 }
 
-fn validate_sample_budget(case_count: usize, policy: AntiNoisePolicy) -> Result<(), PerfRegimeError> {
+fn validate_sample_budget(
+    case_count: usize,
+    policy: AntiNoisePolicy,
+) -> Result<(), PerfRegimeError> {
     let total = case_count
         .checked_mul(policy.batches)
         .and_then(|value| value.checked_mul(policy.samples_per_batch))
@@ -905,7 +941,10 @@ fn relative_mad_ppm(samples: &[f64]) -> Result<u64, PerfRegimeError> {
     if !center.is_finite() || center <= 0.0 {
         return Err(PerfRegimeError::InvalidNoiseStatistic);
     }
-    let deviations: Vec<_> = samples.iter().map(|sample| (sample - center).abs()).collect();
+    let deviations: Vec<_> = samples
+        .iter()
+        .map(|sample| (sample - center).abs())
+        .collect();
     let ppm = median(&deviations) / center * 1_000_000.0;
     if !ppm.is_finite() || ppm < 0.0 || ppm > u64::MAX as f64 {
         return Err(PerfRegimeError::InvalidNoiseStatistic);
@@ -1001,9 +1040,9 @@ fn validate_arguments(arguments: &[String]) -> Result<(), PerfRegimeError> {
         if argument.contains('\0') || argument.chars().any(char::is_control) {
             return Err(PerfRegimeError::InvalidArgument(argument.clone()));
         }
-        bytes = bytes
-            .checked_add(argument.len())
-            .ok_or_else(|| PerfRegimeError::InvalidArgument("argument-byte overflow".to_string()))?;
+        bytes = bytes.checked_add(argument.len()).ok_or_else(|| {
+            PerfRegimeError::InvalidArgument("argument-byte overflow".to_string())
+        })?;
     }
     if bytes > 4096 {
         return Err(PerfRegimeError::InvalidArgument(
@@ -1047,14 +1086,12 @@ mod tests {
         let exploration = RepositoryExploration::new(
             "Memorithm/RSI",
             revision('a'),
-            vec![
-                ExplorationObservation::new(
-                    "benchmark",
-                    ExplorationSource::repository_file("benches/perf.rs", digest('b')).unwrap(),
-                    "inspected the end-to-end benchmark harness",
-                )
-                .unwrap(),
-            ],
+            vec![ExplorationObservation::new(
+                "benchmark",
+                ExplorationSource::repository_file("benches/perf.rs", digest('b')).unwrap(),
+                "inspected the end-to-end benchmark harness",
+            )
+            .unwrap()],
         )
         .unwrap();
         ExploredObjective::new(
@@ -1068,25 +1105,21 @@ mod tests {
         .resolve(Vec::new())
         .unwrap()
         .freeze(AutopilotSpecDraft::new(
-            vec![
-                AcceptanceCriterion::new(
-                    "perf-gates",
-                    "all hard gates pass before performance ranking",
-                    AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
-                )
-                .unwrap(),
-            ],
+            vec![AcceptanceCriterion::new(
+                "perf-gates",
+                "all hard gates pass before performance ranking",
+                AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
+            )
+            .unwrap()],
             vec!["editing the benchmark during candidate search".to_string()],
             SpecBudget::new(20, 20_000, 20_000).unwrap(),
-            vec![
-                RepositoryScope::new(
-                    "rsi",
-                    "Memorithm/RSI",
-                    revision('a'),
-                    vec!["benches".to_string(), "src".to_string()],
-                )
-                .unwrap(),
-            ],
+            vec![RepositoryScope::new(
+                "rsi",
+                "Memorithm/RSI",
+                revision('a'),
+                vec!["benches".to_string(), "src".to_string()],
+            )
+            .unwrap()],
         ))
         .unwrap()
     }
@@ -1097,14 +1130,12 @@ mod tests {
             description: "optimize end-to-end latency".to_string(),
             regime: TaskRegime::perf("decode-v1").unwrap(),
             repository_roles: vec!["rsi".to_string()],
-            edit_allowances: vec![
-                TaskEditAllowance::new(
-                    "rsi",
-                    vec![edit_prefix.to_string()],
-                    vec![TaskOperation::ModifyExact, TaskOperation::Create],
-                )
-                .unwrap(),
-            ],
+            edit_allowances: vec![TaskEditAllowance::new(
+                "rsi",
+                vec![edit_prefix.to_string()],
+                vec![TaskOperation::ModifyExact, TaskOperation::Create],
+            )
+            .unwrap()],
             hard_gate_profile: HardGateProfile::engineering_strict(),
             budget: TaskBudget::new(4, 10, 10_000, 10_000).unwrap(),
             dependencies: Vec::new(),
@@ -1174,9 +1205,12 @@ mod tests {
                         false,
                     ),
                 ],
-                artifacts: vec![
-                    FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('f')).unwrap(),
-                ],
+                artifacts: vec![FrozenBenchmarkArtifact::new(
+                    "rsi",
+                    "benches/perf.rs",
+                    digest('f'),
+                )
+                .unwrap()],
             },
         )
     }
@@ -1250,13 +1284,8 @@ mod tests {
     fn robust_end_to_end_gain_is_promotable() {
         let profile = profile();
         let (baseline, candidate) = paired_evidence(&profile);
-        let report = PerfComparisonReport::evaluate(
-            &profile,
-            &admissible(),
-            &baseline,
-            &candidate,
-        )
-        .unwrap();
+        let report =
+            PerfComparisonReport::evaluate(&profile, &admissible(), &baseline, &candidate).unwrap();
         assert!(report.hard_gates_passed);
         assert!(report.promotable);
         assert!(report.cases.iter().all(|case| case.passed));
@@ -1268,7 +1297,8 @@ mod tests {
         let (baseline, candidate) = paired_evidence(&profile);
         let mut gates = admissible();
         gates.numerical_parity = GateStatus::Fail;
-        let report = PerfComparisonReport::evaluate(&profile, &gates, &baseline, &candidate).unwrap();
+        let report =
+            PerfComparisonReport::evaluate(&profile, &gates, &baseline, &candidate).unwrap();
         assert!(!report.hard_gates_passed);
         assert!(!report.promotable);
         assert!(report.cases.is_empty());
@@ -1284,13 +1314,8 @@ mod tests {
         {
             batch.samples = vec![70.0, 110.0, 75.0, 108.0, 90.0];
         }
-        let report = PerfComparisonReport::evaluate(
-            &profile,
-            &admissible(),
-            &baseline,
-            &candidate,
-        )
-        .unwrap();
+        let report =
+            PerfComparisonReport::evaluate(&profile, &admissible(), &baseline, &candidate).unwrap();
         assert!(!report.promotable);
     }
 
@@ -1304,20 +1329,17 @@ mod tests {
         {
             batch.samples = vec![105.0, 105.2, 104.8, 105.1, 104.9];
         }
-        let report = PerfComparisonReport::evaluate(
-            &profile,
-            &admissible(),
-            &baseline,
-            &candidate,
-        )
-        .unwrap();
+        let report =
+            PerfComparisonReport::evaluate(&profile, &admissible(), &baseline, &candidate).unwrap();
         assert!(!report.promotable);
-        assert!(report
-            .cases
-            .iter()
-            .find(|case| case.case_id == "micro-helper")
-            .unwrap()
-            .passed);
+        assert!(
+            report
+                .cases
+                .iter()
+                .find(|case| case.case_id == "micro-helper")
+                .unwrap()
+                .passed
+        );
     }
 
     #[test]

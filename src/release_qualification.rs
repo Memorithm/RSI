@@ -13,7 +13,7 @@ use crate::cross_repo_workspace::{
 use crate::cumulative_archive::CumulativeArchive;
 use crate::dgm::{ClosureEvaluator, Fitness};
 use crate::engineering_evaluator::{
-    CognoEngineeringEvaluator, EngineeringEvidenceCollector, EngineeringEvaluationError,
+    CognoEngineeringEvaluator, EngineeringEvaluationError, EngineeringEvidenceCollector,
     EngineeringRanker, RankingEvidence,
 };
 use crate::engineering_trajectory::{
@@ -27,13 +27,13 @@ use crate::evaluation_pipeline::{
 use crate::flat_attention_evaluator::FlatAttentionEvaluator;
 use crate::json::Json;
 use crate::patchset::{FileOperation, PatchSet};
-use crate::release_compatibility::{ReleaseCompatibilityLock, current_release_compatibility_lock};
+use crate::release_compatibility::{current_release_compatibility_lock, ReleaseCompatibilityLock};
 use cogno_core::{EngineeringAdmissibility, EngineeringCheck};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub const RELEASE_QUALIFICATION_SCHEMA_VERSION: u64 = 1;
 static QUALIFICATION_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -122,8 +122,14 @@ impl ReleaseQualificationArtifacts {
 
     pub fn write_to(&self, root: &Path) -> Result<(), ReleaseQualificationError> {
         std::fs::create_dir_all(root)?;
-        std::fs::write(root.join("qualification-report.json"), self.report.to_json_string())?;
-        std::fs::write(root.join("engineering-trajectory.json"), self.trajectory_json()?)?;
+        std::fs::write(
+            root.join("qualification-report.json"),
+            self.report.to_json_string(),
+        )?;
+        std::fs::write(
+            root.join("engineering-trajectory.json"),
+            self.trajectory_json()?,
+        )?;
         Ok(())
     }
 }
@@ -227,11 +233,7 @@ fn prove_cumulative_lineage(
     }
 
     let phase_b = PatchSet::new(vec![
-        FileOperation::modify_exact(
-            "state.txt",
-            "base\nphase-a\n",
-            "base\nphase-a\nphase-b\n",
-        ),
+        FileOperation::modify_exact("state.txt", "base\nphase-a\n", "base\nphase-a\nphase-b\n"),
         FileOperation::create("b.txt", "descendant\n"),
     ])
     .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?;
@@ -251,7 +253,9 @@ fn prove_cumulative_lineage(
     }
     let root = archive
         .materialized_root(&outcome_b.state_id)
-        .ok_or_else(|| ReleaseQualificationError::Contract("missing cumulative child".to_string()))?;
+        .ok_or_else(|| {
+            ReleaseQualificationError::Contract("missing cumulative child".to_string())
+        })?;
     let state = std::fs::read_to_string(root.join("state.txt"))?;
     let inherited = state == "base\nphase-a\nphase-b\n"
         && root.join("a.txt").is_file()
@@ -327,25 +331,16 @@ impl EvaluationCommandHost for QualificationHost {
         let arguments = match command_kind {
             "build" => vec!["check", "--quiet", "--offline"],
             "tests" => vec!["test", "--quiet", "--offline", "--all-targets"],
-            "parity" => vec![
-                "test",
-                "--quiet",
+            "parity" => vec!["test", "--quiet", "--offline", "numerical_parity_contract"],
+            "provenance" => vec![
+                "metadata",
+                "--no-deps",
+                "--format-version",
+                "1",
                 "--offline",
-                "numerical_parity_contract",
             ],
-            "provenance" => vec!["metadata", "--no-deps", "--format-version", "1", "--offline"],
-            "determinism" => vec![
-                "test",
-                "--quiet",
-                "--offline",
-                "determinism_contract",
-            ],
-            "resources" => vec![
-                "test",
-                "--quiet",
-                "--offline",
-                "resource_budget_contract",
-            ],
+            "determinism" => vec!["test", "--quiet", "--offline", "determinism_contract"],
+            "resources" => vec!["test", "--quiet", "--offline", "resource_budget_contract"],
             "policy" => vec!["test", "--quiet", "--offline", "policy_contract"],
             "paired-e2e" => vec!["test", "--quiet", "--offline", "benchmark_contract"],
             other => return Err(format!("unknown P9 fixture command kind: {other}")),
@@ -480,16 +475,14 @@ fn build_trajectory(
             resource_budget: GateStatus::Pass,
             policy_checks: GateStatus::Pass,
         },
-        benchmarks: vec![BenchmarkRecord::new(
-            "p9-local-e2e-contract",
-            "boolean",
-            vec![1.0],
-            1.0,
-        )
-        .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?],
+        benchmarks: vec![
+            BenchmarkRecord::new("p9-local-e2e-contract", "boolean", vec![1.0], 1.0)
+                .map_err(|error| ReleaseQualificationError::Contract(error.to_string()))?,
+        ],
         verdict: EngineeringVerdict::Accepted,
-        verdict_reason: "all local P9.2 hard gates passed; external exact-revision CI remains mandatory"
-            .to_string(),
+        verdict_reason:
+            "all local P9.2 hard gates passed; external exact-revision CI remains mandatory"
+                .to_string(),
         later_verdicts: Vec::new(),
     };
     trajectory
@@ -529,9 +522,7 @@ impl QualificationFixture {
         run_git(&root, &["config", "user.name", "RSI P9"])?;
         std::fs::write(
             root.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
-            ),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
         )?;
         let source = format!(
             r#"pub const COMPONENT: &str = "{name}";
@@ -661,7 +652,10 @@ mod tests {
             first.report.compatibility_fingerprint,
             second.report.compatibility_fingerprint
         );
-        assert_eq!(first.trajectory_json().unwrap(), second.trajectory_json().unwrap());
+        assert_eq!(
+            first.trajectory_json().unwrap(),
+            second.trajectory_json().unwrap()
+        );
     }
 
     #[test]

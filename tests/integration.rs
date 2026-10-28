@@ -99,4 +99,3 @@ fn web_crawl_parse_index_search_offline() {
     let none = idx.search("pizza", 5);
     assert!(none.is_empty());
 }
-

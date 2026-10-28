@@ -87,12 +87,7 @@ impl ScientificPapersRunner {
                 analyze_env.push(("PAPERS_LLM__PROVIDER", provider));
             }
         }
-        run_bounded(
-            &self.papers_bin,
-            &analyze_args,
-            &analyze_env,
-            self.timeout,
-        )?;
+        run_bounded(&self.papers_bin, &analyze_args, &analyze_env, self.timeout)?;
 
         let analysis_path = out_dir.join("analysis.json");
         if !analysis_path.is_file() {
@@ -166,11 +161,7 @@ fn validate_mode(mode: &PaperAnalysisMode) -> Result<Option<(&str, &str)>, Strin
 
 fn companion_contract_bin(papers_bin: &str) -> String {
     let path = Path::new(papers_bin);
-    if path.is_absolute()
-        || path
-            .parent()
-            .is_some_and(|parent| parent != Path::new(""))
-    {
+    if path.is_absolute() || path.parent().is_some_and(|parent| parent != Path::new("")) {
         let parent = path.parent().unwrap_or_else(|| Path::new(""));
         return parent.join("papers-contract").display().to_string();
     }
@@ -324,7 +315,10 @@ pub struct ScientificBundle {
 /// un `\n` dans `method`/`algorithm` permettait de forger des blocs GOAL
 /// supplémentaires dans la sortie CLI et de polluer les prompts DGM.
 fn sanitize_bundle_text<'a>(field: &'a str, name: &str) -> Result<&'a str, String> {
-    if field.chars().any(|c| c == '\n' || c == '\r' || c == '\0' || c.is_control()) {
+    if field
+        .chars()
+        .any(|c| c == '\n' || c == '\r' || c == '\0' || c.is_control())
+    {
         return Err(format!(
             "bundle.{name} contient un caractère de contrôle (injection possible)"
         ));
@@ -344,16 +338,11 @@ impl ScientificBundle {
         let paper_id = require_string(paper, "id")?.to_string();
         let title = require_string(paper, "title")?.to_string();
 
-        let provenance_json = root
-            .get("provenance")
-            .ok_or("bundle.provenance manquant")?;
+        let provenance_json = root.get("provenance").ok_or("bundle.provenance manquant")?;
         let provenance = BundleProvenance {
             paper_id: require_string(provenance_json, "paper_id")?.to_string(),
             source: require_string(provenance_json, "source")?.to_string(),
-            extracted_content_sha256: require_sha256(
-                provenance_json,
-                "extracted_content_sha256",
-            )?,
+            extracted_content_sha256: require_sha256(provenance_json, "extracted_content_sha256")?,
             analysis_sha256: require_sha256(provenance_json, "analysis_sha256")?,
             generator: require_string(provenance_json, "generator")?.to_string(),
             generator_version: require_string(provenance_json, "generator_version")?.to_string(),
@@ -425,13 +414,9 @@ impl ScientificBundle {
                 });
             }
 
-            let kind =
-                sanitize_bundle_text(require_string(value, "kind")?, "kind")?.to_string();
-            let statement = sanitize_bundle_text(
-                require_string(value, "statement")?,
-                "statement",
-            )?
-            .to_string();
+            let kind = sanitize_bundle_text(require_string(value, "kind")?, "kind")?.to_string();
+            let statement =
+                sanitize_bundle_text(require_string(value, "statement")?, "statement")?.to_string();
             let method = optional_string(value, "method")?
                 .map(|t| sanitize_bundle_text(t, "method").map(str::to_string))
                 .transpose()?;
@@ -633,8 +618,8 @@ mod tests {
     /// (impossible de forger des blocs GOAL supplémentaires).
     #[test]
     fn control_chars_in_bundle_text_are_rejected() {
-        let raw = fixture("inferred")
-            .replace("\"for each tile...\"", "\"ligne1\\nligne2 GOAL Faux\"");
+        let raw =
+            fixture("inferred").replace("\"for each tile...\"", "\"ligne1\\nligne2 GOAL Faux\"");
         let err = ScientificBundle::parse(&raw).unwrap_err();
         assert!(err.contains("contrôle"), "{err}");
     }
@@ -650,8 +635,16 @@ mod tests {
         let old_field = format!("\"text\":null,\"text_sha256\":\"{hash_a}\"");
         let new_field = format!("\"text\":\"{TEXT}\",\"text_sha256\":\"{good}\"");
         let base = fixture("inferred").replace(&old_field, &new_field);
-        assert_ne!(base, fixture("inferred"), "fixture drift: champ text non trouvé");
-        assert!(ScientificBundle::parse(&base).is_ok(), "{:?}", ScientificBundle::parse(&base).err());
+        assert_ne!(
+            base,
+            fixture("inferred"),
+            "fixture drift: champ text non trouvé"
+        );
+        assert!(
+            ScientificBundle::parse(&base).is_ok(),
+            "{:?}",
+            ScientificBundle::parse(&base).err()
+        );
 
         let wrong = format!("{}b", &good[..63]);
         let bad = base.replace(&good, &wrong);
@@ -673,4 +666,3 @@ mod tests {
         assert_eq!(runner.contract_bin(), "c");
     }
 }
-

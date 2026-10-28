@@ -224,10 +224,7 @@ mod tests {
         let verdict = evidence.verdict();
         assert!(!verdict.admissible);
         assert_eq!(verdict.first_violation, Some(EngineeringGateKind::Policy));
-        assert_eq!(
-            verdict.first_policy_violation.as_deref(),
-            Some("allowlist")
-        );
+        assert_eq!(verdict.first_policy_violation.as_deref(), Some("allowlist"));
     }
 
     #[test]

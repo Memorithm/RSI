@@ -178,10 +178,18 @@ pub fn resolve_url(base: &str, link: &str) -> Option<String> {
         return None;
     }
     let (_, host, port, base_path) = parse_url(base)?;
-    let scheme = if base.starts_with("https://") { "https" } else { "http" };
+    let scheme = if base.starts_with("https://") {
+        "https"
+    } else {
+        "http"
+    };
     // omet le port s'il s'agit du port par défaut du schéma
     let default_port = if scheme == "https" { 443 } else { 80 };
-    let port_str = if port == default_port { String::new() } else { format!(":{port}") };
+    let port_str = if port == default_port {
+        String::new()
+    } else {
+        format!(":{port}")
+    };
     if link.starts_with('/') {
         return Some(format!("{scheme}://{host}{port_str}{link}"));
     }
@@ -200,8 +208,7 @@ pub fn resolve_url(base: &str, link: &str) -> Option<String> {
 /// User-Agent par défaut : un UA navigateur réaliste est requis par les
 /// moteurs de recherche (DuckDuckGo refuse `RSI-Bot`). Le crawler reste
 /// poli (robots.txt, délais, bornes) — seul l'identifiant est neutre.
-const DEFAULT_UA: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0";
+const DEFAULT_UA: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0";
 
 /// Requête GET avec suivi des redirections, borné, **anti-SSRF par hop**.
 ///
@@ -213,7 +220,11 @@ const DEFAULT_UA: &str =
 ///
 /// Retourne `(statut, corps)`. Le corps est borné à `max_bytes` **pendant** le
 /// transfert (anti-DoS, audit M4).
-pub fn http_get(url: &str, timeout: Duration, max_bytes: usize) -> Result<(u16, Vec<u8>), WebError> {
+pub fn http_get(
+    url: &str,
+    timeout: Duration,
+    max_bytes: usize,
+) -> Result<(u16, Vec<u8>), WebError> {
     get_following_redirects(url, timeout, max_bytes, false)
 }
 
@@ -234,7 +245,9 @@ pub fn get_following_redirects(
             .dns_resolver(std::sync::Arc::new(PinningResolver::new(allow_private)))
             .build()
         else {
-            return Err(WebError::Http("construction du client reqwest impossible".into()));
+            return Err(WebError::Http(
+                "construction du client reqwest impossible".into(),
+            ));
         };
         let resp = client.get(url).send().map_err(|e| {
             // les erreurs de politique anti-SSRF remontent comme erreurs HTTP
@@ -427,7 +440,10 @@ fn http_get_once(
         .unwrap_or(0);
 
     // déchunking minimal (Transfer-Encoding: chunked)
-    let body = if headers.to_lowercase().contains("transfer-encoding: chunked") {
+    let body = if headers
+        .to_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
         unchunk(&body)
     } else {
         body
@@ -446,7 +462,10 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
         // lit la taille hexadécimale jusqu'au CRLF — corps tronqué sans CRLF
         // final = arrêt propre (l'arithmétique non gardée slicait hors bornes,
         // panic déclenchable par une connexion coupée — audit M3b).
-        let Some(line_end) = body[i..].windows(2).position(|w| w == b"\r\n").map(|p| i + p)
+        let Some(line_end) = body[i..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map(|p| i + p)
         else {
             break;
         };
@@ -606,8 +625,7 @@ fn find_attr(tag_lower: &str, attr: &str) -> Option<usize> {
     let mut from = 0;
     while let Some(rel) = tag_lower[from..].find(attr) {
         let pos = from + rel;
-        let before_ok = pos == 0
-            || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r' | b'/');
+        let before_ok = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\n' | b'\r' | b'/');
         if before_ok {
             return Some(pos);
         }
@@ -645,7 +663,9 @@ fn decode_entities(s: &str) -> String {
                 "nbsp" => ' ',
                 _ => {
                     if let Some(num) = ent.strip_prefix('#') {
-                        let code = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+                        let code = if let Some(hex) =
+                            num.strip_prefix('x').or_else(|| num.strip_prefix('X'))
+                        {
                             u32::from_str_radix(hex, 16).ok()
                         } else {
                             num.parse::<u32>().ok()
@@ -825,7 +845,10 @@ impl TextIndex {
         let n_docs = self.docs.len().max(1);
         let q_terms: Vec<String> = query
             .split_whitespace()
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase()
+            })
             .filter(|w| w.len() >= 3)
             .collect();
         if q_terms.is_empty() {
@@ -851,7 +874,11 @@ impl TextIndex {
                 score,
             })
             .collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(k);
         results
     }
@@ -959,7 +986,10 @@ pub fn is_private_ip(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 is_private_ip(V4(v4))
             } else {
-                v6.is_loopback() || v6.is_unspecified() || v6.is_unique_local() || v6.is_unicast_link_local()
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_unique_local()
+                    || v6.is_unicast_link_local()
             }
         }
     }
@@ -1154,7 +1184,9 @@ impl WebCrawler {
 
         // robots.txt (mis en cache par hôte) — AVANT la politesse : le
         // Crawl-delay demandé par l'hôte s'ajoute au délai configuré.
-        let scheme = parse_url(url).map(|(s, _, _, _)| s).unwrap_or_else(|| "http".into());
+        let scheme = parse_url(url)
+            .map(|(s, _, _, _)| s)
+            .unwrap_or_else(|| "http".into());
         let robots = self
             .options
             .respect_robots
@@ -1206,7 +1238,11 @@ impl WebCrawler {
 
     fn fetch_and_index(&self, url: &str, _host: &str, depth: usize) -> Result<(), WebError> {
         let t0 = Instant::now();
-        let (status, body) = http_get(url, self.options.limits.timeout, self.options.limits.max_bytes)?;
+        let (status, body) = http_get(
+            url,
+            self.options.limits.timeout,
+            self.options.limits.max_bytes,
+        )?;
         if status != 200 {
             return Err(WebError::Http(format!("statut {status}")));
         }
@@ -1469,7 +1505,10 @@ fn extract_url(block: &str) -> String {
     };
     let after = &seg[href + 5..];
     let after = after.trim_start_matches('"').trim_start_matches('\'');
-    let end = after.find('"').or_else(|| after.find('\'')).unwrap_or(after.len());
+    let end = after
+        .find('"')
+        .or_else(|| after.find('\''))
+        .unwrap_or(after.len());
     let raw = &after[..end];
     // DuckDuckGo encode les URL dans `uddg=` — on décode le plus simple
     if let Some(uddg) = raw.find("uddg=") {
@@ -1555,9 +1594,17 @@ mod tests {
     #[test]
     fn index_search_ranks_relevant() {
         let mut idx = TextIndex::new();
-        idx.add("http://a/rust", "Rust", "Rust is a systems programming language");
+        idx.add(
+            "http://a/rust",
+            "Rust",
+            "Rust is a systems programming language",
+        );
         idx.add("http://b/cooking", "Cooking", "recipes for cooking pasta");
-        idx.add("http://c/rust2", "More Rust", "Rust ownership and borrowing explained");
+        idx.add(
+            "http://c/rust2",
+            "More Rust",
+            "Rust ownership and borrowing explained",
+        );
         let r = idx.search("rust", 5);
         assert!(!r.is_empty());
         assert!(r[0].url.contains("rust"), "top={}", r[0].url);
@@ -1644,14 +1691,10 @@ mod tests {
 
         // pré-ensemencé : renvoyé tel quel, sans re-résolution
         let pinned = PinningResolver::new(false);
-        pinned
-            .cache
-            .lock()
-            .unwrap()
-            .insert(
-                "pinned.test".to_string(),
-                vec!["93.184.216.34:0".parse().unwrap()],
-            );
+        pinned.cache.lock().unwrap().insert(
+            "pinned.test".to_string(),
+            vec!["93.184.216.34:0".parse().unwrap()],
+        );
         let addrs = pinned.resolve_host("pinned.test").unwrap();
         assert_eq!(addrs.len(), 1);
 
@@ -1674,10 +1717,8 @@ mod tests {
     #[test]
     fn robots_allows() {
         let mut r = RobotsTxt::default();
-        r.disallowed.insert(
-            "example.com".into(),
-            vec!["/private".into(), "/tmp".into()],
-        );
+        r.disallowed
+            .insert("example.com".into(), vec!["/private".into(), "/tmp".into()]);
         assert!(!r.allows("example.com", "/private/x"));
         assert!(r.allows("example.com", "/public"));
     }
@@ -1686,8 +1727,7 @@ mod tests {
     #[test]
     fn robots_allow_longest_match_and_crawl_delay() {
         let mut r = RobotsTxt::default();
-        r.disallowed
-            .insert("h".into(), vec!["/private".into()]);
+        r.disallowed.insert("h".into(), vec!["/private".into()]);
         r.allowed
             .entry("h".into())
             .or_default()

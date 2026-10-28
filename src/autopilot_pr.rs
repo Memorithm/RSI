@@ -65,13 +65,9 @@ impl VerifiedPerfPromotion {
         trajectory
             .validate()
             .map_err(|error| AutopilotPrError::InvalidTrajectory(error.to_string()))?;
-        let report = PerfComparisonReport::evaluate(
-            profile,
-            &trajectory.admissibility,
-            baseline,
-            candidate,
-        )
-        .map_err(|error| AutopilotPrError::InvalidPerfEvidence(error.to_string()))?;
+        let report =
+            PerfComparisonReport::evaluate(profile, &trajectory.admissibility, baseline, candidate)
+                .map_err(|error| AutopilotPrError::InvalidPerfEvidence(error.to_string()))?;
         if !report.hard_gates_passed || !report.promotable {
             return Err(AutopilotPrError::PerfCandidateNotPromotable);
         }
@@ -166,9 +162,7 @@ impl TaskBoundEngineeringTrajectory {
             .iter()
             .any(|role| role == &repository_role)
         {
-            return Err(AutopilotPrError::RepositoryRoleOutsideTask(
-                repository_role,
-            ));
+            return Err(AutopilotPrError::RepositoryRoleOutsideTask(repository_role));
         }
 
         validate_compatibility_against_spec(spec, &trajectory.compatibility)?;
@@ -310,10 +304,8 @@ impl AutopilotPullRequestPlan {
             .task(candidate.task_id())
             .ok_or_else(|| AutopilotPrError::UnknownTask(candidate.task_id().to_string()))?;
         let trajectory = candidate.trajectory();
-        let target = unique_revision_for_role(
-            &trajectory.compatibility,
-            candidate.repository_role(),
-        )?;
+        let target =
+            unique_revision_for_role(&trajectory.compatibility, candidate.repository_role())?;
         let patch_set_sha256 = trajectory
             .patch_set
             .identity()
@@ -434,10 +426,7 @@ impl AutopilotPullRequestPlan {
         root.set("base_revision", Json::Str(self.base_revision.clone()))
             .set("body", Json::Str(self.body.clone()))
             .set("branch_name", Json::Str(self.branch_name.clone()))
-            .set(
-                "candidate_sha256",
-                Json::Str(self.candidate_sha256.clone()),
-            )
+            .set("candidate_sha256", Json::Str(self.candidate_sha256.clone()))
             .set(
                 "compatibility_sha256",
                 Json::Str(self.compatibility_sha256.clone()),
@@ -453,15 +442,9 @@ impl AutopilotPullRequestPlan {
                         .collect(),
                 ),
             )
-            .set(
-                "patch_set_sha256",
-                Json::Str(self.patch_set_sha256.clone()),
-            )
+            .set("patch_set_sha256", Json::Str(self.patch_set_sha256.clone()))
             .set("repository", Json::Str(self.repository.clone()))
-            .set(
-                "repository_role",
-                Json::Str(self.repository_role.clone()),
-            )
+            .set("repository_role", Json::Str(self.repository_role.clone()))
             .set("schema_version", Json::Num(self.schema_version as f64))
             .set("spec_sha256", Json::Str(self.spec_sha256.clone()))
             .set("task_id", Json::Str(self.task_id.clone()))
@@ -932,11 +915,7 @@ fn perf_evidence_identity(
     hex_digest(&sha256(material.as_bytes()))
 }
 
-fn append_measurements(
-    material: &mut String,
-    label: &str,
-    measurements: &[PerfMeasurementBatch],
-) {
+fn append_measurements(material: &mut String, label: &str, measurements: &[PerfMeasurementBatch]) {
     let mut ordered: Vec<_> = measurements.iter().collect();
     ordered.sort_by(|left, right| {
         left.case_id
@@ -977,7 +956,10 @@ fn render_pr_body(context: PrBodyContext<'_>) -> String {
     body.push_str(&format!("- task DAG: `{}`\n", dag.dag_sha256()));
     body.push_str(&format!("- repository role: `{}`\n", target.role));
     body.push_str(&format!("- exact base revision: `{}`\n", target.revision));
-    body.push_str(&format!("- parent state: `{}`\n", trajectory.parent_state_id));
+    body.push_str(&format!(
+        "- parent state: `{}`\n",
+        trajectory.parent_state_id
+    ));
     body.push_str(&format!("- PatchSet: `{patch_set_sha256}`\n"));
     body.push_str(&format!(
         "- candidate identity: `{}`\n",
@@ -1005,9 +987,7 @@ fn render_pr_body(context: PrBodyContext<'_>) -> String {
     if let Some(promotion) = candidate.perf_promotion() {
         body.push_str(&format!(
             "- frozen PERF profile: `{}`\n- environment: `{}`\n- evidence: `{}`\n",
-            promotion.profile_sha256,
-            promotion.environment_fingerprint,
-            promotion.evidence_sha256
+            promotion.profile_sha256, promotion.environment_fingerprint, promotion.evidence_sha256
         ));
         for result in &promotion.report.cases {
             append_perf_case(&mut body, result);
@@ -1035,13 +1015,14 @@ fn append_perf_case(body: &mut String, result: &PerfCaseResult) {
     ));
 }
 
-fn admissibility_rows(
-    trajectory: &EngineeringTrajectory,
-) -> [(&'static str, GateStatus); 7] {
+fn admissibility_rows(trajectory: &EngineeringTrajectory) -> [(&'static str, GateStatus); 7] {
     [
         ("build", trajectory.admissibility.build),
         ("required_tests", trajectory.admissibility.required_tests),
-        ("numerical_parity", trajectory.admissibility.numerical_parity),
+        (
+            "numerical_parity",
+            trajectory.admissibility.numerical_parity,
+        ),
         ("provenance", trajectory.admissibility.provenance),
         (
             "deterministic_contract",
@@ -1096,10 +1077,7 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), Autopilot
 
 /// Implements the core `git check-ref-format --branch` constraints relevant to
 /// generated/target branch names, including component-level `.lock`/dot rules.
-fn validate_git_branch_name(
-    field: &'static str,
-    value: &str,
-) -> Result<(), AutopilotPrError> {
+fn validate_git_branch_name(field: &'static str, value: &str) -> Result<(), AutopilotPrError> {
     validate_text(field, value)?;
     let forbidden = value == "@"
         || value.starts_with('/')
@@ -1128,8 +1106,7 @@ fn validate_git_branch_name(
 }
 
 fn validate_revision(revision: &str) -> Result<(), AutopilotPrError> {
-    if !matches!(revision.len(), 40 | 64)
-        || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if !matches!(revision.len(), 40 | 64) || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(AutopilotPrError::InvalidRevision(revision.to_string()));
     }
@@ -1184,14 +1161,12 @@ mod tests {
         let exploration = RepositoryExploration::new(
             "Memorithm/RSI",
             revision('a'),
-            vec![
-                ExplorationObservation::new(
-                    "code",
-                    ExplorationSource::repository_file("src/lib.rs", digest('b')).unwrap(),
-                    "inspected the implementation and CI boundary",
-                )
-                .unwrap(),
-            ],
+            vec![ExplorationObservation::new(
+                "code",
+                ExplorationSource::repository_file("src/lib.rs", digest('b')).unwrap(),
+                "inspected the implementation and CI boundary",
+            )
+            .unwrap()],
         )
         .unwrap();
         ExploredObjective::new(
@@ -1205,25 +1180,21 @@ mod tests {
         .resolve(Vec::new())
         .unwrap()
         .freeze(AutopilotSpecDraft::new(
-            vec![
-                AcceptanceCriterion::new(
-                    "tests-pass",
-                    "all required tests pass",
-                    AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
-                )
-                .unwrap(),
-            ],
+            vec![AcceptanceCriterion::new(
+                "tests-pass",
+                "all required tests pass",
+                AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
+            )
+            .unwrap()],
             vec!["automatic merge".to_string()],
             SpecBudget::new(20, 20_000, 20_000).unwrap(),
-            vec![
-                RepositoryScope::new(
-                    "rsi",
-                    "Memorithm/RSI",
-                    revision('a'),
-                    vec!["benches".to_string(), "src".to_string()],
-                )
-                .unwrap(),
-            ],
+            vec![RepositoryScope::new(
+                "rsi",
+                "Memorithm/RSI",
+                revision('a'),
+                vec!["benches".to_string(), "src".to_string()],
+            )
+            .unwrap()],
         ))
         .unwrap()
     }
@@ -1234,14 +1205,12 @@ mod tests {
             description: format!("execute {id}"),
             regime,
             repository_roles: vec!["rsi".to_string()],
-            edit_allowances: vec![
-                TaskEditAllowance::new(
-                    "rsi",
-                    vec![path.to_string()],
-                    vec![TaskOperation::Create, TaskOperation::ModifyExact],
-                )
-                .unwrap(),
-            ],
+            edit_allowances: vec![TaskEditAllowance::new(
+                "rsi",
+                vec![path.to_string()],
+                vec![TaskOperation::Create, TaskOperation::ModifyExact],
+            )
+            .unwrap()],
             hard_gate_profile: HardGateProfile::engineering_strict(),
             budget: TaskBudget::new(4, 8, 8_000, 8_000).unwrap(),
             dependencies: Vec::new(),
@@ -1270,9 +1239,7 @@ mod tests {
         EngineeringTrajectory {
             task_spec_id: spec.spec_sha256().to_string(),
             compatibility: CompatibilitySet::new(
-                vec![
-                    RepositoryRevision::new("Memorithm/RSI", revision('a'), "rsi").unwrap(),
-                ],
+                vec![RepositoryRevision::new("Memorithm/RSI", revision('a'), "rsi").unwrap()],
                 "stable",
                 vec!["default".to_string()],
             )
@@ -1332,10 +1299,7 @@ mod tests {
         .unwrap()
     }
 
-    fn perf_profile(
-        spec: &FrozenAutopilotSpec,
-        dag: &AutopilotTaskDag,
-    ) -> FrozenPerfBenchmark {
+    fn perf_profile(spec: &FrozenAutopilotSpec, dag: &AutopilotTaskDag) -> FrozenPerfBenchmark {
         FrozenPerfBenchmark::freeze(
             spec,
             dag,
@@ -1345,9 +1309,12 @@ mod tests {
                 environment: BenchmarkEnvironment::new(digest('e'), digest('f')).unwrap(),
                 policy: AntiNoisePolicy::new(5, 3, 20_000, 20_000, 3).unwrap(),
                 cases: vec![perf_case()],
-                artifacts: vec![
-                    FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", digest('1')).unwrap(),
-                ],
+                artifacts: vec![FrozenBenchmarkArtifact::new(
+                    "rsi",
+                    "benches/perf.rs",
+                    digest('1'),
+                )
+                .unwrap()],
             },
         )
         .unwrap()
@@ -1396,7 +1363,9 @@ mod tests {
         );
         assert_ne!(plan.branch_name(), plan.default_branch());
         assert!(plan.branch_name().starts_with("autopilot/implementation/"));
-        assert!(plan.body().contains("does not request or encode automatic merge"));
+        assert!(plan
+            .body()
+            .contains("does not request or encode automatic merge"));
     }
 
     #[test]
@@ -1442,13 +1411,9 @@ mod tests {
 
         let profile = perf_profile(&spec, &dag);
         let (baseline, candidate) = perf_batches(&profile);
-        let promotion = VerifiedPerfPromotion::evaluate(
-            &profile,
-            &candidate_trajectory,
-            &baseline,
-            &candidate,
-        )
-        .unwrap();
+        let promotion =
+            VerifiedPerfPromotion::evaluate(&profile, &candidate_trajectory, &baseline, &candidate)
+                .unwrap();
         let bound = TaskBoundEngineeringTrajectory::new(
             &spec,
             &dag,
@@ -1481,12 +1446,7 @@ mod tests {
             batch.samples = vec![110.0, 110.5, 109.5, 110.2, 109.8];
         }
         assert!(matches!(
-            VerifiedPerfPromotion::evaluate(
-                &profile,
-                &candidate_trajectory,
-                &baseline,
-                &candidate,
-            ),
+            VerifiedPerfPromotion::evaluate(&profile, &candidate_trajectory, &baseline, &candidate,),
             Err(AutopilotPrError::PerfCandidateNotPromotable)
         ));
     }
@@ -1494,10 +1454,7 @@ mod tests {
     #[test]
     fn invalid_generated_git_branch_is_rejected() {
         let spec = spec();
-        let dag = dag(
-            &spec,
-            vec![task("bad.lock", TaskRegime::feature(), "src")],
-        );
+        let dag = dag(&spec, vec![task("bad.lock", TaskRegime::feature(), "src")]);
         let candidate = bind_feature(&spec, &dag, "bad.lock", trajectory(&spec));
         assert!(matches!(
             AutopilotPullRequestPlan::new(

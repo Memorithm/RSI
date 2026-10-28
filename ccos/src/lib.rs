@@ -152,18 +152,18 @@ pub mod event_log {
     /// Hash de tête de la chaîne vide.
     pub const GENESIS: &str = "GENESIS";
 
-/// Comparaison d'empreintes en temps constant (audit a25) — voir rsi::audit.
-fn ct_digest_eq(a: &str, b: &str) -> bool {
-    let (ab, bb) = (a.as_bytes(), b.as_bytes());
-    if ab.len() != bb.len() {
-        return false;
+    /// Comparaison d'empreintes en temps constant (audit a25) — voir rsi::audit.
+    fn ct_digest_eq(a: &str, b: &str) -> bool {
+        let (ab, bb) = (a.as_bytes(), b.as_bytes());
+        if ab.len() != bb.len() {
+            return false;
+        }
+        let mut diff = 0u8;
+        for i in 0..ab.len() {
+            diff |= ab[i] ^ bb[i];
+        }
+        diff == 0
     }
-    let mut diff = 0u8;
-    for i in 0..ab.len() {
-        diff |= ab[i] ^ bb[i];
-    }
-    diff == 0
-}
 
     impl EventLog {
         pub fn new(session_id: impl Into<String>) -> Self {
@@ -377,4 +377,3 @@ fn ct_digest_eq(a: &str, b: &str) -> bool {
 // Ré-export racine pour compatibilité (certains consommateurs utilisent
 // `ccos::EventLog` directement).
 pub use event_log::{EventEntry, EventLog, EventPayload, EventType, IntegrityReport, GENESIS};
-

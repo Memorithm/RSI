@@ -9,9 +9,7 @@
 //! outside the candidate patch also fails closed.
 
 use crate::autopilot_intake::FrozenAutopilotSpec;
-use crate::autopilot_task_dag::{
-    AutopilotTask, AutopilotTaskDag, TaskOperation, TaskRegime,
-};
+use crate::autopilot_task_dag::{AutopilotTask, AutopilotTaskDag, TaskOperation, TaskRegime};
 use crate::json::Json;
 use crate::patchset::{FileOperation, PatchSet, PatchSetError};
 use crate::sha256::sha256;
@@ -49,10 +47,7 @@ impl FeatureTestApproval {
     fn to_json(&self) -> Json {
         let mut out = Json::obj();
         out.set("authority", Json::Str(self.authority.clone()))
-            .set(
-                "evidence_sha256",
-                Json::Str(self.evidence_sha256.clone()),
-            );
+            .set("evidence_sha256", Json::Str(self.evidence_sha256.clone()));
         out
     }
 }
@@ -245,10 +240,7 @@ impl FrozenFeatureTests {
 
     pub fn to_json_string(&self) -> String {
         let mut root = self.unsigned_json();
-        root.set(
-            "manifest_sha256",
-            Json::Str(self.manifest_sha256.clone()),
-        );
+        root.set("manifest_sha256", Json::Str(self.manifest_sha256.clone()));
         root.to_string()
     }
 
@@ -258,18 +250,20 @@ impl FrozenFeatureTests {
 
     fn unsigned_json(&self) -> Json {
         let mut root = Json::obj();
-        root.set(
-            "approval",
-            self.approval.to_json(),
-        )
-        .set(
-            "artifacts",
-            Json::Arr(self.artifacts.iter().map(FrozenTestArtifact::to_json).collect()),
-        )
-        .set("dag_sha256", Json::Str(self.dag_sha256.clone()))
-        .set("schema_version", Json::Num(self.schema_version as f64))
-        .set("spec_sha256", Json::Str(self.spec_sha256.clone()))
-        .set("test_task_id", Json::Str(self.test_task_id.clone()));
+        root.set("approval", self.approval.to_json())
+            .set(
+                "artifacts",
+                Json::Arr(
+                    self.artifacts
+                        .iter()
+                        .map(FrozenTestArtifact::to_json)
+                        .collect(),
+                ),
+            )
+            .set("dag_sha256", Json::Str(self.dag_sha256.clone()))
+            .set("schema_version", Json::Num(self.schema_version as f64))
+            .set("spec_sha256", Json::Str(self.spec_sha256.clone()))
+            .set("test_task_id", Json::Str(self.test_task_id.clone()));
         root
     }
 }
@@ -332,12 +326,14 @@ impl FeatureImplementationContract {
                     .filter(|artifact| artifact.repository_role == allowance.repository_role())
                 {
                     if path_is_within(&artifact.path, prefix) {
-                        return Err(FeatureRegimeError::ImplementationAllowanceTouchesFrozenTest {
-                            implementation_task_id: implementation.id().to_string(),
-                            repository_role: artifact.repository_role.clone(),
-                            frozen_path: artifact.path.clone(),
-                            allowed_prefix: prefix.clone(),
-                        });
+                        return Err(
+                            FeatureRegimeError::ImplementationAllowanceTouchesFrozenTest {
+                                implementation_task_id: implementation.id().to_string(),
+                                repository_role: artifact.repository_role.clone(),
+                                frozen_path: artifact.path.clone(),
+                                allowed_prefix: prefix.clone(),
+                            },
+                        );
                     }
                 }
             }
@@ -397,9 +393,7 @@ impl FeatureImplementationContract {
         {
             return Err(FeatureRegimeError::FeatureContractContextMismatch);
         }
-        patch_set
-            .validate()
-            .map_err(FeatureRegimeError::PatchSet)?;
+        patch_set.validate().map_err(FeatureRegimeError::PatchSet)?;
         let task = dag
             .task(&self.implementation_task_id)
             .ok_or_else(|| FeatureRegimeError::UnknownTask(self.implementation_task_id.clone()))?;
@@ -822,14 +816,12 @@ mod tests {
         let exploration = RepositoryExploration::new(
             "Memorithm/RSI",
             revision('a'),
-            vec![
-                ExplorationObservation::new(
-                    "tests",
-                    ExplorationSource::repository_file("tests/feature.rs", digest('b')).unwrap(),
-                    "inspected the existing FEATURE test boundary",
-                )
-                .unwrap(),
-            ],
+            vec![ExplorationObservation::new(
+                "tests",
+                ExplorationSource::repository_file("tests/feature.rs", digest('b')).unwrap(),
+                "inspected the existing FEATURE test boundary",
+            )
+            .unwrap()],
         )
         .unwrap();
         ExploredObjective::new(
@@ -843,25 +835,21 @@ mod tests {
         .resolve(Vec::new())
         .unwrap()
         .freeze(AutopilotSpecDraft::new(
-            vec![
-                AcceptanceCriterion::new(
-                    "tests-pass",
-                    "frozen tests pass",
-                    AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
-                )
-                .unwrap(),
-            ],
+            vec![AcceptanceCriterion::new(
+                "tests-pass",
+                "frozen tests pass",
+                AcceptanceCheck::command("rsi", "cargo_test", Vec::new()).unwrap(),
+            )
+            .unwrap()],
             vec!["editing approved tests during implementation".to_string()],
             SpecBudget::new(20, 20_000, 20_000).unwrap(),
-            vec![
-                RepositoryScope::new(
-                    "rsi",
-                    "Memorithm/RSI",
-                    revision('a'),
-                    vec!["src".to_string(), "tests".to_string()],
-                )
-                .unwrap(),
-            ],
+            vec![RepositoryScope::new(
+                "rsi",
+                "Memorithm/RSI",
+                revision('a'),
+                vec!["src".to_string(), "tests".to_string()],
+            )
+            .unwrap()],
         ))
         .unwrap()
     }
@@ -877,9 +865,12 @@ mod tests {
             description: format!("FEATURE task {id}"),
             regime: TaskRegime::feature(),
             repository_roles: vec!["rsi".to_string()],
-            edit_allowances: vec![
-                TaskEditAllowance::new("rsi", vec![path.to_string()], operations).unwrap(),
-            ],
+            edit_allowances: vec![TaskEditAllowance::new(
+                "rsi",
+                vec![path.to_string()],
+                operations,
+            )
+            .unwrap()],
             hard_gate_profile: HardGateProfile::engineering_strict(),
             budget: TaskBudget::new(2, 4, 4_000, 4_000).unwrap(),
             dependencies,
@@ -1019,12 +1010,8 @@ mod tests {
         let spec = spec();
         let dag = dag("src");
         let bytes = b"#[test]\nfn approved() {}\n";
-        let artifact = FrozenTestArtifact::new(
-            "rsi",
-            "tests/feature.rs",
-            hex_digest(&sha256(bytes)),
-        )
-        .unwrap();
+        let artifact =
+            FrozenTestArtifact::new("rsi", "tests/feature.rs", hex_digest(&sha256(bytes))).unwrap();
         let frozen = FrozenFeatureTests::freeze(
             &spec,
             &dag,
@@ -1034,10 +1021,8 @@ mod tests {
         )
         .unwrap();
 
-        let root = std::env::temp_dir().join(format!(
-            "rsi-feature-frozen-tests-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rsi-feature-frozen-tests-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("tests")).unwrap();
         std::fs::write(root.join("tests/feature.rs"), bytes).unwrap();
@@ -1065,14 +1050,8 @@ mod tests {
             vec![b.clone(), a.clone()],
         )
         .unwrap();
-        let second = FrozenFeatureTests::freeze(
-            &spec,
-            &dag,
-            "tests-only",
-            approval,
-            vec![a, b],
-        )
-        .unwrap();
+        let second =
+            FrozenFeatureTests::freeze(&spec, &dag, "tests-only", approval, vec![a, b]).unwrap();
         assert_eq!(first.manifest_sha256(), second.manifest_sha256());
         assert_eq!(first.to_json_string(), second.to_json_string());
     }

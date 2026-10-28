@@ -63,7 +63,12 @@ pub struct NormalizedCosts {
 
 impl NormalizedCosts {
     /// Calcule les coûts normalisés. Division par zéro → erreur (budget nul).
-    pub fn try_new(mem_bytes: usize, lat_ms: usize, ctx_tokens: usize, b: &ResourceBudget) -> CognoResult<Self> {
+    pub fn try_new(
+        mem_bytes: usize,
+        lat_ms: usize,
+        ctx_tokens: usize,
+        b: &ResourceBudget,
+    ) -> CognoResult<Self> {
         if b.mem_bytes == 0 || b.lat_ms == 0 || b.ctx_tokens == 0 {
             return Err(CognoError::InvalidInput("budget nul"));
         }

@@ -6,13 +6,11 @@
 //! `cogno-core` (pas de convention mathématique inventée) ; la cross-validation
 //! garantit la correspondance (voir [`crate::cross_validate`]).
 
-use cogno_core::calib::{compute_brier_calibration, CalibrationPoint, CalibrationMetrics};
+use cogno_core::calib::{compute_brier_calibration, CalibrationMetrics, CalibrationPoint};
 use cogno_core::error::{CognoError, CognoResult};
 use cogno_core::memory::{compute_memory_objective, MemoryMetrics, MemorySample};
 use cogno_core::numeric::{CompensatedSum, FiniteScalar, NonNegativeFinite};
-use cogno_core::objective::{
-    CognoObjectiveBreakdown, CognoWeights,
-};
+use cogno_core::objective::{CognoObjectiveBreakdown, CognoWeights};
 use cogno_core::pref::{compute_preference_objective, PreferencePair};
 use cogno_core::resource::{compute_resource_loss_batch, ResourceCosts, ResourceWeights};
 use cogno_core::reward::RewardBreakdown;
@@ -102,12 +100,12 @@ pub fn compute_objective_batch(
     let j_sym = compute_symbolic_objective(&input.soft_rules, symbolic_epsilon)?;
     let (j_mem, _mem) = compute_memory_objective(&input.memory_samples, tau, k_recall)?;
     FiniteScalar::try_new(input.pretrain_logp_mean)?;
-    let pretrain_obj =
-        FiniteScalar::try_new(weights.gamma_ns.value() * input.pretrain_logp_mean)?;
+    let pretrain_obj = FiniteScalar::try_new(weights.gamma_ns.value() * input.pretrain_logp_mean)?;
     let (brier, _cal) =
         compute_brier_calibration(&input.calibration_points, n_calib_bins, abstain_below)?;
     let cal_loss = NonNegativeFinite::try_new(weights.lambda_cal.value() * brier.value())?;
-    let res_loss = compute_resource_loss_batch(&input.resource_costs, resource_weights, &Default::default())?;
+    let res_loss =
+        compute_resource_loss_batch(&input.resource_costs, resource_weights, &Default::default())?;
     let res_term = NonNegativeFinite::try_new(weights.lambda_eff.value() * res_loss.value())?;
 
     // somme finale (ordre exact de l'équation)
@@ -195,9 +193,8 @@ mod tests {
     #[test]
     fn batch_matches_oracle_historical() {
         let mut input = CognoBatchInput::empty();
-        input.rewards = vec![
-            RewardBreakdown::compute(1.0, 0.5, 1.0, 0.25, 0.25, 0.1, 0.05, 0.5, 0.2).unwrap(),
-        ];
+        input.rewards =
+            vec![RewardBreakdown::compute(1.0, 0.5, 1.0, 0.25, 0.25, 0.1, 0.05, 0.5, 0.2).unwrap()];
         input.log_prob_policy = vec![-0.5];
         input.log_prob_ref = vec![-0.5];
         let w = CognoWeights::try_new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap();

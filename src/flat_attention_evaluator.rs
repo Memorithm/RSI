@@ -116,11 +116,7 @@ fn validate_benchmark_plan(plan: &EvaluationPlan) -> Result<(), FlatAttentionEva
 fn assemble_admissibility(evidence: &EvaluationEvidence) -> EngineeringAdmissibility {
     EngineeringAdmissibility {
         build: aggregate_required(evidence, EvidenceKind::Build, "build"),
-        required_tests: aggregate_required(
-            evidence,
-            EvidenceKind::RequiredTests,
-            "required tests",
-        ),
+        required_tests: aggregate_required(evidence, EvidenceKind::RequiredTests, "required tests"),
         numerical_parity: aggregate_required(
             evidence,
             EvidenceKind::NumericalParity,
@@ -273,7 +269,10 @@ mod tests {
             .retain(|step| step.evidence_kind != EvidenceKind::Policy);
         let admissibility = assemble_admissibility(&evidence);
         assert_eq!(admissibility.policy_checks.len(), 1);
-        assert_eq!(admissibility.policy_checks[0].check.status, CheckStatus::Unknown);
+        assert_eq!(
+            admissibility.policy_checks[0].check.status,
+            CheckStatus::Unknown
+        );
         assert_eq!(
             admissibility.verdict().first_violation,
             Some(EngineeringGateKind::Policy)
@@ -299,15 +298,8 @@ mod tests {
     #[test]
     fn benchmark_plan_rejects_hard_gate_steps() {
         let policy = EvaluationPlanPolicy::new(2, 1_000, 1_024, 4, 128).unwrap();
-        let build = EvaluationStep::new(
-            "scirust",
-            "build",
-            vec![],
-            500,
-            256,
-            EvidenceKind::Build,
-        )
-        .unwrap();
+        let build =
+            EvaluationStep::new("scirust", "build", vec![], 500, 256, EvidenceKind::Build).unwrap();
         let plan = EvaluationPlan::new(vec![build], policy).unwrap();
         assert!(validate_benchmark_plan(&plan).is_err());
     }

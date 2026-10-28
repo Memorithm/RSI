@@ -126,8 +126,14 @@ mod tests {
     #[test]
     fn analytic_brier_perfect() {
         let pts = [
-            CalibrationPoint { predicted: 1.0, observed: 1 },
-            CalibrationPoint { predicted: 0.0, observed: 0 },
+            CalibrationPoint {
+                predicted: 1.0,
+                observed: 1,
+            },
+            CalibrationPoint {
+                predicted: 0.0,
+                observed: 0,
+            },
         ];
         let (loss, m) = compute_brier_calibration(&pts, 5, 0.5).unwrap();
         assert_eq!(loss.value(), 0.0);
@@ -138,7 +144,10 @@ mod tests {
     /// Cas analytique Brier : surconfiance. `(p=0.75, z=0)` → err 0.5625.
     #[test]
     fn analytic_brier_overconfident() {
-        let pts = [CalibrationPoint { predicted: 0.75, observed: 0 }];
+        let pts = [CalibrationPoint {
+            predicted: 0.75,
+            observed: 0,
+        }];
         let (loss, m) = compute_brier_calibration(&pts, 5, 0.5).unwrap();
         let expected = 0.75 * 0.75;
         assert!((loss.value() - expected).abs() < 1e-12);
@@ -149,9 +158,18 @@ mod tests {
     #[test]
     fn abstention_metrics() {
         let pts = [
-            CalibrationPoint { predicted: 0.2, observed: 1 }, // s'abstient
-            CalibrationPoint { predicted: 0.9, observed: 1 }, // gardé, correct
-            CalibrationPoint { predicted: 0.8, observed: 0 }, // gardé, faux
+            CalibrationPoint {
+                predicted: 0.2,
+                observed: 1,
+            }, // s'abstient
+            CalibrationPoint {
+                predicted: 0.9,
+                observed: 1,
+            }, // gardé, correct
+            CalibrationPoint {
+                predicted: 0.8,
+                observed: 0,
+            }, // gardé, faux
         ];
         let (_l, m) = compute_brier_calibration(&pts, 5, 0.5).unwrap();
         assert!((m.abstention_rate - 1.0 / 3.0).abs() < 1e-12);
@@ -161,12 +179,22 @@ mod tests {
     #[test]
     fn rejects_invalid_inputs() {
         assert!(compute_brier_calibration(
-            &[CalibrationPoint { predicted: 1.2, observed: 1 }],
-            5, 0.5,
-        ).is_err());
+            &[CalibrationPoint {
+                predicted: 1.2,
+                observed: 1
+            }],
+            5,
+            0.5,
+        )
+        .is_err());
         assert!(compute_brier_calibration(
-            &[CalibrationPoint { predicted: 0.5, observed: 2 }],
-            5, 0.5,
-        ).is_err());
+            &[CalibrationPoint {
+                predicted: 0.5,
+                observed: 2
+            }],
+            5,
+            0.5,
+        )
+        .is_err());
     }
 }

@@ -440,17 +440,31 @@ pub enum CrossRepoWorkspaceError {
     CandidateState(CandidateStateError),
     PatchSet(PatchSetError),
     InvalidPolicy(String),
-    RepositoryLimitExceeded { actual: usize, limit: usize },
-    TotalByteLimitExceeded { actual: u64, limit: u64 },
+    RepositoryLimitExceeded {
+        actual: usize,
+        limit: usize,
+    },
+    TotalByteLimitExceeded {
+        actual: u64,
+        limit: u64,
+    },
     SourceSetMismatch(String),
     DuplicateRole(String),
     UnknownRole(String),
-    RevisionMismatch { role: String, expected: String, actual: String },
+    RevisionMismatch {
+        role: String,
+        expected: String,
+        actual: String,
+    },
     Git(String),
     UnsafeTrackedPath(String),
     UnsupportedTrackedEntry(String),
     PatchRoleNotAllowed(String),
-    DuplicateOverride { consumer_role: String, source: String, package: String },
+    DuplicateOverride {
+        consumer_role: String,
+        source: String,
+        package: String,
+    },
     InvalidOverride(String),
     Io(String),
 }
@@ -462,17 +476,39 @@ impl fmt::Display for CrossRepoWorkspaceError {
             Self::CandidateState(error) => write!(f, "candidate-state error: {error}"),
             Self::PatchSet(error) => write!(f, "PatchSet error: {error}"),
             Self::InvalidPolicy(message) => write!(f, "invalid cross-repo policy: {message}"),
-            Self::RepositoryLimitExceeded { actual, limit } => write!(f, "repository limit exceeded: {actual} > {limit}"),
-            Self::TotalByteLimitExceeded { actual, limit } => write!(f, "workspace byte limit exceeded: {actual} > {limit}"),
+            Self::RepositoryLimitExceeded { actual, limit } => {
+                write!(f, "repository limit exceeded: {actual} > {limit}")
+            }
+            Self::TotalByteLimitExceeded { actual, limit } => {
+                write!(f, "workspace byte limit exceeded: {actual} > {limit}")
+            }
             Self::SourceSetMismatch(message) => write!(f, "source set mismatch: {message}"),
             Self::DuplicateRole(role) => write!(f, "duplicate repository role: {role}"),
             Self::UnknownRole(role) => write!(f, "unknown repository role: {role}"),
-            Self::RevisionMismatch { role, expected, actual } => write!(f, "revision mismatch for role {role}: expected {expected}, got {actual}"),
+            Self::RevisionMismatch {
+                role,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "revision mismatch for role {role}: expected {expected}, got {actual}"
+            ),
             Self::Git(message) => write!(f, "local git verification failed: {message}"),
             Self::UnsafeTrackedPath(path) => write!(f, "unsafe tracked path: {path}"),
-            Self::UnsupportedTrackedEntry(path) => write!(f, "unsupported tracked filesystem entry: {path}"),
-            Self::PatchRoleNotAllowed(role) => write!(f, "task does not allow patches to repository role {role}"),
-            Self::DuplicateOverride { consumer_role, source, package } => write!(f, "duplicate Cargo override for {consumer_role}: {source} / {package}"),
+            Self::UnsupportedTrackedEntry(path) => {
+                write!(f, "unsupported tracked filesystem entry: {path}")
+            }
+            Self::PatchRoleNotAllowed(role) => {
+                write!(f, "task does not allow patches to repository role {role}")
+            }
+            Self::DuplicateOverride {
+                consumer_role,
+                source,
+                package,
+            } => write!(
+                f,
+                "duplicate Cargo override for {consumer_role}: {source} / {package}"
+            ),
             Self::InvalidOverride(message) => write!(f, "invalid Cargo override: {message}"),
             Self::Io(message) => write!(f, "cross-repo workspace I/O error: {message}"),
         }
@@ -481,9 +517,15 @@ impl fmt::Display for CrossRepoWorkspaceError {
 
 impl std::error::Error for CrossRepoWorkspaceError {}
 
-fn verify_git_source(source: &LocalRepositorySource, expected: &RepositoryRevision) -> Result<(), CrossRepoWorkspaceError> {
+fn verify_git_source(
+    source: &LocalRepositorySource,
+    expected: &RepositoryRevision,
+) -> Result<(), CrossRepoWorkspaceError> {
     if !source.root.is_dir() {
-        return Err(CrossRepoWorkspaceError::Git(format!("{} is not a directory", source.root.display())));
+        return Err(CrossRepoWorkspaceError::Git(format!(
+            "{} is not a directory",
+            source.root.display()
+        )));
     }
     let head = git_output(&source.root, &["rev-parse", "HEAD"])?;
     if head.trim() != expected.revision {
@@ -498,7 +540,10 @@ fn verify_git_source(source: &LocalRepositorySource, expected: &RepositoryRevisi
     Ok(())
 }
 
-fn materialize_tracked_tree(source: &Path, destination: &Path) -> Result<(), CrossRepoWorkspaceError> {
+fn materialize_tracked_tree(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), CrossRepoWorkspaceError> {
     std::fs::create_dir_all(destination).map_err(io_error)?;
     let output = Command::new("git")
         .arg("-C")
@@ -507,9 +552,16 @@ fn materialize_tracked_tree(source: &Path, destination: &Path) -> Result<(), Cro
         .output()
         .map_err(|error| CrossRepoWorkspaceError::Git(error.to_string()))?;
     if !output.status.success() {
-        return Err(CrossRepoWorkspaceError::Git(format!("git ls-files failed with {}", output.status)));
+        return Err(CrossRepoWorkspaceError::Git(format!(
+            "git ls-files failed with {}",
+            output.status
+        )));
     }
-    for raw in output.stdout.split(|byte| *byte == 0).filter(|part| !part.is_empty()) {
+    for raw in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+    {
         let path = std::str::from_utf8(raw)
             .map_err(|_| CrossRepoWorkspaceError::UnsafeTrackedPath("non-UTF8 path".into()))?;
         let normalized = normalize_relative(path)?;
@@ -528,21 +580,37 @@ fn materialize_tracked_tree(source: &Path, destination: &Path) -> Result<(), Cro
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<String, CrossRepoWorkspaceError> {
-    let output = Command::new("git").arg("-C").arg(root).args(args).output()
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
         .map_err(|error| CrossRepoWorkspaceError::Git(error.to_string()))?;
     if !output.status.success() {
-        return Err(CrossRepoWorkspaceError::Git(format!("git {} failed with {}", args.join(" "), output.status)));
+        return Err(CrossRepoWorkspaceError::Git(format!(
+            "git {} failed with {}",
+            args.join(" "),
+            output.status
+        )));
     }
-    String::from_utf8(output.stdout).map_err(|_| CrossRepoWorkspaceError::Git("git output is not UTF-8".into()))
+    String::from_utf8(output.stdout)
+        .map_err(|_| CrossRepoWorkspaceError::Git("git output is not UTF-8".into()))
 }
 
 fn git_success(root: &Path, args: &[&str]) -> Result<(), CrossRepoWorkspaceError> {
-    let status = Command::new("git").arg("-C").arg(root).args(args).status()
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .status()
         .map_err(|error| CrossRepoWorkspaceError::Git(error.to_string()))?;
     if status.success() {
         Ok(())
     } else {
-        Err(CrossRepoWorkspaceError::Git(format!("git {} failed with {status}", args.join(" "))))
+        Err(CrossRepoWorkspaceError::Git(format!(
+            "git {} failed with {status}",
+            args.join(" ")
+        )))
     }
 }
 
@@ -564,7 +632,11 @@ fn normalize_relative(path: &str) -> Result<String, CrossRepoWorkspaceError> {
     let mut parts = Vec::new();
     for component in parsed.components() {
         match component {
-            Component::Normal(value) => parts.push(value.to_str().ok_or_else(|| CrossRepoWorkspaceError::UnsafeTrackedPath(path.into()))?),
+            Component::Normal(value) => parts.push(
+                value
+                    .to_str()
+                    .ok_or_else(|| CrossRepoWorkspaceError::UnsafeTrackedPath(path.into()))?,
+            ),
             _ => return Err(CrossRepoWorkspaceError::UnsafeTrackedPath(path.into())),
         }
     }
@@ -576,7 +648,9 @@ fn normalize_relative(path: &str) -> Result<String, CrossRepoWorkspaceError> {
 
 fn checked_text(field: &'static str, value: String) -> Result<String, CrossRepoWorkspaceError> {
     if value.is_empty() || value.trim() != value || value.chars().any(char::is_control) {
-        return Err(CrossRepoWorkspaceError::InvalidOverride(format!("invalid {field}")));
+        return Err(CrossRepoWorkspaceError::InvalidOverride(format!(
+            "invalid {field}"
+        )));
     }
     Ok(value)
 }
@@ -612,7 +686,12 @@ mod tests {
     use crate::patchset::FileOperation;
 
     fn git(root: &Path, args: &[&str]) -> String {
-        let output = Command::new("git").arg("-C").arg(root).args(args).output().unwrap();
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
         assert!(output.status.success(), "git {:?} failed", args);
         String::from_utf8(output.stdout).unwrap().trim().to_string()
     }
@@ -627,8 +706,16 @@ mod tests {
         git(&root, &["init", "-q"]);
         git(&root, &["config", "user.email", "rsi-test@example.invalid"]);
         git(&root, &["config", "user.name", "RSI Test"]);
-        std::fs::write(root.join("Cargo.toml"), format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n")).unwrap();
-        std::fs::write(root.join("src/lib.rs"), format!("pub const NAME: &str = \"{name}\";\n")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            format!("pub const NAME: &str = \"{name}\";\n"),
+        )
+        .unwrap();
         git(&root, &["add", "."]);
         git(&root, &["commit", "-qm", "initial"]);
         let revision = git(&root, &["rev-parse", "HEAD"]);
@@ -636,7 +723,12 @@ mod tests {
     }
 
     fn policy() -> CrossRepoWorkspacePolicy {
-        CrossRepoWorkspacePolicy::new(4, 1_000_000, CandidateStoragePolicy::new(100, 500_000).unwrap()).unwrap()
+        CrossRepoWorkspacePolicy::new(
+            4,
+            1_000_000,
+            CandidateStoragePolicy::new(100, 500_000).unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -651,19 +743,30 @@ mod tests {
             ],
             "rustc stable",
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let workspace = CrossRepoWorkspace::materialize(
             set,
             vec![
                 LocalRepositorySource::new("Memorithm/RSI", "rsi", &a_rev, &a_root).unwrap(),
-                LocalRepositorySource::new("Memorithm/scirust", "scirust", &b_rev, &b_root).unwrap(),
+                LocalRepositorySource::new("Memorithm/scirust", "scirust", &b_rev, &b_root)
+                    .unwrap(),
             ],
             vec!["rsi".into()],
             vec![],
             policy(),
-        ).unwrap();
-        assert!(workspace.root_for_role("rsi").unwrap().join("Cargo.toml").is_file());
-        assert!(!workspace.root_for_role("scirust").unwrap().join("local-only.bin").exists());
+        )
+        .unwrap();
+        assert!(workspace
+            .root_for_role("rsi")
+            .unwrap()
+            .join("Cargo.toml")
+            .is_file());
+        assert!(!workspace
+            .root_for_role("scirust")
+            .unwrap()
+            .join("local-only.bin")
+            .exists());
         let _ = std::fs::remove_dir_all(a_root);
         let _ = std::fs::remove_dir_all(b_root);
     }
@@ -675,19 +778,33 @@ mod tests {
             vec![RepositoryRevision::new("Memorithm/RSI", &revision, "rsi").unwrap()],
             "rustc stable",
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let mismatch = CrossRepoWorkspace::materialize(
             set.clone(),
-            vec![LocalRepositorySource::new("Memorithm/RSI", "rsi", "a".repeat(40), &root).unwrap()],
-            vec![], vec![], policy(),
-        ).err().unwrap();
-        assert!(matches!(mismatch, CrossRepoWorkspaceError::RevisionMismatch { .. }));
+            vec![
+                LocalRepositorySource::new("Memorithm/RSI", "rsi", "a".repeat(40), &root).unwrap(),
+            ],
+            vec![],
+            vec![],
+            policy(),
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(
+            mismatch,
+            CrossRepoWorkspaceError::RevisionMismatch { .. }
+        ));
         std::fs::write(root.join("src/lib.rs"), "pub const DIRTY: bool = true;\n").unwrap();
         let dirty = CrossRepoWorkspace::materialize(
             set,
             vec![LocalRepositorySource::new("Memorithm/RSI", "rsi", &revision, &root).unwrap()],
-            vec![], vec![], policy(),
-        ).err().unwrap();
+            vec![],
+            vec![],
+            policy(),
+        )
+        .err()
+        .unwrap();
         assert!(matches!(dirty, CrossRepoWorkspaceError::Git(_)));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -699,12 +816,35 @@ mod tests {
             vec![RepositoryRevision::new("Memorithm/RSI", &revision, "rsi").unwrap()],
             "rustc stable",
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let source = LocalRepositorySource::new("Memorithm/RSI", "rsi", &revision, &root).unwrap();
-        let patch = PatchSet::new(vec![FileOperation::modify_exact("src/lib.rs", "rsi", "rsi-patched")]).unwrap();
-        let mut denied = CrossRepoWorkspace::materialize(set.clone(), vec![source.clone()], vec![], vec![], policy()).unwrap();
-        assert!(matches!(denied.apply_patch("rsi", &patch), Err(CrossRepoWorkspaceError::PatchRoleNotAllowed(_))));
-        let mut allowed = CrossRepoWorkspace::materialize(set, vec![source], vec!["rsi".into()], vec![], policy()).unwrap();
+        let patch = PatchSet::new(vec![FileOperation::modify_exact(
+            "src/lib.rs",
+            "rsi",
+            "rsi-patched",
+        )])
+        .unwrap();
+        let mut denied = CrossRepoWorkspace::materialize(
+            set.clone(),
+            vec![source.clone()],
+            vec![],
+            vec![],
+            policy(),
+        )
+        .unwrap();
+        assert!(matches!(
+            denied.apply_patch("rsi", &patch),
+            Err(CrossRepoWorkspaceError::PatchRoleNotAllowed(_))
+        ));
+        let mut allowed = CrossRepoWorkspace::materialize(
+            set,
+            vec![source],
+            vec!["rsi".into()],
+            vec![],
+            policy(),
+        )
+        .unwrap();
         let before = allowed.result().repositories[0].state_id.clone();
         let patch_id = allowed.apply_patch("rsi", &patch).unwrap();
         let result = allowed.result();
@@ -725,24 +865,39 @@ mod tests {
             ],
             "rustc stable",
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let rule = CargoPatchOverride::new(
             "consumer",
             "https://github.com/Memorithm/scirust",
             "provider-fixture",
             "provider",
             ".",
-        ).unwrap();
+        )
+        .unwrap();
         let workspace = CrossRepoWorkspace::materialize(
             set,
             vec![
-                LocalRepositorySource::new("Memorithm/RSI", "consumer", &consumer_rev, &consumer_root).unwrap(),
-                LocalRepositorySource::new("Memorithm/scirust", "provider", &provider_rev, &provider_root).unwrap(),
+                LocalRepositorySource::new(
+                    "Memorithm/RSI",
+                    "consumer",
+                    &consumer_rev,
+                    &consumer_root,
+                )
+                .unwrap(),
+                LocalRepositorySource::new(
+                    "Memorithm/scirust",
+                    "provider",
+                    &provider_rev,
+                    &provider_root,
+                )
+                .unwrap(),
             ],
             vec!["provider".into()],
             vec![rule],
             policy(),
-        ).unwrap();
+        )
+        .unwrap();
         let config = workspace.cargo_override_config("consumer").unwrap();
         assert!(!config.starts_with(workspace.root_for_role("consumer").unwrap()));
         let text = std::fs::read_to_string(config).unwrap();

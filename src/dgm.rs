@@ -107,11 +107,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(target_os = "linux")]
-use std::fs::File;
 
 // ════════════════════════════════ Erreurs ════════════════════════════════ //
 
@@ -849,7 +849,9 @@ pub fn promote_to_live(live_root: &Path, patch: &Patch, backup_dir: &Path) -> Re
         )));
     }
     let target = live_root.join(&patch.target);
-    let canon_root = live_root.canonicalize().unwrap_or_else(|_| live_root.to_path_buf());
+    let canon_root = live_root
+        .canonicalize()
+        .unwrap_or_else(|_| live_root.to_path_buf());
     let canon_target = target.canonicalize().unwrap_or_else(|_| target.clone());
     if !canon_target.starts_with(&canon_root) {
         return Err(DgmError::PathNotAllowed(patch.target.clone()));
@@ -1043,7 +1045,12 @@ fn copy_tree_bounded(src: &Path, dst: &Path, budget: &mut u64) -> Result<()> {
             &format!(
                 "{} lien(s) symbolique(s) ignoré(s) dans le snapshot : {}",
                 skipped_links.len(),
-                skipped_links.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                skipped_links
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         );
     }
@@ -1138,12 +1145,12 @@ pub struct IsolationConfig {
 
 impl Default for IsolationConfig {
     fn default() -> Self {
-        let cargo_program = find_program_on_path("cargo")
-            .unwrap_or_else(|| PathBuf::from("/usr/bin/cargo"));
-        let bubblewrap_program = find_program_on_path("bwrap")
-            .unwrap_or_else(|| PathBuf::from("/usr/bin/bwrap"));
-        let prlimit_program = find_program_on_path("prlimit")
-            .unwrap_or_else(|| PathBuf::from("/usr/bin/prlimit"));
+        let cargo_program =
+            find_program_on_path("cargo").unwrap_or_else(|| PathBuf::from("/usr/bin/cargo"));
+        let bubblewrap_program =
+            find_program_on_path("bwrap").unwrap_or_else(|| PathBuf::from("/usr/bin/bwrap"));
+        let prlimit_program =
+            find_program_on_path("prlimit").unwrap_or_else(|| PathBuf::from("/usr/bin/prlimit"));
         let rustup_home = std::env::var_os("RUSTUP_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".rustup")))
@@ -1387,9 +1394,9 @@ fn isolated_cargo_command(
 
     #[cfg(target_os = "linux")]
     {
-        let workspace = workspace_root.canonicalize().map_err(|e| {
-            DgmError::Evaluation(format!("workspace sandbox non canonique: {e}"))
-        })?;
+        let workspace = workspace_root
+            .canonicalize()
+            .map_err(|e| DgmError::Evaluation(format!("workspace sandbox non canonique: {e}")))?;
         let workdir = dir.canonicalize().map_err(|e| {
             DgmError::Evaluation(format!("package_subdir sandbox non canonique: {e}"))
         })?;
@@ -1441,83 +1448,79 @@ fn build_isolated_cargo_command(
     cargo_args: &[String],
     config: &IsolationConfig,
 ) -> Result<Command> {
-        let mut cmd = Command::new(&config.prlimit_program);
-        cmd.arg(format!("--as={}", config.max_memory_bytes))
-            .arg(format!("--nproc={}", config.max_processes))
-            .arg(format!("--cpu={}", config.max_cpu_seconds))
-            .arg("--")
-            .arg(&config.bubblewrap_program)
-            .args([
-                "--die-with-parent",
-                "--new-session",
-                "--unshare-all",
-                "--clearenv",
-                "--proc",
-                "/proc",
-                "--dev",
-                "/dev",
-                "--tmpfs",
-                "/tmp",
-                "--tmpfs",
-                "/home",
-                "--dir",
-                "/tmp/home",
-                "--dir",
-                "/tmp/cargo-home",
-            ]);
+    let mut cmd = Command::new(&config.prlimit_program);
+    cmd.arg(format!("--as={}", config.max_memory_bytes))
+        .arg(format!("--nproc={}", config.max_processes))
+        .arg(format!("--cpu={}", config.max_cpu_seconds))
+        .arg("--")
+        .arg(&config.bubblewrap_program)
+        .args([
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-all",
+            "--clearenv",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--tmpfs",
+            "/home",
+            "--dir",
+            "/tmp/home",
+            "--dir",
+            "/tmp/cargo-home",
+        ]);
 
-        for runtime in &config.read_only_runtime_paths {
-            if !runtime.is_absolute() {
-                return Err(DgmError::Evaluation(format!(
-                    "montage runtime non absolu refusé: {}",
-                    runtime.display()
-                )));
-            }
-            if runtime.exists() {
-                cmd.arg("--ro-bind").arg(runtime).arg(runtime);
-            }
+    for runtime in &config.read_only_runtime_paths {
+        if !runtime.is_absolute() {
+            return Err(DgmError::Evaluation(format!(
+                "montage runtime non absolu refusé: {}",
+                runtime.display()
+            )));
         }
-
-        let cargo_parent = config
-            .cargo_program
-            .parent()
-            .unwrap_or_else(|| Path::new("/usr/bin"));
-        let sandbox_path = format!("{}:/usr/bin:/bin", cargo_parent.display());
-
-        cmd.arg("--bind")
-            .arg(workspace)
-            .arg(workspace)
-            .arg("--chdir")
-            .arg(workdir)
-            .arg("--setenv")
-            .arg("HOME")
-            .arg("/tmp/home")
-            .arg("--setenv")
-            .arg("TMPDIR")
-            .arg("/tmp")
-            .arg("--setenv")
-            .arg("CARGO_HOME")
-            .arg("/tmp/cargo-home")
-            .arg("--setenv")
-            .arg("CARGO_NET_OFFLINE")
-            .arg("true")
-            .arg("--setenv")
-            .arg("PATH")
-            .arg(sandbox_path);
-        if let Some(rustup_home) = &config.rustup_home {
-            if !rustup_home.is_absolute() || !rustup_home.is_dir() {
-                return Err(DgmError::Evaluation(
-                    "RUSTUP_HOME du sandbox doit être un répertoire absolu existant".to_string(),
-                ));
-            }
-            cmd.arg("--setenv")
-                .arg("RUSTUP_HOME")
-                .arg(rustup_home);
+        if runtime.exists() {
+            cmd.arg("--ro-bind").arg(runtime).arg(runtime);
         }
-        cmd.arg("--")
-            .arg(&config.cargo_program)
-            .args(cargo_args);
-        Ok(cmd)
+    }
+
+    let cargo_parent = config
+        .cargo_program
+        .parent()
+        .unwrap_or_else(|| Path::new("/usr/bin"));
+    let sandbox_path = format!("{}:/usr/bin:/bin", cargo_parent.display());
+
+    cmd.arg("--bind")
+        .arg(workspace)
+        .arg(workspace)
+        .arg("--chdir")
+        .arg(workdir)
+        .arg("--setenv")
+        .arg("HOME")
+        .arg("/tmp/home")
+        .arg("--setenv")
+        .arg("TMPDIR")
+        .arg("/tmp")
+        .arg("--setenv")
+        .arg("CARGO_HOME")
+        .arg("/tmp/cargo-home")
+        .arg("--setenv")
+        .arg("CARGO_NET_OFFLINE")
+        .arg("true")
+        .arg("--setenv")
+        .arg("PATH")
+        .arg(sandbox_path);
+    if let Some(rustup_home) = &config.rustup_home {
+        if !rustup_home.is_absolute() || !rustup_home.is_dir() {
+            return Err(DgmError::Evaluation(
+                "RUSTUP_HOME du sandbox doit être un répertoire absolu existant".to_string(),
+            ));
+        }
+        cmd.arg("--setenv").arg("RUSTUP_HOME").arg(rustup_home);
+    }
+    cmd.arg("--").arg(&config.cargo_program).args(cargo_args);
+    Ok(cmd)
 }
 
 #[cfg(target_os = "linux")]
@@ -1571,9 +1574,8 @@ impl CgroupScope {
     }
 
     fn write(&self, name: &str, value: &str) -> Result<()> {
-        std::fs::write(self.path.join(name), value).map_err(|e| {
-            DgmError::Evaluation(format!("configuration cgroup {name} refusée: {e}"))
-        })
+        std::fs::write(self.path.join(name), value)
+            .map_err(|e| DgmError::Evaluation(format!("configuration cgroup {name} refusée: {e}")))
     }
 
     fn attach_file(&self) -> std::io::Result<File> {
@@ -1666,12 +1668,7 @@ fn run_prepared(
     timeout: Duration,
     max_output: u64,
 ) -> std::io::Result<(bool, String)> {
-    run_bounded_scoped(
-        prepared.command,
-        timeout,
-        max_output,
-        prepared.cgroup,
-    )
+    run_bounded_scoped(prepared.command, timeout, max_output, prepared.cgroup)
 }
 
 fn run_bounded_scoped(
@@ -1686,10 +1683,7 @@ fn run_bounded_scoped(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(target_os = "linux")]
-    let cgroup_file = cgroup
-        .as_ref()
-        .map(CgroupScope::attach_file)
-        .transpose()?;
+    let cgroup_file = cgroup.as_ref().map(CgroupScope::attach_file).transpose()?;
     #[cfg(target_os = "linux")]
     let cgroup_fd = cgroup_file.as_ref().map(AsRawFd::as_raw_fd);
     // Un groupe de processus propre garantit que le timeout tue aussi les
@@ -1748,9 +1742,7 @@ fn run_bounded_scoped(
                 if let Some(scope) = cgroup.as_ref() {
                     match scope.cpu_budget_exhausted() {
                         Ok(true) => {
-                            forced_failure = Some(
-                                "budget CPU agrégé cgroup v2 épuisé".to_string(),
-                            );
+                            forced_failure = Some("budget CPU agrégé cgroup v2 épuisé".to_string());
                             scope.kill_all();
                             #[cfg(unix)]
                             kill_process_tree(&mut child, process_group);
@@ -1758,9 +1750,8 @@ fn run_bounded_scoped(
                             break None;
                         }
                         Err(e) => {
-                            forced_failure = Some(format!(
-                                "lecture du budget CPU cgroup v2 impossible: {e}"
-                            ));
+                            forced_failure =
+                                Some(format!("lecture du budget CPU cgroup v2 impossible: {e}"));
                             scope.kill_all();
                             #[cfg(unix)]
                             kill_process_tree(&mut child, process_group);
@@ -2483,7 +2474,8 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         // passants ne peuvent augmenter que du nombre de `#[test]` AJOUTÉS
         // par la lignée+patch (+ marge doctests). Toute inflation au-delà =
         // fabrication, même structurellement cohérente.
-        if fitness.compiles { // broken => compiles=false, déjà exclu
+        if fitness.compiles {
+            // broken => compiles=false, déjà exclu
             if let Some(delta) = self.declared_test_delta(&proposal.patch, &ancestors) {
                 const DOC_TEST_SLACK: u32 = 32;
                 let ceiling = parent_fit
@@ -2579,8 +2571,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         // Vue parent : replie la lignée sur un snapshot (fallback = vivant).
         let view = self.parent_view(parent.id.as_str());
         let fallback_root = std::path::PathBuf::from(&self.config.workspace_root);
-        let view_root: &std::path::Path =
-            view.as_ref().map(|v| v.root()).unwrap_or(&fallback_root);
+        let view_root: &std::path::Path = view.as_ref().map(|v| v.root()).unwrap_or(&fallback_root);
         let ctx = ImprovementContext {
             workspace_root: view_root,
             goal: &self.config.goal,
@@ -2639,7 +2630,9 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
         let mut cur = Some(variant_id.to_string());
         for _ in 0..4096 {
             let Some(id) = cur else { break };
-            let Some(v) = self.archive.get(&id) else { break };
+            let Some(v) = self.archive.get(&id) else {
+                break;
+            };
             cur = v.parent.clone();
             if v.parent.is_some() {
                 if !v.patch.is_noop() {
@@ -2688,9 +2681,7 @@ impl<P: Proposer, E: Evaluator> DgmEngine<P, E> {
             if let Err(e) = snap.apply(anc) {
                 // La lignée enregistrée ne s'applique plus sur l'arbre courant
                 // (contenu dérivé) : échec honnête, pas un crash.
-                return Ok(Fitness::broken(format!(
-                    "ancestor #{i} did not apply: {e}"
-                )));
+                return Ok(Fitness::broken(format!("ancestor #{i} did not apply: {e}")));
             }
         }
         if let Err(e) = snap.apply(patch) {
@@ -2978,18 +2969,12 @@ mod tests {
             cpu_quota_micros: 100_000,
             cpu_period_micros: 100_000,
         };
-        let mut prepared = isolated_cargo_command(
-            &workspace,
-            &workspace,
-            &["test".to_string()],
-            &config,
-        )
-        .unwrap();
+        let mut prepared =
+            isolated_cargo_command(&workspace, &workspace, &["test".to_string()], &config).unwrap();
         prepared
             .command
             .env("RSI_HOST_SECRET", "must-not-cross-sandbox");
-        let (ok, output) =
-            run_prepared(prepared, Duration::from_secs(10), 64 * 1024).unwrap();
+        let (ok, output) = run_prepared(prepared, Duration::from_secs(10), 64 * 1024).unwrap();
         assert!(ok, "sandbox probe failed: {output}");
         assert_eq!(output, "sandbox-ok");
 
@@ -3003,8 +2988,7 @@ mod tests {
         )
         .unwrap();
         let started = Instant::now();
-        let (ok, output) =
-            run_prepared(cpu_probe, Duration::from_secs(8), 64 * 1024).unwrap();
+        let (ok, output) = run_prepared(cpu_probe, Duration::from_secs(8), 64 * 1024).unwrap();
         assert!(!ok, "aggregate CPU budget was not enforced");
         assert!(
             output.contains("budget CPU agrégé"),
@@ -3183,7 +3167,10 @@ mod tests {
         std::fs::write(outside.join("victim.txt"), "value = 1").unwrap();
         let backups = fresh_dir("promote-esc-bak");
 
-        let rel_escape = format!("../{}/victim.txt", outside.file_name().unwrap().to_string_lossy());
+        let rel_escape = format!(
+            "../{}/victim.txt",
+            outside.file_name().unwrap().to_string_lossy()
+        );
         let err = promote_to_live(
             &live,
             &Patch::new(&rel_escape, "value = 1", "value = 2"),
@@ -3237,9 +3224,8 @@ test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     fn forged_result_line_is_rejected() {
         let legit = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n";
         assert_eq!(parse_test_counts(legit), Ok((3, 0)));
-        let forged = format!(
-            "{legit}test result: ok. 1000000 passed; 0 failed; 0 ignored; 0 measured\n"
-        );
+        let forged =
+            format!("{legit}test result: ok. 1000000 passed; 0 failed; 0 ignored; 0 measured\n");
         assert!(parse_test_counts(&forged).is_err(), "injection détectée");
     }
 
@@ -3594,9 +3580,9 @@ RATIONALE: bump the constant
             .history()
             .iter()
             .filter_map(|o| match o {
-                StepOutcome::Evaluated { accepted, fitness, .. } if !*accepted => {
-                    Some(fitness.notes.clone())
-                }
+                StepOutcome::Evaluated {
+                    accepted, fitness, ..
+                } if !*accepted => Some(fitness.notes.clone()),
                 _ => None,
             })
             .collect();
@@ -3619,7 +3605,10 @@ RATIONALE: bump the constant
         );
         let eng = engine(&ws);
         let delta = eng
-            .declared_test_delta(&patch, &eng.lineage_patches(eng.archive().variants[0].id.as_str()))
+            .declared_test_delta(
+                &patch,
+                &eng.lineage_patches(eng.archive().variants[0].id.as_str()),
+            )
             .unwrap();
         // le marqueur de commentaire compte aussi (direction conservatrice :
         // surestime les tests ajoutés => relâche à peine le plafond)

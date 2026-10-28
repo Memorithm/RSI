@@ -25,9 +25,8 @@ use rsi::{
     ExploredObjective, FileOperation, FrozenAutopilotSpec, FrozenBenchmarkArtifact,
     FrozenPerfBenchmark, GateStatus, HardGateProfile, MetricDirection, PatchSet,
     PerfBenchmarkApproval, PerfBenchmarkDraft, PerfMeasurementBatch, ProposerMetadata,
-    PullRequestPlanDraft, RepositoryExploration, RepositoryRevision, RepositoryScope,
-    SpecBudget, TaskBudget, TaskDagPolicy, TaskEditAllowance,
-    TaskOperation, TaskRegime,
+    PullRequestPlanDraft, RepositoryExploration, RepositoryRevision, RepositoryScope, SpecBudget,
+    TaskBudget, TaskDagPolicy, TaskEditAllowance, TaskOperation, TaskRegime,
 };
 // types non ré-exportés à la racine :
 use rsi::autopilot_pr::TaskBoundEngineeringTrajectory;
@@ -169,7 +168,7 @@ fn promotion(
             })
             .unwrap()],
             artifacts: vec![
-                FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", hex64('1')).unwrap()
+                FrozenBenchmarkArtifact::new("rsi", "benches/perf.rs", hex64('1')).unwrap(),
             ],
         },
     )
@@ -209,7 +208,10 @@ fn main() {
     // 1-2. spec gelée + DAG de tâches
     let spec = spec();
     let dag = task(&spec);
-    println!("\n[1] FrozenAutopilotSpec  sha256={}…", &spec.spec_sha256()[..16]);
+    println!(
+        "\n[1] FrozenAutopilotSpec  sha256={}…",
+        &spec.spec_sha256()[..16]
+    );
     println!("    objectif : {}", spec.objective());
     println!(
         "[2] DAG                  {} tâche(s), politique gelée",
@@ -234,15 +236,9 @@ fn main() {
     );
 
     // 5. liaison + plan de PR (create_branch + open_pull_request, jamais merge)
-    let bound = TaskBoundEngineeringTrajectory::new(
-        &spec,
-        &dag,
-        "perf-task",
-        "rsi",
-        traj,
-        Some(promo),
-    )
-    .unwrap();
+    let bound =
+        TaskBoundEngineeringTrajectory::new(&spec, &dag, "perf-task", "rsi", traj, Some(promo))
+            .unwrap();
     let plan = AutopilotPullRequestPlan::new(
         &spec,
         &dag,
@@ -251,16 +247,28 @@ fn main() {
     )
     .unwrap();
 
-    println!("[5] Plan de PR           branche « {} »", plan.branch_name());
+    println!(
+        "[5] Plan de PR           branche « {} »",
+        plan.branch_name()
+    );
     for a in plan.hosting_actions() {
         println!("                         action : {:?}", a);
     }
     assert_ne!(plan.branch_name(), plan.default_branch());
-    assert!(plan.body().contains("does not request or encode automatic merge"));
+    assert!(plan
+        .body()
+        .contains("does not request or encode automatic merge"));
 
-    println!("\nPlan JSON ({} octets) — émission = revue humaine puis CI :", plan.to_json_string().len());
+    println!(
+        "\nPlan JSON ({} octets) — émission = revue humaine puis CI :",
+        plan.to_json_string().len()
+    );
     println!("{}", "─".repeat(78));
-    println!("base: {} ← head: {}", plan.default_branch(), plan.branch_name());
+    println!(
+        "base: {} ← head: {}",
+        plan.default_branch(),
+        plan.branch_name()
+    );
 
     println!("\n✓ pipeline complet exécuté hors-ligne : aucune écriture, aucun merge.");
 }

@@ -16,8 +16,8 @@
 //! ```
 
 use rsi::dgm::{
-    Archive, ClosureEvaluator, DgmConfig, DgmEngine, Fitness, ImprovementContext, Proposer,
-    Proposal, Patch, WebContextProvider,
+    Archive, ClosureEvaluator, DgmConfig, DgmEngine, Fitness, ImprovementContext, Patch, Proposal,
+    Proposer, WebContextProvider,
 };
 use rsi::web_crawl::{CrawlLimits, CrawlerOptions, WebCrawlerContext};
 use rsi::Rng;
@@ -59,7 +59,11 @@ fn level_evaluator() -> ClosureEvaluator<impl Fn(&Path) -> Fitness> {
             compiles: true,
             tests_passed: if content.contains("level 2") { 3 } else { 0 },
             tests_failed: 0,
-            score: if content.contains("level 2") { 0.9 } else { 0.1 },
+            score: if content.contains("level 2") {
+                0.9
+            } else {
+                0.1
+            },
             notes: String::new(),
         }
     })
@@ -95,14 +99,8 @@ fn main() {
         saw_context: AtomicBool::new(false),
     };
     let config = DgmConfig::new(ws.clone(), "reach level 2");
-    let mut engine = DgmEngine::new(
-        Archive::new(),
-        proposer,
-        level_evaluator(),
-        config,
-        1,
-    )
-    .with_web_context(Box::new(web));
+    let mut engine = DgmEngine::new(Archive::new(), proposer, level_evaluator(), config, 1)
+        .with_web_context(Box::new(web));
 
     // 3. exécute un step — le proposeur doit voir le contexte web
     let outcome = engine.step().unwrap();
@@ -129,9 +127,11 @@ fn main() {
         println!("  · {short}…");
     }
 
-    println!("\nÀ noter : le fetch réel dépend du réseau. Le câblage (champ\n\
+    println!(
+        "\nÀ noter : le fetch réel dépend du réseau. Le câblage (champ\n\
               `external_context` → `build_prompt`, cf. dgm.rs) est garanti par\n\
               la structure : `with_web_context` alimente `external_context`\n\
               qui est lu par `LlmProposer::build_prompt`. Ce test de structure\n\
-              ne dépend pas de la disponibilité du web au moment du run.");
+              ne dépend pas de la disponibilité du web au moment du run."
+    );
 }

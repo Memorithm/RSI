@@ -11,7 +11,7 @@ use cogno_core::error::CognoResult;
 use cogno_core::numeric::FiniteScalar;
 use cogno_core::objective::CognoObjectiveBreakdown;
 
-use crate::batch::{CognoBatchInput, compute_objective_batch};
+use crate::batch::{compute_objective_batch, CognoBatchInput};
 use cogno_core::objective::{compute_cogno_objective, CognoWeights};
 use cogno_core::resource::ResourceWeights;
 
@@ -32,16 +32,52 @@ pub struct BatchComparison {
 impl BatchComparison {
     /// Compare deux breakdowns, composante par composante (décomposition
     /// jamais perdue — contrat §9/§17).
-    pub fn compare(a: &CognoObjectiveBreakdown, b: &CognoObjectiveBreakdown, tolerance: f64) -> Self {
+    pub fn compare(
+        a: &CognoObjectiveBreakdown,
+        b: &CognoObjectiveBreakdown,
+        tolerance: f64,
+    ) -> Self {
         let comps: [(&'static str, f64, f64); 9] = [
-            ("admissible_reward", a.admissible_reward.value(), b.admissible_reward.value()),
-            ("reference_log_ratio", a.reference_log_ratio.value(), b.reference_log_ratio.value()),
-            ("preference_objective", a.preference_objective.value(), b.preference_objective.value()),
-            ("symbolic_objective", a.symbolic_objective.value(), b.symbolic_objective.value()),
-            ("memory_objective", a.memory_objective.value(), b.memory_objective.value()),
-            ("pretraining_objective", a.pretraining_objective.value(), b.pretraining_objective.value()),
-            ("calibration_loss", a.calibration_loss.value(), b.calibration_loss.value()),
-            ("resource_loss", a.resource_loss.value(), b.resource_loss.value()),
+            (
+                "admissible_reward",
+                a.admissible_reward.value(),
+                b.admissible_reward.value(),
+            ),
+            (
+                "reference_log_ratio",
+                a.reference_log_ratio.value(),
+                b.reference_log_ratio.value(),
+            ),
+            (
+                "preference_objective",
+                a.preference_objective.value(),
+                b.preference_objective.value(),
+            ),
+            (
+                "symbolic_objective",
+                a.symbolic_objective.value(),
+                b.symbolic_objective.value(),
+            ),
+            (
+                "memory_objective",
+                a.memory_objective.value(),
+                b.memory_objective.value(),
+            ),
+            (
+                "pretraining_objective",
+                a.pretraining_objective.value(),
+                b.pretraining_objective.value(),
+            ),
+            (
+                "calibration_loss",
+                a.calibration_loss.value(),
+                b.calibration_loss.value(),
+            ),
+            (
+                "resource_loss",
+                a.resource_loss.value(),
+                b.resource_loss.value(),
+            ),
             ("total_loss", a.total_loss.value(), b.total_loss.value()),
         ];
         let mut worst = ("", 0.0f64);
@@ -94,7 +130,14 @@ pub fn compare_oracle_and_backend(
         weights,
         resource_weights,
         tolerance,
-        HyperParams { alpha: 1.0, tau: 1.0, symbolic_epsilon: 1e-6, k_recall: 1, n_calib_bins: 5, abstain_below: 0.5 },
+        HyperParams {
+            alpha: 1.0,
+            tau: 1.0,
+            symbolic_epsilon: 1e-6,
+            k_recall: 1,
+            n_calib_bins: 5,
+            abstain_below: 0.5,
+        },
     )
 }
 
@@ -214,7 +257,10 @@ pub fn compare_gradients(
         }
         max_diff = max_diff.max(diff);
     }
-    Ok(GradientComparison { max_abs_diff: max_diff, matches })
+    Ok(GradientComparison {
+        max_abs_diff: max_diff,
+        matches,
+    })
 }
 
 /// Comparaison **après un pas d'optimisation** (contrat §14 : « comparer les
@@ -236,7 +282,8 @@ pub fn compare_after_optim_step(
         let mut opt = AdamW::new(config, params.len())
             .map_err(cogno_core::error::CognoError::InvalidInput)?;
         let mut p = params.to_vec();
-        opt.step(&mut p, grad).map_err(cogno_core::error::CognoError::InvalidInput)?;
+        opt.step(&mut p, grad)
+            .map_err(cogno_core::error::CognoError::InvalidInput)?;
         Ok(p)
     };
     let a = run()?;
@@ -259,8 +306,7 @@ pub fn compare_after_optim_step(
         // total ~lr·√n. Borne analytique correcte :
         //   ‖Δθ‖ ≤ lr·√n + lr·wd·‖θ_{t-1}‖ (+ε numérique).
         let n = a.len() as f64;
-        let norm_before: f64 =
-            params.iter().map(|p| p * p).sum::<f64>().sqrt();
+        let norm_before: f64 = params.iter().map(|p| p * p).sum::<f64>().sqrt();
         let wd_term = config.weight_decay * config.lr * norm_before;
         let bound = config.lr * n.sqrt() + wd_term + 1e-6 * (1.0 + norm_before);
         let disp: f64 = a
@@ -283,9 +329,8 @@ mod tests {
 
     fn sample_batch() -> CognoBatchInput {
         let mut b = CognoBatchInput::empty();
-        b.rewards = vec![
-            RewardBreakdown::compute(1.0, 0.5, 1.0, 0.25, 0.25, 0.1, 0.05, 0.5, 0.2).unwrap(),
-        ];
+        b.rewards =
+            vec![RewardBreakdown::compute(1.0, 0.5, 1.0, 0.25, 0.25, 0.1, 0.05, 0.5, 0.2).unwrap()];
         b.log_prob_policy = vec![-0.5];
         b.log_prob_ref = vec![-0.5];
         b
@@ -294,11 +339,17 @@ mod tests {
     #[test]
     fn oracle_and_backend_match() {
         let w = CognoWeights::default();
-        let report = compare_oracle_and_backend(&[sample_batch()], &w, &ResourceWeights::default(), 1e-9).unwrap();
+        let report =
+            compare_oracle_and_backend(&[sample_batch()], &w, &ResourceWeights::default(), 1e-9)
+                .unwrap();
         assert!(report.all_match, "backend ne correspond pas à l'oracle");
         assert_eq!(report.batches_tested, 1);
-        assert!((report.comparisons[0].oracle.total_loss.value()
-            - report.comparisons[0].backend.total_loss.value()).abs() < 1e-9);
+        assert!(
+            (report.comparisons[0].oracle.total_loss.value()
+                - report.comparisons[0].backend.total_loss.value())
+            .abs()
+                < 1e-9
+        );
     }
 
     /// Audit a15 : la parité doit aussi tenir HORS des hyperparamètres par
@@ -308,14 +359,40 @@ mod tests {
     fn oracle_and_backend_match_off_default_hyperparams() {
         use crate::cross_validate::HyperParams;
         for hp in [
-            HyperParams { alpha: 2.0, tau: 0.5, symbolic_epsilon: 1e-3, k_recall: 3, n_calib_bins: 12, abstain_below: 0.3 },
-            HyperParams { alpha: 0.25, tau: 4.0, symbolic_epsilon: 1e-4, k_recall: 1, n_calib_bins: 8, abstain_below: 0.6 },
-            HyperParams { alpha: 1.5, tau: 1.5, symbolic_epsilon: 1e-6, k_recall: 2, n_calib_bins: 5, abstain_below: 0.5 },
+            HyperParams {
+                alpha: 2.0,
+                tau: 0.5,
+                symbolic_epsilon: 1e-3,
+                k_recall: 3,
+                n_calib_bins: 12,
+                abstain_below: 0.3,
+            },
+            HyperParams {
+                alpha: 0.25,
+                tau: 4.0,
+                symbolic_epsilon: 1e-4,
+                k_recall: 1,
+                n_calib_bins: 8,
+                abstain_below: 0.6,
+            },
+            HyperParams {
+                alpha: 1.5,
+                tau: 1.5,
+                symbolic_epsilon: 1e-6,
+                k_recall: 2,
+                n_calib_bins: 5,
+                abstain_below: 0.5,
+            },
         ] {
             let w = CognoWeights::default();
-            let report =
-                compare_oracle_and_backend_with(&[sample_batch()], &w, &ResourceWeights::default(), 1e-9, hp)
-                    .unwrap();
+            let report = compare_oracle_and_backend_with(
+                &[sample_batch()],
+                &w,
+                &ResourceWeights::default(),
+                1e-9,
+                hp,
+            )
+            .unwrap();
             assert!(report.all_match, "parité perdue à {hp:?}");
         }
     }
@@ -336,7 +413,10 @@ mod tests {
         // longueur incohérente → erreur structurée
         let short = |_p: &[f64]| -> CognoResult<Vec<f64>> { Ok(vec![1.0]) };
         let e = compare_gradients(&f, &short, &[1.5, -2.0], 1e-4).unwrap_err();
-        assert!(matches!(e, cogno_core::error::CognoError::LengthMismatch { .. }));
+        assert!(matches!(
+            e,
+            cogno_core::error::CognoError::LengthMismatch { .. }
+        ));
     }
 
     // ─── Validation croisée §14 : cas imposés ─────────────────────────────── //
@@ -356,7 +436,12 @@ mod tests {
 
     fn check_batch(input: &CognoBatchInput, label: &str) {
         let w = CognoWeights::default();
-        let report = compare_oracle_and_backend(std::slice::from_ref(input), &w, &ResourceWeights::default(), 1e-9);
+        let report = compare_oracle_and_backend(
+            std::slice::from_ref(input),
+            &w,
+            &ResourceWeights::default(),
+            1e-9,
+        );
         match report {
             Ok(r) => assert!(r.all_match, "batch [{label}] : backend ≠ oracle"),
             Err(e) => panic!("batch [{label}] : erreur inattendue {e}"),
@@ -375,9 +460,8 @@ mod tests {
     #[test]
     fn cv_single_batch_all_terms() {
         let mut b = CognoBatchInput::empty();
-        b.rewards = vec![
-            RewardBreakdown::compute(0.5, 0.2, 1.0, 0.1, 0.1, 0.01, 0.02, 0.1, 0.5).unwrap(),
-        ];
+        b.rewards =
+            vec![RewardBreakdown::compute(0.5, 0.2, 1.0, 0.1, 0.1, 0.01, 0.02, 0.1, 0.5).unwrap()];
         b.log_prob_policy = vec![-0.7];
         b.log_prob_ref = vec![-0.7];
         b.preference_pairs = vec![PreferencePair {
@@ -400,8 +484,14 @@ mod tests {
             held_out: false,
         }];
         b.calibration_points = vec![
-            CalibrationPoint { predicted: 0.8, observed: 1 },
-            CalibrationPoint { predicted: 0.3, observed: 0 },
+            CalibrationPoint {
+                predicted: 0.8,
+                observed: 1,
+            },
+            CalibrationPoint {
+                predicted: 0.3,
+                observed: 0,
+            },
         ];
         b.resource_costs = vec![cogno_core::resource::ResourceCosts::new(1024, 50, 512)];
         b.pretrain_logp_mean = -0.4;
@@ -427,9 +517,8 @@ mod tests {
     #[test]
     fn cv_policy_equals_ref() {
         let mut b = CognoBatchInput::empty();
-        b.rewards = vec![
-            RewardBreakdown::compute(1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap(),
-        ];
+        b.rewards =
+            vec![RewardBreakdown::compute(1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap()];
         b.log_prob_policy = vec![-0.5];
         b.log_prob_ref = vec![-0.5];
         check_batch(&b, "policy=ref");
@@ -462,7 +551,10 @@ mod tests {
     #[test]
     fn cv_overconfident_calibration() {
         let mut b = CognoBatchInput::empty();
-        b.calibration_points = vec![CalibrationPoint { predicted: 0.99, observed: 0 }];
+        b.calibration_points = vec![CalibrationPoint {
+            predicted: 0.99,
+            observed: 0,
+        }];
         check_batch(&b, "surconfiance");
     }
 
@@ -471,7 +563,9 @@ mod tests {
     fn cv_costs_at_budget() {
         let mut b = CognoBatchInput::empty();
         b.resource_costs = vec![cogno_core::resource::ResourceCosts::new(
-            8 * 1024 * 1024, 500, 4096,
+            8 * 1024 * 1024,
+            500,
+            4096,
         )];
         check_batch(&b, "coûts-au-budget");
     }
@@ -483,9 +577,8 @@ mod tests {
         let mut b = CognoBatchInput::empty();
         b.log_prob_policy = vec![f64::NAN];
         b.log_prob_ref = vec![f64::NAN];
-        b.rewards = vec![
-            RewardBreakdown::compute(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap(),
-        ];
+        b.rewards =
+            vec![RewardBreakdown::compute(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap()];
         let w = CognoWeights::default();
         // l'oracle échoue
         let oracle_input = cogno_core::objective::CognoObjectiveInput {
@@ -499,9 +592,29 @@ mod tests {
             calibration_points: vec![],
             resource_costs: vec![],
         };
-        let o = compute_cogno_objective(&oracle_input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5);
+        let o = compute_cogno_objective(
+            &oracle_input,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        );
         assert!(o.is_err(), "NaN doit être rejeté par l'oracle");
-        let bt = compute_objective_batch(&b, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5);
+        let bt = compute_objective_batch(
+            &b,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        );
         assert!(bt.is_err(), "NaN doit être rejeté par le backend");
     }
 
@@ -528,17 +641,38 @@ mod tests {
             calibration_points: vec![],
             resource_costs: vec![],
         };
-        assert!(compute_cogno_objective(&oracle_input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5).is_err());
-        assert!(compute_objective_batch(&b, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5).is_err());
+        assert!(compute_cogno_objective(
+            &oracle_input,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5
+        )
+        .is_err());
+        assert!(compute_objective_batch(
+            &b,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5
+        )
+        .is_err());
     }
 
     /// Mismatch de longueur (récompenses vs log-probs) : erreur structurée.
     #[test]
     fn cv_length_mismatch() {
         let mut b = CognoBatchInput::empty();
-        b.rewards = vec![
-            RewardBreakdown::compute(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap(),
-        ];
+        b.rewards =
+            vec![RewardBreakdown::compute(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0).unwrap()];
         b.log_prob_policy = vec![]; // 1 récompense vs 0 log-prob
         b.log_prob_ref = vec![];
         let w = CognoWeights::default();
@@ -553,10 +687,36 @@ mod tests {
             calibration_points: vec![],
             resource_costs: vec![],
         };
-        let o = compute_cogno_objective(&oracle_input, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5);
-        assert!(matches!(o, Err(cogno_core::error::CognoError::LengthMismatch { .. })));
-        let bt = compute_objective_batch(&b, &w, &ResourceWeights::default(), 1.0, 1.0, 1e-6, 1, 5, 0.5);
-        assert!(matches!(bt, Err(cogno_core::error::CognoError::LengthMismatch { .. })));
+        let o = compute_cogno_objective(
+            &oracle_input,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        );
+        assert!(matches!(
+            o,
+            Err(cogno_core::error::CognoError::LengthMismatch { .. })
+        ));
+        let bt = compute_objective_batch(
+            &b,
+            &w,
+            &ResourceWeights::default(),
+            1.0,
+            1.0,
+            1e-6,
+            1,
+            5,
+            0.5,
+        );
+        assert!(matches!(
+            bt,
+            Err(cogno_core::error::CognoError::LengthMismatch { .. })
+        ));
     }
 
     /// Préférence indifférente (Δ=0) : J_pref = ln 0.5, identique.

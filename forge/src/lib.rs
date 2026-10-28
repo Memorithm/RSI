@@ -371,7 +371,10 @@ mod tests {
         engine.sort_best(&mut pop);
         assert_eq!(pop[0].score.objectives, vec![-10.0, 5.0]);
         // NaN ne gagne jamais
-        let nan = Individual { cand: Quad { x: 2.0 }, score: Score::valid(vec![f64::NAN]) };
+        let nan = Individual {
+            cand: Quad { x: 2.0 },
+            score: Score::valid(vec![f64::NAN]),
+        };
         let mut pop = vec![nan, good];
         engine.sort_best(&mut pop);
         assert!(pop[0].score.objectives[0].is_finite());

@@ -19,14 +19,8 @@ pub enum CompatibilityError {
     EmptyField(&'static str),
     InvalidRepository(String),
     InvalidRevision(String),
-    InvalidValue {
-        field: &'static str,
-        value: String,
-    },
-    DuplicateRepositoryRole {
-        repository: String,
-        role: String,
-    },
+    InvalidValue { field: &'static str, value: String },
+    DuplicateRepositoryRole { repository: String, role: String },
     InvalidJson(String),
     UnsupportedSchema(u64),
     MissingField(&'static str),
@@ -37,7 +31,10 @@ impl fmt::Display for CompatibilityError {
         match self {
             Self::EmptyField(field) => write!(f, "compatibility field '{field}' is empty"),
             Self::InvalidRepository(repository) => {
-                write!(f, "invalid repository identifier '{repository}' (expected owner/name)")
+                write!(
+                    f,
+                    "invalid repository identifier '{repository}' (expected owner/name)"
+                )
             }
             Self::InvalidRevision(revision) => write!(
                 f,
@@ -237,7 +234,12 @@ impl CompatibilitySet {
         )
         .set(
             "revisions",
-            Json::Arr(self.revisions.iter().map(RepositoryRevision::to_json).collect()),
+            Json::Arr(
+                self.revisions
+                    .iter()
+                    .map(RepositoryRevision::to_json)
+                    .collect(),
+            ),
         )
         .set("schema", Json::Num(COMPATIBILITY_SCHEMA_VERSION as f64))
         .set("toolchain", Json::Str(self.toolchain.clone()));
@@ -250,13 +252,17 @@ fn validate_repository(repository: &str) -> Result<(), CompatibilityError> {
         return Err(CompatibilityError::EmptyField("repository"));
     }
     if repository.trim() != repository || repository.chars().any(char::is_whitespace) {
-        return Err(CompatibilityError::InvalidRepository(repository.to_string()));
+        return Err(CompatibilityError::InvalidRepository(
+            repository.to_string(),
+        ));
     }
     let mut parts = repository.split('/');
     let owner = parts.next().unwrap_or_default();
     let name = parts.next().unwrap_or_default();
     if owner.is_empty() || name.is_empty() || parts.next().is_some() {
-        return Err(CompatibilityError::InvalidRepository(repository.to_string()));
+        return Err(CompatibilityError::InvalidRepository(
+            repository.to_string(),
+        ));
     }
     Ok(())
 }
@@ -346,8 +352,7 @@ mod tests {
 
     #[test]
     fn moving_branch_name_is_rejected_as_revision() {
-        let error = RepositoryRevision::new("Memorithm/scirust", "master", "scirust")
-            .unwrap_err();
+        let error = RepositoryRevision::new("Memorithm/scirust", "master", "scirust").unwrap_err();
         assert!(matches!(error, CompatibilityError::InvalidRevision(_)));
     }
 
@@ -382,6 +387,9 @@ mod tests {
             "rsi",
         )
         .unwrap();
-        assert_eq!(revision.revision, "abcdef0123456789abcdef0123456789abcdef01");
+        assert_eq!(
+            revision.revision,
+            "abcdef0123456789abcdef0123456789abcdef01"
+        );
     }
 }

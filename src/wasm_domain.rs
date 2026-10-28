@@ -350,14 +350,16 @@ mod tests {
     #[test]
     fn static_memory_over_limit_traps() {
         // 300 pages × 64 Kio = ~19 Mio > MAX_MEMORY_BYTES (16 Mio)
-        let hog = "(module (memory 300) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
+        let hog =
+            "(module (memory 300) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
         let (engine, module) = WasmSynthesis::compile(hog).unwrap();
         assert!(
             WasmSynthesis::run_once(&engine, &module, 1).is_err(),
             "la limite mémoire doit refuser l'instanciation"
         );
         // dans les clous : fonctionne toujours
-        let ok = "(module (memory 1) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
+        let ok =
+            "(module (memory 1) (func (export \"run\") (param i64) (result i64) (local.get 0)))";
         let (engine, module) = WasmSynthesis::compile(ok).unwrap();
         assert_eq!(WasmSynthesis::run_once(&engine, &module, 7), Ok(7));
     }
@@ -450,15 +452,16 @@ mod tests {
         );
         eng.run(3).unwrap();
         let best = eng.best().unwrap().fitness.as_ref().unwrap();
-        assert!(best.all_green(), "le candidat corrigé doit être tout-au-vert");
+        assert!(
+            best.all_green(),
+            "le candidat corrigé doit être tout-au-vert"
+        );
         assert_eq!(best.tests_failed, 0);
         assert_eq!(eng.archive().len(), 2, "seed + 1 variante acceptée");
         // l'arbre vivant n'a jamais été touché
-        assert!(
-            std::fs::read_to_string(ws.join("candidate.wat"))
-                .unwrap()
-                .contains("(i64.const 0)")
-        );
+        assert!(std::fs::read_to_string(ws.join("candidate.wat"))
+            .unwrap()
+            .contains("(i64.const 0)"));
         let _ = std::fs::remove_dir_all(&ws);
         let _ = Path::new(&ws).exists();
     }

@@ -30,7 +30,7 @@ env:
 jobs:
   check:
     name: build · test · clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, memorithm-ci, dell-general, ci-light, trusted-main]
     timeout-minutes: 45
     steps:
       - name: Checkout

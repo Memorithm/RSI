@@ -94,8 +94,11 @@ fn main() {
         .unwrap_or(6)
         .clamp(1, 64);
     // audit m30/m11 : NaN/inf ici rendait TOUTE variante inacceptable
-    let min_gain: f64 =
-        rsi::cli::parse_f64_nonneg(flag_value(&args, "--min-gain").as_deref(), "--min-gain", 0.05);
+    let min_gain: f64 = rsi::cli::parse_f64_nonneg(
+        flag_value(&args, "--min-gain").as_deref(),
+        "--min-gain",
+        0.05,
+    );
     let seed: u64 = flag_value(&args, "--seed")
         .and_then(|v| v.parse().ok())
         .unwrap_or(42);
@@ -332,10 +335,7 @@ fn main() {
             r.best_score
                 .map(|s| format!("{s:.4}"))
                 .unwrap_or_else(|| "—".into()),
-            r.best_variant
-                .as_deref()
-                .map(short_id)
-                .unwrap_or("—"),
+            r.best_variant.as_deref().map(short_id).unwrap_or("—"),
         ));
     }
     md.push_str(&format!(

@@ -182,7 +182,9 @@ fn main() {
         std::process::exit(2);
     }
     if n_seeds == 0 {
-        eprintln!("erreur : n_seeds=0 (aucune moyenne possible) — fournir un nombre de graines ≥ 1");
+        eprintln!(
+            "erreur : n_seeds=0 (aucune moyenne possible) — fournir un nombre de graines ≥ 1"
+        );
         std::process::exit(2);
     }
     let corpus = TaskCorpus::extended();
